@@ -436,7 +436,7 @@ function ComposeScreen({
   onBack: () => void
   onSubmit: () => void
 }) {
-  const canSubmit = intent.name.trim().length > 0 && intent.topic.trim().length >= 8
+  const canSubmit = intent.name.trim().length > 0 && intent.topic.trim().length > 0
   return (
     <main className="page page--centered">
       <JourneyFrame title="Set the tone" className="flow-window flow-window--wide">
