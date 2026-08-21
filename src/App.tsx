@@ -20,7 +20,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import { formatLocalTime, signals, type Signal } from './data'
+import { formatLocalTime, localHourFraction, signals, type Signal } from './data'
 import { useMicrophone } from './useMicrophone'
 
 const WorldPicker = lazy(() => import('./WorldPicker').then((module) => ({ default: module.WorldPicker })))
@@ -68,7 +68,9 @@ type Intent = {
 }
 
 const moods = ['A little company', 'A thoughtful question', 'Trade stories']
-const durations = [15, 20, 30]
+// 0 means no time limit.
+const durations = [15, 20, 30, 0]
+const durationLabel = (minutes: number) => (minutes === 0 ? 'No limit' : `${minutes} min`)
 
 function StepNumber({ step }: { step: number }) {
   return (
@@ -266,7 +268,7 @@ function SafetyPanel({
           <div className="safety-grid">
             <div><span>01</span><strong>Audio only</strong><p>No cameras, images, links, or attachments.</p></div>
             <div><span>02</span><strong>Both people choose</strong><p>Nobody is dropped into a call with a stranger.</p></div>
-            <div><span>03</span><strong>Calls have an ending</strong><p>Every line closes on time unless both people extend it.</p></div>
+            <div><span>03</span><strong>You set the clock</strong><p>Timed lines close on time. Choosing no limit never traps you — leaving is always one tap.</p></div>
             <div><span>04</span><strong>No public score</strong><p>Feedback protects the room. It never becomes popularity.</p></div>
           </div>
           <div className="privacy-note"><LockKeyhole size={17} /><p><strong>Keep details general.</strong> Elsewhere does not record calls. Someone could still record from their own device, so avoid sharing identifying information.</p></div>
@@ -276,8 +278,35 @@ function SafetyPanel({
   )
 }
 
+function AwakeTape({ displaySignals }: { displaySignals: Signal[] }) {
+  return (
+    <div
+      className="awake-tape"
+      role="img"
+      aria-label={`Where each open conversation is in its day: ${displaySignals.map((signal) => `${signal.name} in ${signal.location}, ${formatLocalTime(signal.timeZone)}`).join('; ')}.`}
+    >
+      <div className="awake-tape__band" aria-hidden="true">
+        {displaySignals.map((signal) => (
+          <span
+            key={signal.id}
+            className="awake-tape__dot"
+            style={{ left: `${(localHourFraction(signal.timeZone) * 100).toFixed(2)}%`, '--signal-color': signal.color } as React.CSSProperties}
+          >
+            <i />
+            <b>{signal.location}</b>
+          </span>
+        ))}
+      </div>
+      <div className="awake-tape__scale" aria-hidden="true">
+        <span>Midnight</span><span>Dawn</span><span>Noon</span><span>Dusk</span><span>Midnight</span>
+      </div>
+    </div>
+  )
+}
+
 function Landing({ availableSignals, onStart }: { availableSignals: Signal[]; onStart: () => void }) {
   const liveCountries = useMemo(() => availableSignals.map((signal) => signal.location), [availableSignals])
+  const awakeSignals = [...availableSignals].sort((a, b) => localHourFraction(a.timeZone) - localHourFraction(b.timeZone))
 
   return (
     <main className="page page--landing">
@@ -291,7 +320,7 @@ function Landing({ availableSignals, onStart }: { availableSignals: Signal[]; on
               <button className="button button--primary button--large" onClick={onStart}>I’m available to talk <ArrowRight size={18} /></button>
               <span className="fine-print">You both choose. Leave anytime.</span>
             </div>
-            <div className="hero-trust" aria-label="Elsewhere basics"><span><Headphones size={16} /> Audio only</span><span><ShieldCheck size={16} /> 18+</span><span><Clock3 size={16} /> Calls end on time</span></div>
+            <div className="hero-trust" aria-label="Elsewhere basics"><span><Headphones size={16} /> Audio only</span><span><ShieldCheck size={16} /> 18+</span><span><Clock3 size={16} /> You set the clock</span></div>
           </div>
           <div className="hero-visual">
             <WorldPickerBoundary fallback={<div className="hero-globe-loading hero-globe-loading--error"><Compass size={30} /><p>The globe is resting. The open conversations below are still here.</p></div>}>
@@ -308,10 +337,11 @@ function Landing({ availableSignals, onStart }: { availableSignals: Signal[]; on
           <div><span className="eyebrow">People open to a conversation</span><h2 id="transmissions-title">Elsewhere, right now</h2></div>
           <p>Not profiles to browse. Just a glimpse of what someone hopes to talk about.</p>
         </div>
+        <AwakeTape displaySignals={awakeSignals} />
         <div className="transmission-grid">
-          {availableSignals.slice(0, 3).map((signal) => (
-            <article className="transmission-card" key={signal.id}>
-              <div className="transmission-meta"><span style={{ background: signal.color }} /><strong>{signal.location}</strong><i aria-hidden="true">·</i>{formatLocalTime(signal.timeZone)} there</div>
+          {awakeSignals.map((signal) => (
+            <article className="transmission-card" key={signal.id} style={{ '--card-accent': signal.color } as React.CSSProperties}>
+              <div className="transmission-meta"><span /><strong>{signal.location}</strong><i aria-hidden="true">·</i>{formatLocalTime(signal.timeZone)} there</div>
               <blockquote>“{signal.topic}”</blockquote>
               <div className="transmission-foot"><span>{signal.mood}</span><span>{signal.duration} min</span></div>
             </article>
@@ -475,7 +505,7 @@ function ComposeScreen({
           <fieldset className="field-group field-group--duration">
             <legend>How much time do you have?</legend>
             <div className="choice-row choice-row--duration">
-              {durations.map((duration) => <button type="button" key={duration} aria-pressed={intent.duration === duration} className={`choice-chip choice-chip--time ${intent.duration === duration ? 'is-selected' : ''}`} onClick={() => setIntent((current) => ({ ...current, duration }))}><Clock3 size={15} />{duration} min</button>)}
+              {durations.map((duration) => <button type="button" key={duration} aria-pressed={intent.duration === duration} className={`choice-chip choice-chip--time ${intent.duration === duration ? 'is-selected' : ''}`} onClick={() => setIntent((current) => ({ ...current, duration }))}><Clock3 size={15} />{durationLabel(duration)}</button>)}
             </div>
           </fieldset>
 
@@ -536,7 +566,7 @@ function MatchScreen({ signal, intent, onAccept, onPass }: { signal: Signal; int
             <SignalAvatar signal={signal} large />
             <div className="match-identity"><strong>{signal.name}</strong><span>{signal.location} · {formatLocalTime(signal.timeZone)} there</span></div>
             <div className="match-details">
-              <span><Languages size={15} />{signal.language}</span><span><Clock3 size={15} />{Math.min(intent.duration, signal.duration)} minutes</span><span><Headphones size={15} />Audio only</span>
+              <span><Languages size={15} />{signal.language}</span><span><Clock3 size={15} />{intent.duration === 0 ? 'No time limit' : `${Math.min(intent.duration, signal.duration)} minutes`}</span><span><Headphones size={15} />Audio only</span>
             </div>
             <blockquote>“{signal.topic}”</blockquote>
           </div>
@@ -611,13 +641,14 @@ function CallScreen({
   onEnd: () => void
   onSafety: () => void
 }) {
-  const total = Math.min(intent.duration, signal.duration) * 60
+  const unlimited = intent.duration === 0
+  const total = unlimited ? Infinity : Math.min(intent.duration, signal.duration) * 60
   return (
     <main className="call-room">
       <h1 className="visually-hidden">The line with {signal.name} is open</h1>
       <div className="call-topline">
         <div className="live-chip"><i /> Line open</div>
-        <div className="call-clock"><b>{formatTimer(Math.max(0, total - elapsed))}</b><span>left</span></div>
+        <div className="call-clock"><b>{formatTimer(unlimited ? elapsed : Math.max(0, total - elapsed))}</b><span>{unlimited ? 'so far' : 'left'}</span></div>
         <button className="safety-link" onClick={onSafety}><ShieldCheck size={16} /> Safety &amp; leave</button>
       </div>
       <div className="call-stage">
@@ -740,7 +771,7 @@ function App() {
     const correctLanguage = signal.language.split(' · ').includes(intent.language)
     return correctPlace && correctLanguage && signal.mood === intent.mood && !blockedIds.has(signal.id)
   }), [blockedIds, intent.destination, intent.language, intent.mood])
-  const totalCallSeconds = Math.min(intent.duration, selectedSignal.duration) * 60
+  const totalCallSeconds = intent.duration === 0 ? Infinity : Math.min(intent.duration, selectedSignal.duration) * 60
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 30_000)

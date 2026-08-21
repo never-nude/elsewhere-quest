@@ -178,7 +178,7 @@
   .form-grid { grid-template-columns: 1fr; gap: 0; }
   .choice-row { display: grid; grid-template-columns: 1fr; }
   .choice-chip { width: 100%; }
-  .choice-row--duration { grid-template-columns: repeat(3, 1fr); }
+  .choice-row--duration { grid-template-columns: repeat(2, 1fr); }
   .choice-chip--time { min-width: 0; }
   .search-body { min-height: 540px; padding: 46px 20px; }
   .search-body h1 { font-size: 37px; }

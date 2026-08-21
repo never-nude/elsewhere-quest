@@ -82,3 +82,11 @@ export const formatLocalTime = (timeZone: string) =>
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date())
+
+// 0..1 position of a time zone's current local time within its day.
+export const localHourFraction = (timeZone: string) => {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone, hour12: false, hour: '2-digit', minute: '2-digit' }).formatToParts(new Date())
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value ?? '0') % 24
+  const minute = Number(parts.find((part) => part.type === 'minute')?.value ?? '0')
+  return (hour + minute / 60) / 24
+}

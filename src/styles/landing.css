@@ -55,6 +55,45 @@
 
 .transmissions { padding: 100px 0 92px; }
 .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 36px; margin-bottom: 38px; }
+
+/* Day-arc tape: each open signal placed by its local time of day. */
+.awake-tape { margin: 0 0 34px; }
+.awake-tape__band {
+  position: relative;
+  height: 54px;
+  margin-bottom: 34px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: linear-gradient(90deg,
+    #0b1026 0%, #131a3e 13%, #4b4884 22%, #e5a288 27%, #f6e2bd 34%,
+    #fdf6df 45%, #fdf6df 55%, #f6dcb1 66%, #e28a68 73%, #3b3873 80%, #131a3e 87%, #0b1026 100%);
+  box-shadow: inset 0 2px 10px rgba(11,16,38,.22);
+}
+.awake-tape__dot { position: absolute; top: 50%; }
+.awake-tape__dot i {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 13px;
+  height: 13px;
+  margin: -6.5px;
+  border: 2px solid rgba(255,252,245,.95);
+  border-radius: 50%;
+  background: var(--signal-color);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--signal-color) 24%, transparent), 0 0 16px 3px color-mix(in srgb, var(--signal-color) 55%, transparent);
+}
+.awake-tape__dot b {
+  position: absolute;
+  top: 32px;
+  left: 0;
+  transform: translateX(-50%);
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.awake-tape__scale { display: flex; justify-content: space-between; margin-top: 9px; padding: 0 6px; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .1em; text-transform: uppercase; }
 .section-heading h2 { margin: 14px 0 0; font-size: clamp(40px, 4.6vw, 60px); font-weight: 500; line-height: 1; letter-spacing: -.02em; }
 .section-heading > p { max-width: 380px; margin-bottom: 6px; color: var(--muted); font: italic 400 18px/1.5 var(--font-display); }
 .transmission-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
@@ -80,10 +119,6 @@
   background: linear-gradient(90deg, var(--card-accent, var(--coral)) 0 38%, transparent 38%);
   opacity: .85;
 }
-
-.transmission-card:nth-child(3n + 1) { --card-accent: var(--lemon); }
-.transmission-card:nth-child(3n + 2) { --card-accent: var(--cyan); }
-.transmission-card:nth-child(3n + 3) { --card-accent: var(--bubblegum); }
 
 .transmission-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 13px; }
 .transmission-meta > span { width: 9px; height: 9px; border-radius: 50%; background: var(--card-accent, var(--coral)); box-shadow: 0 0 0 4px color-mix(in srgb, var(--card-accent, var(--coral)) 18%, transparent); }
@@ -152,6 +187,9 @@
   .hero-trust { margin-top: 26px; }
   .hero-trust span { flex: 1 1 calc(50% - 4px); justify-content: center; }
   .transmissions { padding: 68px 0 62px; }
+  .awake-tape__band { height: 44px; margin-bottom: 12px; }
+  .awake-tape__dot b { display: none; }
+  .awake-tape__scale { font-size: 10px; letter-spacing: .06em; }
   .section-heading { display: block; }
   .section-heading > p { margin-top: 16px; }
   .section-heading h2 { font-size: 40px; }
