@@ -1,0 +1,27 @@
+{
+  "name": "elsewhere-quest",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@types/topojson-client": "latest",
+    "lucide-react": "latest",
+    "maplibre-gl": "5.24.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "topojson-client": "latest",
+    "world-atlas": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}

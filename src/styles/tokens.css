@@ -1,0 +1,55 @@
+:root {
+  font-family: var(--font-sans);
+  color: #241d31;
+  background: #f5efe6;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: light;
+
+  --font-sans: "Figtree", "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+
+  /* Day — warm editorial paper */
+  --canvas: #f5efe6;
+  --surface: #fffcf5;
+  --surface-soft: #ece4d6;
+  --ink: #241d31;
+  --muted: #665c6e;
+  --muted-strong: #4d4457;
+  --line: #ddd3c3;
+  --line-strong: #c3b7a4;
+
+  /* Night — where the planet lives */
+  --night: #0b1026;
+  --night-2: #161d42;
+  --night-raised: rgba(244, 239, 229, .06);
+  --night-line: rgba(214, 216, 244, .16);
+  --night-ink: #f2ede1;
+  --night-muted: #aaa7c6;
+  --night-glow: #ffc966;
+
+  /* Accents */
+  --coral: #ff6d52;
+  --coral-deep: #d8492e;
+  --coral-text: #bd3d1e;
+  --cyan: #33c9c1;
+  --cyan-deep: #14716d;
+  --periwinkle: #6674d8;
+  --periwinkle-deep: #4a3fbd;
+  --lilac: #e6e1f5;
+  --blush: #f6ddd3;
+  --sky-wash: #dcefec;
+  --lemon: #ffd85a;
+  --bubblegum: #f45fa6;
+  --success: #2f8b70;
+  --danger: #a92e3a;
+
+  --shadow-sm: 0 8px 24px rgba(36, 29, 49, .07);
+  --shadow: 0 20px 55px rgba(36, 29, 49, .1);
+  --shadow-lg: 0 32px 85px rgba(36, 29, 49, .13);
+  --radius-sm: 14px;
+  --radius: 24px;
+  --radius-lg: 36px;
+  --page: min(1240px, calc(100% - 48px));
+}
