@@ -542,7 +542,7 @@ function NoMatchScreen({ intent, onAdjust, onChoosePlace }: { intent: Intent; on
           <div className="mic-icon"><RadioTower size={27} /></div>
           <span className="eyebrow">No exact reply yet</span>
           <h1>No exact match is awake right now.</h1>
-          <p className="flow-lede">We couldn’t find someone {intent.destination === 'Anywhere' ? 'elsewhere' : `in ${intent.destination}`} who matches both <strong>{intent.language}</strong> and <strong>{intent.mood.toLowerCase()}</strong>. We won’t substitute a person who asked for something different.</p>
+          <p className="flow-lede">We couldn’t find anyone {intent.destination === 'Anywhere' ? 'elsewhere' : `in ${intent.destination}`} with <strong>{intent.language}</strong> in the air right now. We won’t invent a person just to fill the line.</p>
           <div className="mutual-note"><Clock3 size={20} /><p>Porch lights expire. A compatible signal may appear later, or you can gently widen what you’re listening for.</p></div>
           <div className="match-actions">
             <button className="button button--primary button--large" onClick={onAdjust}>Adjust my signal <ArrowRight size={18} /></button>
@@ -766,11 +766,17 @@ function App() {
   const selectedSignal = signals[selectedIndex % signals.length]
   const inCall = screen === 'call'
   const availableSignals = useMemo(() => signals.filter((signal) => !blockedIds.has(signal.id)), [blockedIds])
-  const matchingCandidates = useMemo(() => signals.filter((signal) => {
+  // Place and language are hard requirements; mood is a preference. An exact
+  // mood fit wins, but a lit country never dead-ends over mood alone.
+  const compatibleCandidates = useMemo(() => signals.filter((signal) => {
     const correctPlace = intent.destination === 'Anywhere' || signal.location === intent.destination
     const correctLanguage = signal.language.split(' · ').includes(intent.language)
-    return correctPlace && correctLanguage && signal.mood === intent.mood && !blockedIds.has(signal.id)
-  }), [blockedIds, intent.destination, intent.language, intent.mood])
+    return correctPlace && correctLanguage && !blockedIds.has(signal.id)
+  }), [blockedIds, intent.destination, intent.language])
+  const matchingCandidates = useMemo(() => {
+    const exactMood = compatibleCandidates.filter((signal) => signal.mood === intent.mood)
+    return exactMood.length > 0 ? exactMood : compatibleCandidates
+  }, [compatibleCandidates, intent.mood])
   const totalCallSeconds = intent.duration === 0 ? Infinity : Math.min(intent.duration, selectedSignal.duration) * 60
 
   useEffect(() => {
