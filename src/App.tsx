@@ -469,7 +469,7 @@ function ComposeScreen({
           <div className="field field--topic">
             <label htmlFor="topic-input"><span>What would be good to talk about?</span></label>
             <textarea id="topic-input" aria-describedby="topic-hint" value={intent.topic} maxLength={120} onChange={(event) => setIntent((current) => ({ ...current, topic: event.target.value }))} placeholder="A question, a story, or something on your mind…" />
-            <small id="topic-hint"><span>Keep names, handles, and contact details out.</span><b aria-hidden="true">{intent.topic.length}/120</b></small>
+            <small id="topic-hint"><span>Keep names, handles, and contact details out.</span></small>
           </div>
 
           <fieldset className="field-group field-group--duration">
