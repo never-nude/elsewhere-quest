@@ -1,0 +1,15 @@
+{
+  "name": "wakeup-call",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A tiny scheduler that rings your phone at wake-up time via the Twilio Voice API.",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js start",
+    "call:now": "node src/index.js now",
+    "next": "node src/index.js next"
+  }
+}
