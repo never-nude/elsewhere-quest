@@ -56,7 +56,11 @@ record.
 
 ## Run it
 
-Any static file server works. From this directory:
+Once merged to `main`, the Pages deploy publishes the app at
+[elsewhere.quest/textlock](https://elsewhere.quest/textlock/) — open it on
+your phone and "Add to Home Screen" to install it.
+
+For local development, any static file server works. From this directory:
 
 ```bash
 npm start          # serves on http://127.0.0.1:4173
