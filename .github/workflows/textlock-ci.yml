@@ -1,0 +1,21 @@
+name: TextLock CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/textlock/**']
+  pull_request:
+    paths: ['apps/textlock/**']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/textlock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
