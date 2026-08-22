@@ -3,6 +3,7 @@ import {
   initialState, reviveState, clampHours, startLock, addHour, finishLock,
   holdMessage, dismissMessage, heldMessages, releasedMessages,
   isActive, remainingMs, progress, formatDuration, formatHours, currentStreak,
+  telHref,
 } from './lib/lock.js';
 
 const $ = (id) => document.getElementById(id);
@@ -46,6 +47,9 @@ const els = {
   cooldownRemaining: $('cooldown-remaining'),
   breakNow: $('break-now'),
   breakCancel: $('break-cancel'),
+  trustedName: $('trusted-name'),
+  trustedPhone: $('trusted-phone'),
+  emergencyCall: $('emergency-call'),
   emergencyOpen: $('emergency-open'),
   emergencyConfirm: $('emergency-confirm'),
   emergencyYes: $('emergency-yes'),
@@ -132,13 +136,26 @@ function render() {
     renderTick(now);
     renderVaultCount();
     renderBreakFlow();
+    renderEmergencyCall();
   } else {
     renderFinishedBanner();
     renderReleased();
     renderStats();
     renderEndsPreview();
     els.notify.checked = state.settings.notify;
+    els.trustedName.value = state.settings.trustedName;
+    els.trustedPhone.value = state.settings.trustedPhone;
   }
+}
+
+function renderEmergencyCall() {
+  const href = telHref(state.settings.trustedPhone);
+  els.emergencyCall.hidden = !href;
+  if (!href) return;
+  els.emergencyCall.href = href;
+  els.emergencyCall.textContent = state.settings.trustedName
+    ? `Call ${state.settings.trustedName}`
+    : 'Call your person';
 }
 
 function renderTick(now = Date.now()) {
@@ -344,6 +361,15 @@ els.notify.addEventListener('change', async () => {
       els.notify.checked = false;
     }
   }
+  saveState();
+});
+
+els.trustedName.addEventListener('input', () => {
+  state.settings.trustedName = els.trustedName.value.trim().slice(0, 60);
+  saveState();
+});
+els.trustedPhone.addEventListener('input', () => {
+  state.settings.trustedPhone = els.trustedPhone.value.trim().slice(0, 30);
   saveState();
 });
 

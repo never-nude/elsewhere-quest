@@ -252,6 +252,18 @@ fieldset.duration legend { font-weight: 600; padding: 0; margin-bottom: 0.4rem; 
 
 .card--emergency { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); }
 .card--emergency .button--danger { width: 100%; }
+.button--call {
+  display: block;
+  width: 100%;
+  text-align: center;
+  text-decoration: none;
+  padding: 0.85rem 1.1rem;
+  font-size: 1.05rem;
+  background: var(--ok);
+  border-color: var(--ok);
+  color: var(--accent-contrast);
+  margin: 0.4rem 0;
+}
 .card--emergency .vault-actions .button--ghost { width: auto; }
 .emergency-confirm { margin-top: 0.6rem; }
 

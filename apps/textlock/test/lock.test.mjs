@@ -5,6 +5,7 @@ import {
   initialState, reviveState, clampHours, startLock, addHour, finishLock,
   holdMessage, dismissMessage, heldMessages, releasedMessages,
   isActive, remainingMs, progress, formatDuration, formatHours, currentStreak,
+  telHref,
 } from '../lib/lock.js';
 
 const T0 = 1_700_000_000_000;
@@ -177,4 +178,21 @@ test('reviveState survives garbage and keeps good data', () => {
   // Settings only accept a real boolean true.
   assert.equal(reviveState({ settings: { notify: 'yes' } }).settings.notify, false);
   assert.equal(reviveState({ settings: { notify: true } }).settings.notify, true);
+
+  // Trusted contact strings survive; non-strings are ignored; length is capped.
+  const trusted = reviveState({ settings: { trustedName: 'Sam', trustedPhone: '+1 555 010 1234' } });
+  assert.equal(trusted.settings.trustedName, 'Sam');
+  assert.equal(trusted.settings.trustedPhone, '+1 555 010 1234');
+  assert.equal(reviveState({ settings: { trustedName: 42 } }).settings.trustedName, '');
+  assert.equal(reviveState({ settings: { trustedName: 'x'.repeat(200) } }).settings.trustedName.length, 60);
+});
+
+test('telHref keeps a leading plus and digits only', () => {
+  assert.equal(telHref('+1 (555) 010-1234'), 'tel:+15550101234');
+  assert.equal(telHref('555 010 1234'), 'tel:5550101234');
+  assert.equal(telHref('  +44 20 7946 0958 '), 'tel:+442079460958');
+  assert.equal(telHref('no digits here'), null);
+  assert.equal(telHref(''), null);
+  assert.equal(telHref(null), null);
+  assert.equal(telHref(undefined), null);
 });

@@ -1,5 +1,5 @@
 // Offline app shell for TextLock. Bump CACHE when any shell file changes.
-const CACHE = 'textlock-v2';
+const CACHE = 'textlock-v3';
 const SHELL = [
   './',
   './index.html',

@@ -61,7 +61,7 @@
         <label class="field">
           <span>Why are you locking? <em class="muted">(optional — shown while locked)</em></span>
           <input id="reason" name="reason" type="text" maxlength="280"
-                 placeholder="e.g. No late-night texts I'll regret tomorrow" />
+                 placeholder="e.g. Session tonight — nothing I write needs to send before morning" />
         </label>
 
         <label class="field field--check">
@@ -72,6 +72,31 @@
         <button id="start-lock" class="button button--primary" type="submit">Lock it</button>
         <p id="setup-error" class="error" role="alert" hidden></p>
       </form>
+
+      <section class="card" aria-labelledby="trusted-heading">
+        <h2 id="trusted-heading">Your person</h2>
+        <p class="muted">A sitter, partner, or clinic line. While you're locked, the emergency card shows a one-tap <strong>call</strong> button for them — when you're not in a state to text, a voice is safer than a keyboard. Saved on this device only.</p>
+        <label class="field">
+          <span>Name</span>
+          <input id="trusted-name" type="text" maxlength="60" autocomplete="name" placeholder="e.g. Sam" />
+        </label>
+        <label class="field">
+          <span>Phone number</span>
+          <input id="trusted-phone" type="tel" maxlength="30" autocomplete="tel" placeholder="e.g. +1 555 010 1234" />
+        </label>
+      </section>
+
+      <details class="card card--details">
+        <summary>Before a session: a two-minute checklist</summary>
+        <ul>
+          <li><strong>Text people first, not during.</strong> Anyone who might expect to hear from you gets one message now: "offline until <em>[time]</em>, all good."</li>
+          <li><strong>Set your person above</strong> — sitter, partner, or the clinic line — so the call button is there if you need it.</li>
+          <li><strong>Do Not Disturb on.</strong> An incoming text you can't answer well is temptation you don't need.</li>
+          <li><strong>Lock through the afterglow.</strong> Judgment comes back after the body does — give it a couple of hours past when you expect to feel normal. There's an "add one more hour" button if you're unsure later.</li>
+          <li><strong>Want hard enforcement too?</strong> See "Make it stick at the phone level" below.</li>
+          <li>Water nearby, playlist ready. Nothing you write tonight needs to send tonight.</li>
+        </ul>
+      </details>
 
       <section class="card" id="stats-card" hidden>
         <h2>Your record</h2>
@@ -147,7 +172,9 @@
 
       <section class="card card--emergency" aria-labelledby="emergency-heading">
         <h2 id="emergency-heading">Emergency?</h2>
-        <p class="muted">Calls were never blocked — you can always dial anyone, including emergency services. If you need to <em>text</em> someone right now, the emergency entrance opens the line immediately: no holding, no phrase, no waiting.</p>
+        <p class="muted">Calls were never blocked — you can always dial anyone, including emergency services. A call is the first choice: a voice is safer than a keyboard right now.</p>
+        <a id="emergency-call" class="button button--call" href="#" hidden>Call</a>
+        <p class="muted">If it truly has to be a <em>text</em>, the emergency entrance opens the line immediately: no holding, no phrase, no waiting.</p>
         <button id="emergency-open" class="button button--danger" type="button">This is an emergency — open the line</button>
         <div id="emergency-confirm" class="emergency-confirm" hidden>
           <p><strong>Open the line right now?</strong> It gets noted in your record as an emergency — it won't break your streak.</p>

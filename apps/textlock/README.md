@@ -2,6 +2,15 @@
 
 Lock yourself out of texting for a set number of hours.
 
+Built for a specific moment: a prescribed ketamine (or similar medicine)
+session, where for a few hours you are not the person who should be sending
+texts. You lock before you dose, park any "I just need to say one thing"
+messages in the vault, and the line opens again after the afterglow — with a
+one-tap **call** button for your sitter, partner, or clinic the whole time,
+because when you're under the influence a voice is safer than a keyboard.
+It works just as well for any other stretch of hours you'd rather not text
+through.
+
 TextLock is a small, self-contained web app that lives in this repo but is
 independent of the Elsewhere prototype — no shared code, no dependencies, no
 build step, no server. Everything stays in your browser's local storage.
@@ -25,6 +34,12 @@ pretend to. It's a **commitment device**:
   immediately, no holding and no waiting. It's logged as an emergency in
   your record and doesn't break your streak; only a deliberate break does.
   (Calls are never blocked by anything here — this is a texting lock.)
+- **A trusted contact** — set your person once (sitter, partner, clinic
+  line) and the emergency card leads with a one-tap call button for them,
+  ahead of any text option.
+- **A pre-session checklist** — text people *before* you dose, Do Not
+  Disturb on, and lock a couple of hours past when you expect to feel
+  normal, because judgment returns after the body does.
 - **A record** — kept vs. broken locks and your current streak.
 - **Add one more hour** while locked, any time.
 - Optional notification when the lock opens (only while the page is open).

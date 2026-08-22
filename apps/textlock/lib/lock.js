@@ -15,7 +15,7 @@ export function initialState() {
     lock: null,
     history: [],
     vault: [],
-    settings: { notify: false },
+    settings: { notify: false, trustedName: '', trustedPhone: '' },
   };
 }
 
@@ -45,6 +45,12 @@ export function reviveState(raw) {
   }
   if (raw.settings && typeof raw.settings === 'object') {
     state.settings.notify = raw.settings.notify === true;
+    if (typeof raw.settings.trustedName === 'string') {
+      state.settings.trustedName = raw.settings.trustedName.slice(0, 60);
+    }
+    if (typeof raw.settings.trustedPhone === 'string') {
+      state.settings.trustedPhone = raw.settings.trustedPhone.slice(0, 30);
+    }
   }
   return state;
 }
@@ -171,6 +177,16 @@ export function currentStreak(history) {
     streak += 1;
   }
   return streak;
+}
+
+// "tel:" href from a free-form phone number, or null if nothing dialable.
+// Keeps a leading + and digits; everything else is decoration.
+export function telHref(phone) {
+  if (typeof phone !== 'string') return null;
+  const plus = phone.trim().startsWith('+') ? '+' : '';
+  const digits = phone.replace(/\D/g, '');
+  if (!digits) return null;
+  return `tel:${plus}${digits}`;
 }
 
 function newId() {
