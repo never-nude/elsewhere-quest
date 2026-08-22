@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="description" content="TextLock is a commitment device: lock yourself out of texting for a set number of hours." />
+  <meta name="theme-color" content="#10141f" />
+  <title>TextLock — hold your line</title>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon-180.png" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="masthead">
+    <img class="masthead__icon" src="./icon.svg" alt="" width="40" height="40" />
+    <div>
+      <h1>TextLock</h1>
+      <p class="masthead__tagline">Lock yourself out of texting for a set number of hours.</p>
+    </div>
+  </header>
+
+  <main id="main">
+    <p id="announcer" class="visually-hidden" aria-live="polite"></p>
+
+    <!-- ===================== Setup view ===================== -->
+    <section id="view-setup" class="view" tabindex="-1" hidden>
+      <div id="finished-banner" class="banner" hidden>
+        <h2 id="finished-banner-title">The line is open.</h2>
+        <p id="finished-banner-detail"></p>
+      </div>
+
+      <div id="released-messages" class="card" hidden>
+        <h2>Messages you held</h2>
+        <p class="muted">You wrote these instead of sending them. Read each one with fresh eyes — copy it if it still deserves to go out, or let it go.</p>
+        <ul id="released-list" class="vault-list"></ul>
+      </div>
+
+      <form id="setup-form" class="card">
+        <h2>Set your lock</h2>
+        <fieldset class="duration">
+          <legend>How long?</legend>
+          <div id="preset-row" class="preset-row" role="group" aria-label="Preset durations">
+            <button type="button" class="preset" data-hours="1" aria-pressed="false">1 h</button>
+            <button type="button" class="preset" data-hours="2" aria-pressed="false">2 h</button>
+            <button type="button" class="preset is-selected" data-hours="4" aria-pressed="true">4 h</button>
+            <button type="button" class="preset" data-hours="8" aria-pressed="false">8 h</button>
+            <button type="button" class="preset" data-hours="12" aria-pressed="false">12 h</button>
+            <button type="button" class="preset" data-hours="24" aria-pressed="false">24 h</button>
+          </div>
+          <label class="field">
+            <span>Custom hours (0.25–72)</span>
+            <input id="custom-hours" name="hours" type="number" inputmode="decimal"
+                   min="0.25" max="72" step="0.25" value="4" required />
+          </label>
+          <p id="ends-preview" class="muted" aria-live="off"></p>
+        </fieldset>
+
+        <label class="field">
+          <span>Why are you locking? <em class="muted">(optional — shown while locked)</em></span>
+          <input id="reason" name="reason" type="text" maxlength="280"
+                 placeholder="e.g. Session tonight — nothing I write needs to send before morning" />
+        </label>
+
+        <label class="field field--check">
+          <input id="notify" name="notify" type="checkbox" />
+          <span>Notify me when the lock opens <em class="muted">(only works while this page stays open)</em> <span id="notify-note" class="muted"></span></span>
+        </label>
+
+        <button id="start-lock" class="button button--primary" type="submit">Lock it</button>
+        <p id="setup-error" class="error" role="alert" hidden></p>
+      </form>
+
+      <section class="card" aria-labelledby="trusted-heading">
+        <h2 id="trusted-heading">Your person</h2>
+        <p class="muted">A sitter, partner, or clinic line. While you're locked, the emergency card shows a one-tap <strong>call</strong> button for them — when you're not in a state to text, a voice is safer than a keyboard. Saved on this device only.</p>
+        <label class="field">
+          <span>Name</span>
+          <input id="trusted-name" type="text" maxlength="60" autocomplete="name" placeholder="e.g. Sam" />
+        </label>
+        <label class="field">
+          <span>Phone number</span>
+          <input id="trusted-phone" type="tel" maxlength="30" autocomplete="tel" placeholder="e.g. +1 555 010 1234" />
+        </label>
+      </section>
+
+      <details class="card card--details">
+        <summary>Before a session: a two-minute checklist</summary>
+        <ul>
+          <li><strong>Text people first, not during.</strong> Anyone who might expect to hear from you gets one message now: "offline until <em>[time]</em>, all good."</li>
+          <li><strong>Set your person above</strong> — sitter, partner, or the clinic line — so the call button is there if you need it.</li>
+          <li><strong>Do Not Disturb on.</strong> An incoming text you can't answer well is temptation you don't need.</li>
+          <li><strong>Lock through the afterglow.</strong> Judgment comes back after the body does — give it a couple of hours past when you expect to feel normal. There's an "add one more hour" button if you're unsure later.</li>
+          <li><strong>Want hard enforcement too?</strong> See "Make it stick at the phone level" below.</li>
+          <li>Water nearby, playlist ready. Nothing you write tonight needs to send tonight.</li>
+        </ul>
+      </details>
+
+      <section class="card" id="stats-card" hidden>
+        <h2>Your record</h2>
+        <p id="stats-line"></p>
+        <ul id="history-list" class="history-list"></ul>
+      </section>
+
+      <details class="card card--details">
+        <summary>Make it stick at the phone level</summary>
+        <p>TextLock is a commitment device — a promise with a timer and some friction, kept honestly. It cannot reach into your phone's messaging app. If you want hard enforcement for the same hours, set it up once in your phone's own controls:</p>
+        <ul>
+          <li><strong>iPhone:</strong> Settings → Screen Time → App Limits → add <em>Messages</em> (and WhatsApp, etc.), or turn on a Focus that silences and hides them. Ask someone you trust to hold the Screen Time passcode.</li>
+          <li><strong>Android:</strong> Settings → Digital Wellbeing → App timers → set a timer on <em>Messages</em>, or use Focus mode to pause it for the evening.</li>
+          <li><strong>Both:</strong> start TextLock for the same window so you have a countdown, a place to park almost-sent texts, and a record of the locks you kept.</li>
+        </ul>
+      </details>
+    </section>
+
+    <!-- ===================== Locked view ===================== -->
+    <section id="view-locked" class="view" tabindex="-1" hidden>
+      <div class="card card--lock">
+        <h2 class="lock-heading">Locked</h2>
+        <p id="lock-reason" class="lock-reason" hidden></p>
+        <p id="countdown" class="countdown" role="timer" aria-label="Time remaining">–:––:––</p>
+        <div class="progress" role="progressbar" aria-label="Lock progress"
+             aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressbar">
+          <div id="progress-fill" class="progress__fill"></div>
+        </div>
+        <p id="ends-at" class="muted"></p>
+        <button id="add-hour" class="button button--ghost" type="button">Add one more hour</button>
+      </div>
+
+      <form id="vault-form" class="card">
+        <h2>Want to text someone right now?</h2>
+        <p class="muted">Write it here instead. It stays sealed until the lock opens — then you decide if it still deserves to be sent.</p>
+        <label class="field">
+          <span class="visually-hidden">The message you want to send</span>
+          <textarea id="vault-text" rows="3" maxlength="2000"
+                    placeholder="Type the text you're tempted to send…"></textarea>
+        </label>
+        <button class="button" type="submit">Seal it until the lock opens</button>
+        <p id="vault-count" class="muted" hidden></p>
+      </form>
+
+      <details class="card card--details card--break" id="break-details">
+        <summary>Break the lock early</summary>
+        <p>Breaking early is allowed — this is your promise, not a cage. But the medicine blurs short-term memory, so the gate is a memory check: if you can't hold a few digits in mind right now, you're not ready to text anyone either.</p>
+
+        <div class="break-step" id="break-step-hold">
+          <p><strong>Step 1.</strong> Press the button, then let five slow seconds pass. Press again to stop.</p>
+          <button id="hold-button" class="button button--hold" type="button">
+            <span id="hold-label">Press to begin</span>
+            <span id="hold-fill" class="hold-fill" aria-hidden="true"></span>
+          </button>
+        </div>
+
+        <div class="break-step" id="break-step-memory" hidden>
+          <p><strong>Step 2.</strong> Two short memory rounds. <span id="gate-round-label"></span></p>
+          <p id="gate-instruction" class="muted"></p>
+          <p id="gate-sequence" class="gate-sequence" hidden></p>
+          <p id="gate-countdown" class="cooldown" hidden></p>
+          <button id="gate-start" class="button" type="button">Start round 1</button>
+          <form id="gate-form" hidden>
+            <label class="field">
+              <span class="visually-hidden">The digits you remember</span>
+              <input id="gate-answer" type="text" inputmode="numeric" autocomplete="off"
+                     autocapitalize="none" spellcheck="false" placeholder="digits" />
+            </label>
+            <button class="button" type="submit">Check</button>
+          </form>
+          <p id="gate-feedback" class="muted" role="status"></p>
+        </div>
+
+        <div class="break-step" id="break-step-wait" hidden>
+          <p><strong>Step 3.</strong> Sit with it for one minute.</p>
+          <p class="cooldown"><span id="cooldown-remaining">60</span> seconds…</p>
+          <button id="break-now" class="button button--danger" type="button" disabled>Open the lock now</button>
+          <button id="break-cancel" class="button button--ghost" type="button">Never mind — keep my lock</button>
+        </div>
+      </details>
+
+      <section class="card card--emergency" aria-labelledby="emergency-heading">
+        <h2 id="emergency-heading">Emergency?</h2>
+        <p class="muted">Calls were never blocked — you can always dial anyone, including emergency services. A call is the first choice: a voice is safer than a keyboard right now.</p>
+        <a id="emergency-call" class="button button--call" href="#" hidden>Call</a>
+        <p class="muted">If it truly has to be a <em>text</em>, the emergency entrance opens the line immediately: no holding, no phrase, no waiting.</p>
+        <button id="emergency-open" class="button button--danger" type="button">This is an emergency — open the line</button>
+        <div id="emergency-confirm" class="emergency-confirm" hidden>
+          <p><strong>Open the line right now?</strong> It gets noted in your record as an emergency — it won't break your streak.</p>
+          <div class="vault-actions">
+            <button id="emergency-yes" class="button button--danger" type="button">Yes — open it now</button>
+            <button id="emergency-cancel" class="button button--ghost" type="button">Never mind</button>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Everything stays on this device — no account, no server, nothing sent anywhere.</p>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
