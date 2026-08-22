@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Lock yourself out of texting for a set number of hours.",
   "scripts": {
-    "test": "node --test test/",
+    "test": "node --test",
     "start": "python3 -m http.server 4173 --bind 127.0.0.1"
   }
 }
