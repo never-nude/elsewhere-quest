@@ -36,7 +36,7 @@ export function reviveState(raw) {
   if (Array.isArray(raw.history)) {
     state.history = raw.history.filter((entry) => entry && typeof entry === 'object'
       && Number.isFinite(entry.startedAt) && Number.isFinite(entry.endedAt)
-      && (entry.outcome === 'completed' || entry.outcome === 'broken'));
+      && OUTCOMES.includes(entry.outcome));
   }
   if (Array.isArray(raw.vault)) {
     state.vault = raw.vault.filter((item) => item && typeof item === 'object'
@@ -78,11 +78,14 @@ export function addHour(state, now) {
   return { ...state, lock: { ...state.lock, endsAt, hours: state.lock.hours + 1 } };
 }
 
-// Ends the current lock — either the timer ran out ('completed') or the
-// break-glass flow finished ('broken'). Held messages are released either way.
+export const OUTCOMES = ['completed', 'broken', 'emergency'];
+
+// Ends the current lock — the timer ran out ('completed'), the break-glass
+// flow finished ('broken'), or the emergency entrance was used ('emergency').
+// Held messages are released in every case.
 export function finishLock(state, now, outcome) {
   if (!state.lock) throw new Error('No lock to finish.');
-  if (outcome !== 'completed' && outcome !== 'broken') throw new RangeError('Unknown outcome.');
+  if (!OUTCOMES.includes(outcome)) throw new RangeError('Unknown outcome.');
   const endedAt = outcome === 'completed' ? Math.min(now, state.lock.endsAt) : now;
   return {
     ...state,
@@ -157,10 +160,14 @@ export function formatHours(hours) {
 }
 
 // Consecutive completed locks, counting back from the most recent entry.
+// Emergency exits are skipped — a real emergency shouldn't cost the streak;
+// only a deliberate break resets it.
 export function currentStreak(history) {
   let streak = 0;
   for (let i = history.length - 1; i >= 0; i -= 1) {
-    if (history[i].outcome !== 'completed') break;
+    const { outcome } = history[i];
+    if (outcome === 'emergency') continue;
+    if (outcome !== 'completed') break;
     streak += 1;
   }
   return streak;

@@ -46,6 +46,10 @@ const els = {
   cooldownRemaining: $('cooldown-remaining'),
   breakNow: $('break-now'),
   breakCancel: $('break-cancel'),
+  emergencyOpen: $('emergency-open'),
+  emergencyConfirm: $('emergency-confirm'),
+  emergencyYes: $('emergency-yes'),
+  emergencyCancel: $('emergency-cancel'),
 };
 
 // ---------------------------------------------------------------- storage
@@ -172,6 +176,10 @@ function renderFinishedBanner() {
     els.finishedBannerTitle.textContent = 'The line is open — you kept your lock.';
     els.finishedBannerDetail.textContent =
       `Your ${formatHours(finishedNotice.hours)} lock opened at ${dateFormat.format(new Date(finishedNotice.endedAt))}.`;
+  } else if (finishedNotice.outcome === 'emergency') {
+    els.finishedBannerTitle.textContent = 'The line is open — emergency entrance.';
+    els.finishedBannerDetail.textContent =
+      'Noted in your record, not held against you. Your streak stands. We hope everyone is okay.';
   } else {
     els.finishedBannerTitle.textContent = 'Lock broken — the line is open.';
     els.finishedBannerDetail.textContent =
@@ -236,9 +244,11 @@ function renderStats() {
   if (history.length === 0) return;
 
   const completed = history.filter((h) => h.outcome === 'completed').length;
-  const broken = history.length - completed;
+  const broken = history.filter((h) => h.outcome === 'broken').length;
+  const emergencies = history.filter((h) => h.outcome === 'emergency').length;
   const streak = currentStreak(history);
   const parts = [`${completed} kept`, `${broken} broken`];
+  if (emergencies > 0) parts.push(`${emergencies} ${emergencies === 1 ? 'emergency' : 'emergencies'}`);
   if (streak >= 2) parts.push(`current streak: ${streak}`);
   els.statsLine.textContent = parts.join(' · ');
 
@@ -249,7 +259,7 @@ function renderStats() {
     when.textContent = `${dateFormat.format(new Date(entry.startedAt))} · ${formatHours(entry.hours)}`;
     const outcome = document.createElement('span');
     outcome.className = `outcome--${entry.outcome}`;
-    outcome.textContent = entry.outcome === 'completed' ? 'kept' : 'broken';
+    outcome.textContent = { completed: 'kept', broken: 'broken', emergency: 'emergency' }[entry.outcome];
     li.append(when, outcome);
     els.historyList.appendChild(li);
   }
@@ -271,6 +281,7 @@ function completeLock() {
   state = finishLock(state, Date.now(), 'completed');
   finishedNotice = { outcome: 'completed', hours, endedAt };
   resetBreakFlow();
+  resetEmergency();
   saveState();
   render();
   announce('Your lock is complete. The line is open.');
@@ -281,9 +292,20 @@ function breakLock() {
   state = finishLock(state, Date.now(), 'broken');
   finishedNotice = { outcome: 'broken' };
   resetBreakFlow();
+  resetEmergency();
   saveState();
   render();
   announce('Lock broken. The line is open.');
+}
+
+function emergencyExit() {
+  state = finishLock(state, Date.now(), 'emergency');
+  finishedNotice = { outcome: 'emergency' };
+  resetBreakFlow();
+  resetEmergency();
+  saveState();
+  render();
+  announce('Emergency entrance used. The line is open.');
 }
 
 // ---------------------------------------------------------------- setup view
@@ -475,6 +497,27 @@ els.breakCancel.addEventListener('click', () => {
   announce('Kept the lock. Good hold.');
 });
 
+// -------- emergency entrance: one tap, one confirm, immediate open --------
+
+function resetEmergency() {
+  els.emergencyConfirm.hidden = true;
+  els.emergencyOpen.hidden = false;
+}
+
+els.emergencyOpen.addEventListener('click', () => {
+  els.emergencyOpen.hidden = true;
+  els.emergencyConfirm.hidden = false;
+  els.emergencyYes.focus();
+});
+
+els.emergencyYes.addEventListener('click', emergencyExit);
+
+els.emergencyCancel.addEventListener('click', () => {
+  resetEmergency();
+  els.emergencyOpen.focus();
+  announce('Kept the lock.');
+});
+
 // ---------------------------------------------------------------- lifecycle
 
 setInterval(() => {
@@ -490,6 +533,7 @@ window.addEventListener('storage', (event) => {
   if (event.key !== STORAGE_KEY) return;
   state = loadState();
   resetBreakFlow();
+  resetEmergency();
   render();
 });
 

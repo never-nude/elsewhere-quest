@@ -69,8 +69,21 @@ test('finishLock records history and clears the lock', () => {
   assert.equal(broken.history[0].outcome, 'broken');
   assert.equal(broken.history[0].endedAt, T0 + 600_000);
 
+  const emergency = finishLock(state, T0 + 60_000, 'emergency');
+  assert.equal(emergency.lock, null);
+  assert.equal(emergency.history[0].outcome, 'emergency');
+  assert.equal(emergency.history[0].endedAt, T0 + 60_000);
+
   assert.throws(() => finishLock(initialState(), T0, 'completed'), /No lock/);
   assert.throws(() => finishLock(state, T0, 'gave-up'), RangeError);
+});
+
+test('emergency exit releases held messages immediately', () => {
+  let state = startLock(initialState(), { hours: 4 }, T0);
+  state = holdMessage(state, 'need to reach mom', T0 + 1000, 'm1');
+  state = finishLock(state, T0 + 2000, 'emergency');
+  assert.equal(heldMessages(state).length, 0);
+  assert.equal(releasedMessages(state).length, 1);
 });
 
 test('vault: hold during lock, release on finish, dismiss after', () => {
@@ -124,10 +137,16 @@ test('formatHours pluralizes and trims', () => {
 test('currentStreak counts consecutive completed from the end', () => {
   const done = { outcome: 'completed' };
   const broke = { outcome: 'broken' };
+  const er = { outcome: 'emergency' };
   assert.equal(currentStreak([]), 0);
   assert.equal(currentStreak([done, done, done]), 3);
   assert.equal(currentStreak([done, broke]), 0);
   assert.equal(currentStreak([broke, done, done]), 2);
+  // Emergencies are skipped: they neither break nor extend the streak.
+  assert.equal(currentStreak([done, er, done]), 2);
+  assert.equal(currentStreak([done, er]), 1);
+  assert.equal(currentStreak([broke, er]), 0);
+  assert.equal(currentStreak([er]), 0);
 });
 
 test('reviveState survives garbage and keeps good data', () => {
@@ -145,6 +164,11 @@ test('reviveState survives garbage and keeps good data', () => {
   assert.equal(revived.history.length, 1);
   assert.equal(revived.vault.length, 1);
   assert.equal(revived.lock, null);
+
+  // Emergency outcomes survive revival; unknown outcomes are dropped.
+  const withEmergency = finishLock(startLock(initialState(), { hours: 1 }, T0), T0 + 1, 'emergency');
+  assert.equal(reviveState(JSON.parse(JSON.stringify(withEmergency))).history.length, 1);
+  assert.equal(reviveState({ history: [{ startedAt: T0, endedAt: T0, outcome: 'rage-quit' }] }).history.length, 0);
 
   const active = startLock(initialState(), { hours: 2 }, T0);
   const revivedActive = reviveState(JSON.parse(JSON.stringify(active)));

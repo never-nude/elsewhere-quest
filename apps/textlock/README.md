@@ -21,6 +21,10 @@ pretend to. It's a **commitment device**:
 - **Real friction to break early** — hold a button for five seconds, type
   `let me out early`, then sit through a sixty-second cool-down. Breaking is
   always possible (it's your promise, not a cage), just never impulsive.
+- **An emergency entrance** — one tap and one confirm opens the line
+  immediately, no holding and no waiting. It's logged as an emergency in
+  your record and doesn't break your streak; only a deliberate break does.
+  (Calls are never blocked by anything here — this is a texting lock.)
 - **A record** — kept vs. broken locks and your current streak.
 - **Add one more hour** while locked, any time.
 - Optional notification when the lock opens (only while the page is open).
