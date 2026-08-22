@@ -27,9 +27,14 @@ pretend to. It's a **commitment device**:
 - **A message vault** — when the itch hits, type the text *here* instead.
   It stays sealed until the lock opens, then you reread it with fresh eyes
   and either copy it out or let it go.
-- **Real friction to break early** — hold a button for five seconds, type
-  `let me out early`, then sit through a sixty-second cool-down. Breaking is
-  always possible (it's your promise, not a cage), just never impulsive.
+- **A short-term memory gate to break early** — ketamine's signature
+  cognitive effect is on working memory, so early unlock tests exactly
+  that. Hold a button for five seconds, then pass two memory rounds: six
+  digits shown briefly, hidden through a fifteen-second retention delay,
+  then recalled — and a second round recalled *in reverse order*. Fail a
+  round and the gate closes for ten minutes (it survives reloads). Pass,
+  and a sixty-second cool-down still stands between you and the open line.
+  Sober-you clears it easily; session-you doesn't — which is the point.
 - **An emergency entrance** — one tap and one confirm opens the line
   immediately, no holding and no waiting. It's logged as an emergency in
   your record and doesn't break your streak; only a deliberate break does.

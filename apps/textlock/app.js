@@ -1,5 +1,6 @@
 import {
-  STORAGE_KEY, MAX_HOURS, HOUR_MS, BREAK_PHRASE, HOLD_TO_BREAK_MS, COOL_DOWN_MS,
+  STORAGE_KEY, MAX_HOURS, HOUR_MS, HOLD_TO_BREAK_MS, COOL_DOWN_MS,
+  GATE_ROUNDS, makeSequence, checkRecall, closeGate, gateClosedRemaining,
   initialState, reviveState, clampHours, startLock, addHour, finishLock,
   holdMessage, dismissMessage, heldMessages, releasedMessages,
   isActive, remainingMs, progress, formatDuration, formatHours, currentStreak,
@@ -23,6 +24,7 @@ const els = {
   endsPreview: $('ends-preview'),
   reason: $('reason'),
   notify: $('notify'),
+  notifyNote: $('notify-note'),
   setupError: $('setup-error'),
   statsCard: $('stats-card'),
   statsLine: $('stats-line'),
@@ -38,12 +40,19 @@ const els = {
   vaultCount: $('vault-count'),
   breakDetails: $('break-details'),
   stepHold: $('break-step-hold'),
-  stepPhrase: $('break-step-phrase'),
+  stepMemory: $('break-step-memory'),
   stepWait: $('break-step-wait'),
   holdButton: $('hold-button'),
   holdLabel: $('hold-label'),
   holdFill: $('hold-fill'),
-  phraseInput: $('phrase-input'),
+  gateRoundLabel: $('gate-round-label'),
+  gateInstruction: $('gate-instruction'),
+  gateSequence: $('gate-sequence'),
+  gateCountdown: $('gate-countdown'),
+  gateStart: $('gate-start'),
+  gateForm: $('gate-form'),
+  gateAnswer: $('gate-answer'),
+  gateFeedback: $('gate-feedback'),
   cooldownRemaining: $('cooldown-remaining'),
   breakNow: $('break-now'),
   breakCancel: $('break-cancel'),
@@ -67,9 +76,20 @@ function loadState() {
   }
 }
 
+// Tracks the exact payload this page last wrote (or saw), so a tab waking
+// from the back/forward cache can tell whether another tab moved the state.
+let lastSavedRaw = null;
+try {
+  lastSavedRaw = localStorage.getItem(STORAGE_KEY);
+} catch {
+  // Ignore; resync will simply re-render.
+}
+
 function saveState() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    const raw = JSON.stringify(state);
+    localStorage.setItem(STORAGE_KEY, raw);
+    lastSavedRaw = raw;
   } catch {
     // Private mode or full quota: the app still works for this page load.
   }
@@ -81,7 +101,13 @@ let state = loadState();
 let finishedNotice = null;
 
 // Break-glass flow lives in memory on purpose: reloading restarts the steps.
-const breakFlow = { stage: 'idle', holdStart: 0, holdTimer: 0, coolTimer: 0, coolEndsAt: 0 };
+// (The gate-closed timestamp from a failed memory round persists in state.)
+const breakFlow = {
+  stage: 'idle', // idle → memory → wait
+  holdStart: 0, holdTimer: 0,
+  phase: 'idle', round: 0, sequence: '', phaseEndsAt: 0, gateTimer: 0,
+  coolTimer: 0, coolEndsAt: 0,
+};
 
 // ---------------------------------------------------------------- helpers
 
@@ -105,17 +131,53 @@ function formatWhen(ts, now = Date.now()) {
   return sameDay ? timeFormat.format(target) : dayTimeFormat.format(target);
 }
 
-function maybeNotify(title, body) {
+// Storage events never reach a page parked in the back/forward cache, so on
+// wake-up compare payloads and adopt whatever another tab wrote in between —
+// otherwise this tab's stale state could overwrite a newer lock or vault.
+function resyncFromStorage() {
+  let raw = null;
+  try {
+    raw = localStorage.getItem(STORAGE_KEY);
+  } catch {
+    render();
+    return;
+  }
+  if (raw !== lastSavedRaw) {
+    lastSavedRaw = raw;
+    state = loadState();
+    resetBreakFlow();
+    resetEmergency();
+  }
+  render();
+}
+
+async function maybeNotify(title, body) {
   if (!state.settings.notify) return;
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const options = { body, icon: './icon-192.png' };
+  // Android Chrome (and installed PWAs generally) only allow notifications
+  // through the service worker registration; the constructor throws there.
   try {
-    new Notification(title, { body, icon: './icon.svg' });
+    const registration = 'serviceWorker' in navigator
+      ? await navigator.serviceWorker.getRegistration()
+      : null;
+    if (registration?.showNotification) {
+      await registration.showNotification(title, options);
+      return;
+    }
   } catch {
-    // Some platforms only allow notifications from a service worker; skip.
+    // Fall through to the constructor.
+  }
+  try {
+    new Notification(title, options);
+  } catch {
+    // No notification path on this platform; the on-page banner still shows.
   }
 }
 
 // ---------------------------------------------------------------- rendering
+
+let lastView = null;
 
 function render() {
   const now = Date.now();
@@ -130,6 +192,14 @@ function render() {
   els.viewSetup.hidden = locked;
   els.viewLocked.hidden = !locked;
 
+  // On a real view swap, land keyboard focus on the new view so it isn't
+  // silently dropped to <body>. Skipped on initial page load.
+  const view = locked ? 'locked' : 'setup';
+  if (lastView !== null && lastView !== view) {
+    (locked ? els.viewLocked : els.viewSetup).focus();
+  }
+  lastView = view;
+
   if (locked) {
     els.lockReason.hidden = !state.lock.reason;
     els.lockReason.textContent = state.lock.reason ? `“${state.lock.reason}”` : '';
@@ -142,10 +212,20 @@ function render() {
     renderReleased();
     renderStats();
     renderEndsPreview();
-    els.notify.checked = state.settings.notify;
+    renderNotifyControl();
     els.trustedName.value = state.settings.trustedName;
     els.trustedPhone.value = state.settings.trustedPhone;
   }
+}
+
+function renderNotifyControl() {
+  const supported = 'Notification' in window;
+  const denied = supported && Notification.permission === 'denied';
+  els.notify.disabled = !supported || denied;
+  els.notify.checked = state.settings.notify && supported && Notification.permission === 'granted';
+  els.notifyNote.textContent = !supported
+    ? '(not supported in this browser)'
+    : denied ? '(blocked in your browser settings)' : '';
 }
 
 function renderEmergencyCall() {
@@ -178,12 +258,15 @@ function renderTick(now = Date.now()) {
 
 function renderEndsPreview() {
   const hours = clampHours(els.customHours.value);
-  if (hours === null) {
-    els.endsPreview.textContent = '';
-    return;
+  let text;
+  if (hours === null || hours !== Number(els.customHours.value)) {
+    // Matches the form's native validation instead of previewing a clamp
+    // the submit button would reject.
+    text = 'Locks run from 15 minutes (0.25) to 72 hours.';
+  } else {
+    text = `The lock would open at ${formatWhen(Date.now() + hours * HOUR_MS)}.`;
   }
-  const endsAt = Date.now() + hours * HOUR_MS;
-  els.endsPreview.textContent = `The lock would open at ${formatWhen(endsAt)}.`;
+  if (els.endsPreview.textContent !== text) els.endsPreview.textContent = text;
 }
 
 function renderFinishedBanner() {
@@ -292,7 +375,17 @@ function renderVaultCount() {
 
 // ---------------------------------------------------------------- lock flow
 
+// A vault draft typed but not yet sealed shouldn't vanish when the lock ends
+// out from under it — seal it so it's released alongside the others.
+function sealDraftIfAny() {
+  const draft = els.vaultText.value.trim();
+  if (!draft || !state.lock) return;
+  state = holdMessage(state, draft, Date.now());
+  els.vaultText.value = '';
+}
+
 function completeLock() {
+  sealDraftIfAny();
   const endedAt = Math.min(Date.now(), state.lock.endsAt);
   const { hours } = state.lock;
   state = finishLock(state, Date.now(), 'completed');
@@ -306,6 +399,13 @@ function completeLock() {
 }
 
 function breakLock() {
+  // The 250ms tick may not have noticed expiry yet: a lock that already ran
+  // out was served in full and must never be recorded as broken.
+  if (!isActive(state.lock, Date.now())) {
+    completeLock();
+    return;
+  }
+  sealDraftIfAny();
   state = finishLock(state, Date.now(), 'broken');
   finishedNotice = { outcome: 'broken' };
   resetBreakFlow();
@@ -316,6 +416,11 @@ function breakLock() {
 }
 
 function emergencyExit() {
+  if (!isActive(state.lock, Date.now())) {
+    completeLock();
+    return;
+  }
+  sealDraftIfAny();
   state = finishLock(state, Date.now(), 'emergency');
   finishedNotice = { outcome: 'emergency' };
   resetBreakFlow();
@@ -336,8 +441,7 @@ els.presetRow.addEventListener('click', (event) => {
   if (!button) return;
   for (const p of els.presetRow.querySelectorAll('.preset')) {
     p.classList.toggle('is-selected', p === button);
-    if (p === button) p.setAttribute('aria-pressed', 'true');
-    else p.removeAttribute('aria-pressed');
+    p.setAttribute('aria-pressed', String(p === button));
   }
   els.customHours.value = button.dataset.hours;
   renderEndsPreview();
@@ -347,7 +451,7 @@ els.customHours.addEventListener('input', () => {
   const preset = selectedPreset();
   if (preset && preset.dataset.hours !== els.customHours.value) {
     preset.classList.remove('is-selected');
-    preset.removeAttribute('aria-pressed');
+    preset.setAttribute('aria-pressed', 'false');
   }
   renderEndsPreview();
 });
@@ -356,12 +460,10 @@ els.notify.addEventListener('change', async () => {
   state.settings.notify = els.notify.checked;
   if (els.notify.checked && 'Notification' in window && Notification.permission === 'default') {
     const permission = await Notification.requestPermission();
-    if (permission !== 'granted') {
-      state.settings.notify = false;
-      els.notify.checked = false;
-    }
+    if (permission !== 'granted') state.settings.notify = false;
   }
   saveState();
+  renderNotifyControl();
 });
 
 els.trustedName.addEventListener('input', () => {
@@ -420,17 +522,23 @@ els.vaultForm.addEventListener('submit', (event) => {
   announce('Message sealed until the lock opens.');
 });
 
-// -------- break-glass flow: hold 5 s → type the phrase → wait 60 s --------
+// ---- break-glass flow: hold 5 s → memory rounds → wait 60 s --------------
 
 function resetBreakFlow() {
   breakFlow.stage = 'idle';
+  breakFlow.phase = 'idle';
+  breakFlow.round = 0;
+  breakFlow.sequence = '';
   clearInterval(breakFlow.holdTimer);
+  clearInterval(breakFlow.gateTimer);
   clearInterval(breakFlow.coolTimer);
   breakFlow.holdTimer = 0;
+  breakFlow.gateTimer = 0;
   breakFlow.coolTimer = 0;
   els.holdFill.style.width = '0%';
-  els.holdLabel.textContent = 'Hold to begin';
-  els.phraseInput.value = '';
+  els.holdLabel.textContent = 'Press to begin';
+  els.gateAnswer.value = '';
+  els.gateFeedback.textContent = '';
   els.breakNow.disabled = true;
   if (els.breakDetails) els.breakDetails.open = false;
   renderBreakFlow();
@@ -438,10 +546,13 @@ function resetBreakFlow() {
 
 function renderBreakFlow() {
   els.stepHold.hidden = false;
-  els.stepPhrase.hidden = breakFlow.stage === 'idle';
+  els.stepMemory.hidden = breakFlow.stage !== 'memory';
   els.stepWait.hidden = breakFlow.stage !== 'wait';
 }
 
+// Press once to arm a five-second countdown; press again to stop it. A plain
+// click (mouse, touch, keyboard, voice control, switch access) is the only
+// gesture required, so every input method can operate it.
 function beginHold() {
   if (breakFlow.stage !== 'idle' || breakFlow.holdTimer) return;
   breakFlow.holdStart = Date.now();
@@ -450,15 +561,13 @@ function beginHold() {
     const pct = Math.min(100, (held / HOLD_TO_BREAK_MS) * 100);
     els.holdFill.style.width = `${pct}%`;
     const secondsLeft = Math.ceil((HOLD_TO_BREAK_MS - held) / 1000);
-    els.holdLabel.textContent = secondsLeft > 0 ? `Keep holding… ${secondsLeft}` : 'Done';
+    els.holdLabel.textContent = secondsLeft > 0 ? `Wait… ${secondsLeft} (press to stop)` : 'Done';
     if (held >= HOLD_TO_BREAK_MS) {
       clearInterval(breakFlow.holdTimer);
       breakFlow.holdTimer = 0;
-      breakFlow.stage = 'phrase';
       els.holdLabel.textContent = 'Step 1 done';
-      renderBreakFlow();
-      els.phraseInput.focus();
-      announce(`Step one done. Type the phrase: ${BREAK_PHRASE}.`);
+      enterGate();
+      announce('Step one done. The memory check is next.');
     }
   }, 100);
 }
@@ -468,39 +577,131 @@ function cancelHold() {
   clearInterval(breakFlow.holdTimer);
   breakFlow.holdTimer = 0;
   els.holdFill.style.width = '0%';
-  els.holdLabel.textContent = 'Hold to begin';
+  els.holdLabel.textContent = 'Press to begin';
 }
 
-els.holdButton.addEventListener('pointerdown', (event) => {
-  event.preventDefault();
-  try {
-    els.holdButton.setPointerCapture(event.pointerId);
-  } catch {
-    // Synthetic events can carry an unknown pointerId; capture is optional.
-  }
-  beginHold();
+els.holdButton.addEventListener('click', () => {
+  if (breakFlow.holdTimer) cancelHold();
+  else beginHold();
 });
-els.holdButton.addEventListener('pointerup', cancelHold);
-els.holdButton.addEventListener('pointercancel', cancelHold);
-els.holdButton.addEventListener('keydown', (event) => {
-  if ((event.key === ' ' || event.key === 'Enter') && !event.repeat) {
-    event.preventDefault();
-    beginHold();
-  }
-});
-els.holdButton.addEventListener('keyup', (event) => {
-  if (event.key === ' ' || event.key === 'Enter') cancelHold();
-});
-els.holdButton.addEventListener('blur', cancelHold);
 
-els.phraseInput.addEventListener('input', () => {
-  if (breakFlow.stage !== 'phrase') return;
-  if (els.phraseInput.value.trim().toLowerCase() !== BREAK_PHRASE) return;
+// ---- the memory gate ----
+
+function enterGate() {
+  breakFlow.stage = 'memory';
+  breakFlow.round = 0;
+  breakFlow.phase = gateClosedRemaining(state.lock, Date.now()) > 0 ? 'closed' : 'intro';
+  renderBreakFlow();
+  renderGate();
+}
+
+function renderGate() {
+  const cfg = GATE_ROUNDS[Math.min(breakFlow.round, GATE_ROUNDS.length - 1)];
+  els.gateRoundLabel.textContent =
+    `Round ${Math.min(breakFlow.round + 1, GATE_ROUNDS.length)} of ${GATE_ROUNDS.length}.`;
+  els.gateSequence.hidden = breakFlow.phase !== 'study';
+  els.gateCountdown.hidden = breakFlow.phase !== 'study' && breakFlow.phase !== 'delay';
+  els.gateStart.hidden = breakFlow.phase !== 'intro';
+  els.gateForm.hidden = breakFlow.phase !== 'entry';
+
+  if (breakFlow.phase === 'closed') {
+    renderGateClosed();
+  } else if (breakFlow.phase === 'intro') {
+    const how = cfg.kind === 'reverse' ? 'type them back in reverse order — last digit first' : 'type them back';
+    els.gateInstruction.textContent =
+      `You'll see ${cfg.length} digits for ${cfg.studyMs / 1000} seconds, then a ${cfg.delayMs / 1000}-second quiet wait — then ${how}.`;
+    els.gateStart.textContent = `Start round ${breakFlow.round + 1}`;
+  } else if (breakFlow.phase === 'study') {
+    els.gateInstruction.textContent = 'Hold these in mind.';
+    els.gateSequence.textContent = [...breakFlow.sequence].join(' ');
+  } else if (breakFlow.phase === 'delay') {
+    els.gateInstruction.textContent = 'Keep holding them…';
+  } else if (breakFlow.phase === 'entry') {
+    els.gateInstruction.textContent = cfg.kind === 'reverse'
+      ? 'Type the digits in reverse order — last digit first.'
+      : 'Type the digits.';
+    els.gateAnswer.value = '';
+    els.gateAnswer.focus();
+  }
+}
+
+// Shown when a failed round has closed the gate; also reopens it on expiry.
+function renderGateClosed() {
+  const remaining = gateClosedRemaining(state.lock, Date.now());
+  if (remaining <= 0) {
+    breakFlow.round = 0;
+    breakFlow.phase = 'intro';
+    els.gateFeedback.textContent = '';
+    renderGate();
+    return;
+  }
+  els.gateInstruction.textContent =
+    "Not this time — your short-term memory isn't back yet, and that's exactly what the lock is for.";
+  els.gateFeedback.textContent = `The gate reopens in ${formatDuration(remaining)}.`;
+}
+
+els.gateStart.addEventListener('click', () => {
+  if (breakFlow.stage !== 'memory' || breakFlow.phase !== 'intro') return;
+  const cfg = GATE_ROUNDS[breakFlow.round];
+  breakFlow.sequence = makeSequence(cfg.length);
+  breakFlow.phase = 'study';
+  breakFlow.phaseEndsAt = Date.now() + cfg.studyMs;
+  els.gateFeedback.textContent = '';
+  renderGate();
+  announce(`Remember these digits: ${[...breakFlow.sequence].join(' ')}.`);
+  breakFlow.gateTimer = setInterval(() => {
+    const now = Date.now();
+    const left = breakFlow.phaseEndsAt - now;
+    els.gateCountdown.textContent = String(Math.max(0, Math.ceil(left / 1000)));
+    if (left > 0) return;
+    if (breakFlow.phase === 'study') {
+      breakFlow.phase = 'delay';
+      breakFlow.phaseEndsAt = now + cfg.delayMs;
+      renderGate();
+      announce('Digits hidden. Hold them in mind while we wait.');
+    } else if (breakFlow.phase === 'delay') {
+      clearInterval(breakFlow.gateTimer);
+      breakFlow.gateTimer = 0;
+      breakFlow.phase = 'entry';
+      renderGate();
+      announce(cfg.kind === 'reverse'
+        ? 'Now type the digits in reverse order, last digit first.'
+        : 'Now type the digits you remember.');
+    }
+  }, 100);
+});
+
+els.gateForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (breakFlow.stage !== 'memory' || breakFlow.phase !== 'entry') return;
+  const cfg = GATE_ROUNDS[breakFlow.round];
+  if (checkRecall(breakFlow.sequence, els.gateAnswer.value, cfg.kind)) {
+    breakFlow.round += 1;
+    if (breakFlow.round >= GATE_ROUNDS.length) {
+      els.gateFeedback.textContent = '';
+      startCoolDown();
+    } else {
+      breakFlow.phase = 'intro';
+      renderGate();
+      els.gateFeedback.textContent = `Round ${breakFlow.round} done.`;
+      announce(`Round ${breakFlow.round} passed. One more.`);
+    }
+  } else {
+    state = closeGate(state, Date.now());
+    saveState();
+    breakFlow.phase = 'closed';
+    renderGate();
+    announce('Not this round. The gate closes for ten minutes — the lock stays.');
+  }
+});
+
+function startCoolDown() {
   breakFlow.stage = 'wait';
   breakFlow.coolEndsAt = Date.now() + COOL_DOWN_MS;
   renderBreakFlow();
+  els.cooldownRemaining.textContent = String(Math.ceil(COOL_DOWN_MS / 1000));
   els.breakCancel.focus();
-  announce('Step two done. One minute to sit with it.');
+  announce('Memory check passed. One minute to sit with it.');
   breakFlow.coolTimer = setInterval(() => {
     const left = Math.max(0, Math.ceil((breakFlow.coolEndsAt - Date.now()) / 1000));
     els.cooldownRemaining.textContent = String(left);
@@ -511,7 +712,7 @@ els.phraseInput.addEventListener('input', () => {
       announce('The cool-down is over. You can open the lock now, or keep it.');
     }
   }, 250);
-});
+}
 
 els.breakNow.addEventListener('click', () => {
   if (breakFlow.stage !== 'wait' || els.breakNow.disabled) return;
@@ -547,16 +748,29 @@ els.emergencyCancel.addEventListener('click', () => {
 // ---------------------------------------------------------------- lifecycle
 
 setInterval(() => {
-  if (state.lock) renderTick();
+  if (state.lock) {
+    renderTick();
+  } else if (!els.viewSetup.hidden) {
+    renderEndsPreview(); // keep "would open at…" honest as time passes
+  }
+  // Keep the "gate reopens in…" countdown live, and reopen it on expiry.
+  if (breakFlow.stage === 'memory' && breakFlow.phase === 'closed') renderGateClosed();
 }, 250);
 
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) render();
+  if (!document.hidden) resyncFromStorage();
+});
+
+// Restored from the back/forward cache: storage events were not delivered
+// while parked, so the in-memory state may be behind another tab's writes.
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) resyncFromStorage();
 });
 
 // Another tab changed the state (started, extended, or broke a lock).
 window.addEventListener('storage', (event) => {
   if (event.key !== STORAGE_KEY) return;
+  lastSavedRaw = event.newValue;
   state = loadState();
   resetBreakFlow();
   resetEmergency();

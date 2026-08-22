@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MIN_HOURS, MAX_HOURS, HOUR_MS,
+  MIN_HOURS, MAX_HOURS, HOUR_MS, GATE_ROUNDS, GATE_RETRY_MS,
+  makeSequence, isTrivialSequence, checkRecall, closeGate, gateClosedRemaining,
   initialState, reviveState, clampHours, startLock, addHour, finishLock,
   holdMessage, dismissMessage, heldMessages, releasedMessages,
   isActive, remainingMs, progress, formatDuration, formatHours, currentStreak,
@@ -97,6 +98,11 @@ test('vault: hold during lock, release on finish, dismiss after', () => {
 
   assert.throws(() => holdMessage(state, '   ', T0), RangeError);
 
+  // A broken lock releases sealed messages just like a completed one.
+  const brokenRelease = finishLock(state, T0 + 60_000, 'broken');
+  assert.equal(heldMessages(brokenRelease).length, 0);
+  assert.equal(releasedMessages(brokenRelease).length, 2);
+
   state = finishLock(state, T0 + HOUR_MS, 'completed');
   assert.equal(heldMessages(state).length, 0);
   assert.equal(releasedMessages(state).length, 2);
@@ -166,6 +172,17 @@ test('reviveState survives garbage and keeps good data', () => {
   assert.equal(revived.vault.length, 1);
   assert.equal(revived.lock, null);
 
+  // History entries missing a usable hours value get one derived from the
+  // timestamps instead of rendering as NaN.
+  const noHours = reviveState({
+    history: [{ startedAt: T0, endsAt: T0 + 2 * HOUR_MS, endedAt: T0 + 2 * HOUR_MS, outcome: 'completed' }],
+  });
+  assert.equal(noHours.history[0].hours, 2);
+  const noEndsAt = reviveState({
+    history: [{ startedAt: T0, endedAt: T0 + HOUR_MS, outcome: 'broken', hours: 'x' }],
+  });
+  assert.equal(noEndsAt.history[0].hours, 1);
+
   // Emergency outcomes survive revival; unknown outcomes are dropped.
   const withEmergency = finishLock(startLock(initialState(), { hours: 1 }, T0), T0 + 1, 'emergency');
   assert.equal(reviveState(JSON.parse(JSON.stringify(withEmergency))).history.length, 1);
@@ -185,6 +202,48 @@ test('reviveState survives garbage and keeps good data', () => {
   assert.equal(trusted.settings.trustedPhone, '+1 555 010 1234');
   assert.equal(reviveState({ settings: { trustedName: 42 } }).settings.trustedName, '');
   assert.equal(reviveState({ settings: { trustedName: 'x'.repeat(200) } }).settings.trustedName.length, 60);
+});
+
+test('memory gate: sequences are the right shape and never trivial', () => {
+  for (const cfg of GATE_ROUNDS) {
+    const seq = makeSequence(cfg.length);
+    assert.equal(seq.length, cfg.length);
+    assert.match(seq, /^\d+$/);
+    assert.equal(isTrivialSequence(seq), false);
+  }
+  // A pathological rand source still terminates (returns the last draw).
+  assert.equal(makeSequence(6, () => 0), '000000');
+
+  assert.equal(isTrivialSequence('777777'), true);
+  assert.equal(isTrivialSequence('345678'), true);
+  assert.equal(isTrivialSequence('901'), true); // ascending wraps 9→0
+  assert.equal(isTrivialSequence('210987'), true);
+  assert.equal(isTrivialSequence('472913'), false);
+});
+
+test('memory gate: recall checking is strict on digits, loose on formatting', () => {
+  assert.equal(checkRecall('472913', '472913', 'forward'), true);
+  assert.equal(checkRecall('472913', ' 47 29-13 ', 'forward'), true);
+  assert.equal(checkRecall('472913', '472914', 'forward'), false);
+  assert.equal(checkRecall('472913', '47291', 'forward'), false);
+  assert.equal(checkRecall('472913', '', 'forward'), false);
+  assert.equal(checkRecall('472913', null, 'forward'), false);
+  assert.equal(checkRecall('12345', '54321', 'reverse'), true);
+  assert.equal(checkRecall('12345', '12345', 'reverse'), false);
+});
+
+test('memory gate: a failed round closes the gate for ten minutes', () => {
+  let state = startLock(initialState(), { hours: 4 }, T0);
+  assert.equal(gateClosedRemaining(state.lock, T0), 0);
+  state = closeGate(state, T0 + 1000);
+  assert.equal(gateClosedRemaining(state.lock, T0 + 1000), GATE_RETRY_MS);
+  assert.equal(gateClosedRemaining(state.lock, T0 + 1000 + GATE_RETRY_MS), 0);
+  assert.throws(() => closeGate(initialState(), T0), /No active lock/);
+
+  // The closed-until timestamp survives a reload.
+  const revived = reviveState(JSON.parse(JSON.stringify(state)));
+  assert.equal(gateClosedRemaining(revived.lock, T0 + 1000), GATE_RETRY_MS);
+  assert.equal(gateClosedRemaining(null, T0), 0);
 });
 
 test('telHref keeps a leading plus and digits only', () => {

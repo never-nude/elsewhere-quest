@@ -5,9 +5,18 @@ export const STORAGE_KEY = 'textlock/v1';
 export const MIN_HOURS = 0.25;
 export const MAX_HOURS = 72;
 export const HOUR_MS = 3_600_000;
-export const BREAK_PHRASE = 'let me out early';
 export const HOLD_TO_BREAK_MS = 5_000;
 export const COOL_DOWN_MS = 60_000;
+
+// The early-unlock gate is a short-term memory check — the faculty the
+// medicine actually blurs. Study a digit sequence, hold it through a silent
+// retention delay, then recall it (round two in reverse order). Failing any
+// round closes the gate for GATE_RETRY_MS.
+export const GATE_ROUNDS = [
+  { kind: 'forward', length: 6, studyMs: 6_000, delayMs: 15_000 },
+  { kind: 'reverse', length: 5, studyMs: 5_000, delayMs: 15_000 },
+];
+export const GATE_RETRY_MS = 10 * 60_000;
 
 export function initialState() {
   return {
@@ -31,12 +40,18 @@ export function reviveState(raw) {
       endsAt: raw.lock.endsAt,
       hours: Number.isFinite(raw.lock.hours) ? raw.lock.hours : (raw.lock.endsAt - raw.lock.startedAt) / HOUR_MS,
       reason: typeof raw.lock.reason === 'string' ? raw.lock.reason : '',
+      gateClosedUntil: Number.isFinite(raw.lock.gateClosedUntil) ? raw.lock.gateClosedUntil : 0,
     };
   }
   if (Array.isArray(raw.history)) {
-    state.history = raw.history.filter((entry) => entry && typeof entry === 'object'
-      && Number.isFinite(entry.startedAt) && Number.isFinite(entry.endedAt)
-      && OUTCOMES.includes(entry.outcome));
+    state.history = raw.history
+      .filter((entry) => entry && typeof entry === 'object'
+        && Number.isFinite(entry.startedAt) && Number.isFinite(entry.endedAt)
+        && OUTCOMES.includes(entry.outcome))
+      .map((entry) => (Number.isFinite(entry.hours) ? entry : {
+        ...entry,
+        hours: (Number.isFinite(entry.endsAt) ? entry.endsAt - entry.startedAt : entry.endedAt - entry.startedAt) / HOUR_MS,
+      }));
   }
   if (Array.isArray(raw.vault)) {
     state.vault = raw.vault.filter((item) => item && typeof item === 'object'
@@ -73,6 +88,7 @@ export function startLock(state, { hours, reason = '' }, now) {
       endsAt: now + Math.round(clamped * HOUR_MS),
       hours: clamped,
       reason: reason.trim().slice(0, 280),
+      gateClosedUntil: 0,
     },
   };
 }
@@ -177,6 +193,45 @@ export function currentStreak(history) {
     streak += 1;
   }
   return streak;
+}
+
+// A digit sequence for one memory round. Regenerates when the draw is
+// trivially memorable (all one digit, or a straight run like 456789).
+export function makeSequence(length, rand = Math.random) {
+  let sequence = '';
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    sequence = '';
+    for (let i = 0; i < length; i += 1) sequence += Math.floor(rand() * 10);
+    if (!isTrivialSequence(sequence)) return sequence;
+  }
+  return sequence;
+}
+
+export function isTrivialSequence(sequence) {
+  const digits = [...sequence].map(Number);
+  const allSame = digits.every((d) => d === digits[0]);
+  const ascending = digits.every((d, i) => i === 0 || d === (digits[i - 1] + 1) % 10);
+  const descending = digits.every((d, i) => i === 0 || d === (digits[i - 1] + 9) % 10);
+  return allSame || ascending || descending;
+}
+
+// Recall answers tolerate spaces and punctuation, but every digit must match.
+export function checkRecall(sequence, answer, kind) {
+  const cleaned = String(answer ?? '').replace(/\D/g, '');
+  if (!cleaned) return false;
+  const expected = kind === 'reverse' ? [...sequence].reverse().join('') : sequence;
+  return cleaned === expected;
+}
+
+// A failed memory round closes the gate: no new attempt until it reopens.
+export function closeGate(state, now) {
+  if (!state.lock) throw new Error('No active lock.');
+  return { ...state, lock: { ...state.lock, gateClosedUntil: now + GATE_RETRY_MS } };
+}
+
+export function gateClosedRemaining(lock, now) {
+  if (!lock || !Number.isFinite(lock.gateClosedUntil)) return 0;
+  return Math.max(0, lock.gateClosedUntil - now);
 }
 
 // "tel:" href from a free-form phone number, or null if nothing dialable.

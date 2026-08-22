@@ -1,5 +1,5 @@
 // Offline app shell for TextLock. Bump CACHE when any shell file changes.
-const CACHE = 'textlock-v3';
+const CACHE = 'textlock-v5';
 const SHELL = [
   './',
   './index.html',
@@ -9,11 +9,19 @@ const SHELL = [
   './manifest.webmanifest',
   './icon.svg',
   './icon-maskable.svg',
+  './icon-180.png',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-mask-512.png',
 ];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()),
+    caches.open(CACHE)
+      // cache: 'reload' bypasses the HTTP cache so a freshly bumped shell
+      // can never be seeded with stale copies of the old one.
+      .then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
   );
 });
 
@@ -39,7 +47,10 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
+      // './' is the runtime-refreshed copy of the shell page; the install-time
+      // './index.html' entry is the last resort.
       .catch(() => caches.match(event.request, { ignoreSearch: true })
+        .then((cached) => cached || caches.match('./'))
         .then((cached) => cached || caches.match('./index.html'))),
   );
 });

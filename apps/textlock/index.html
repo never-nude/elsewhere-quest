@@ -8,6 +8,7 @@
   <meta name="theme-color" content="#10141f" />
   <title>TextLock — hold your line</title>
   <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./icon-180.png" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
@@ -26,7 +27,7 @@
     <p id="announcer" class="visually-hidden" aria-live="polite"></p>
 
     <!-- ===================== Setup view ===================== -->
-    <section id="view-setup" class="view" hidden>
+    <section id="view-setup" class="view" tabindex="-1" hidden>
       <div id="finished-banner" class="banner" hidden>
         <h2 id="finished-banner-title">The line is open.</h2>
         <p id="finished-banner-detail"></p>
@@ -43,12 +44,12 @@
         <fieldset class="duration">
           <legend>How long?</legend>
           <div id="preset-row" class="preset-row" role="group" aria-label="Preset durations">
-            <button type="button" class="preset" data-hours="1">1 h</button>
-            <button type="button" class="preset" data-hours="2">2 h</button>
+            <button type="button" class="preset" data-hours="1" aria-pressed="false">1 h</button>
+            <button type="button" class="preset" data-hours="2" aria-pressed="false">2 h</button>
             <button type="button" class="preset is-selected" data-hours="4" aria-pressed="true">4 h</button>
-            <button type="button" class="preset" data-hours="8">8 h</button>
-            <button type="button" class="preset" data-hours="12">12 h</button>
-            <button type="button" class="preset" data-hours="24">24 h</button>
+            <button type="button" class="preset" data-hours="8" aria-pressed="false">8 h</button>
+            <button type="button" class="preset" data-hours="12" aria-pressed="false">12 h</button>
+            <button type="button" class="preset" data-hours="24" aria-pressed="false">24 h</button>
           </div>
           <label class="field">
             <span>Custom hours (0.25–72)</span>
@@ -66,7 +67,7 @@
 
         <label class="field field--check">
           <input id="notify" name="notify" type="checkbox" />
-          <span>Notify me when the lock opens <em class="muted">(only works while this page stays open)</em></span>
+          <span>Notify me when the lock opens <em class="muted">(only works while this page stays open)</em> <span id="notify-note" class="muted"></span></span>
         </label>
 
         <button id="start-lock" class="button button--primary" type="submit">Lock it</button>
@@ -116,7 +117,7 @@
     </section>
 
     <!-- ===================== Locked view ===================== -->
-    <section id="view-locked" class="view" hidden>
+    <section id="view-locked" class="view" tabindex="-1" hidden>
       <div class="card card--lock">
         <h2 class="lock-heading">Locked</h2>
         <p id="lock-reason" class="lock-reason" hidden></p>
@@ -143,23 +144,31 @@
 
       <details class="card card--details card--break" id="break-details">
         <summary>Break the lock early</summary>
-        <p>Breaking early is allowed — this is your promise, not a cage. It just takes three slow steps, so it never happens on impulse.</p>
+        <p>Breaking early is allowed — this is your promise, not a cage. But the medicine blurs short-term memory, so the gate is a memory check: if you can't hold a few digits in mind right now, you're not ready to text anyone either.</p>
 
         <div class="break-step" id="break-step-hold">
-          <p><strong>Step 1.</strong> Press and hold for five seconds.</p>
+          <p><strong>Step 1.</strong> Press the button, then let five slow seconds pass. Press again to stop.</p>
           <button id="hold-button" class="button button--hold" type="button">
-            <span id="hold-label">Hold to begin</span>
+            <span id="hold-label">Press to begin</span>
             <span id="hold-fill" class="hold-fill" aria-hidden="true"></span>
           </button>
         </div>
 
-        <div class="break-step" id="break-step-phrase" hidden>
-          <p><strong>Step 2.</strong> Type <em>let me out early</em> exactly.</p>
-          <label class="field">
-            <span class="visually-hidden">Type the phrase: let me out early</span>
-            <input id="phrase-input" type="text" autocomplete="off" autocapitalize="none"
-                   spellcheck="false" placeholder="let me out early" />
-          </label>
+        <div class="break-step" id="break-step-memory" hidden>
+          <p><strong>Step 2.</strong> Two short memory rounds. <span id="gate-round-label"></span></p>
+          <p id="gate-instruction" class="muted"></p>
+          <p id="gate-sequence" class="gate-sequence" hidden></p>
+          <p id="gate-countdown" class="cooldown" hidden></p>
+          <button id="gate-start" class="button" type="button">Start round 1</button>
+          <form id="gate-form" hidden>
+            <label class="field">
+              <span class="visually-hidden">The digits you remember</span>
+              <input id="gate-answer" type="text" inputmode="numeric" autocomplete="off"
+                     autocapitalize="none" spellcheck="false" placeholder="digits" />
+            </label>
+            <button class="button" type="submit">Check</button>
+          </form>
+          <p id="gate-feedback" class="muted" role="status"></p>
         </div>
 
         <div class="break-step" id="break-step-wait" hidden>
