@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
 import { USDZExporter } from 'three/addons/exporters/USDZExporter.js'
-import { buildBouquet } from './bouquet'
+import { buildBouquet, DEFAULT_ROSE_COLOR, ROSE_COLORS, type RoseColor } from './bouquet'
 import './styles.css'
 
 // ---------------------------------------------------------------- params
@@ -14,7 +14,11 @@ const rawName = (params.get('to') ?? DEFAULT_NAME).trim().slice(0, 24)
 const name = rawName.replace(/[^\p{L}\p{N} '’.&!-]/gu, '') || DEFAULT_NAME
 const from = (params.get('from') ?? 'Mike').trim().slice(0, 40)
 const note = (params.get('note') ?? 'Since I can’t hand you these over FaceTime.').trim().slice(0, 140)
-const isDefaultName = name.toLowerCase() === DEFAULT_NAME.toLowerCase()
+const rawColor = (params.get('color') ?? DEFAULT_ROSE_COLOR).toLowerCase()
+const color: RoseColor = rawColor in ROSE_COLORS ? (rawColor as RoseColor) : DEFAULT_ROSE_COLOR
+// The pre-baked files match the default name and color; anything else is
+// generated in the browser.
+const isDefaultName = name.toLowerCase() === DEFAULT_NAME.toLowerCase() && color === DEFAULT_ROSE_COLOR
 
 // Pre-built AR files for the default recipient live next to the page. Anyone
 // else gets a model generated on the fly.
@@ -44,7 +48,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture
 scene.environmentIntensity = 0.55
 
 const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 20)
-camera.position.set(0.0, 0.42, 1.3)
+camera.position.set(0.0, 0.85, 1.3)
 
 const sun = new THREE.DirectionalLight(0xfff1e0, 2.2)
 sun.position.set(0.5, 1.2, 0.7)
@@ -68,13 +72,13 @@ floor.receiveShadow = true
 scene.add(floor)
 
 // The bouquet is the only thing that gets exported.
-const { group: bouquet } = buildBouquet(name)
+const { group: bouquet } = buildBouquet(name, color)
 const pivot = new THREE.Group()
 pivot.add(bouquet)
 scene.add(pivot)
 
 const controls = new OrbitControls(camera, canvas)
-controls.target.set(0, 0.21, 0)
+controls.target.set(0, 0.26, 0)
 controls.enablePan = false
 controls.enableDamping = true
 controls.dampingFactor = 0.06
@@ -89,8 +93,8 @@ controls.addEventListener('end', () => (idleSince = performance.now()))
 // Frame the bouquet so it sits between the header and the card at any aspect.
 function frameDistance(aspect: number) {
   const halfTan = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))
-  const byHeight = 0.36 / halfTan // room above and below a ~0.45 m bouquet
-  const byWidth = 0.19 / (halfTan * aspect)
+  const byHeight = 0.43 / halfTan // room above and below a ~0.55 m bouquet
+  const byWidth = 0.2 / (halfTan * aspect)
   return Math.max(byHeight, byWidth)
 }
 
@@ -148,8 +152,17 @@ async function toGLB(): Promise<ArrayBuffer> {
 
 async function toUSDZ(): Promise<Uint8Array> {
   const exporter = new USDZExporter()
-  return exporter.parseAsync(exportGroup(), { quickLookCompatible: true })
+  // Anchor to a horizontal surface (a table, the floor) at real-world scale.
+  return exporter.parseAsync(exportGroup(), {
+    quickLookCompatible: true,
+    includeAnchoringProperties: true,
+    ar: { anchoring: { type: 'plane' }, planeAnchoring: { alignment: 'horizontal' } },
+  })
 }
+
+// Quick Look fragment: keep the bouquet at true size instead of letting a
+// pinch resize it.
+const QUICK_LOOK_FRAGMENT = '#allowsContentScaling=0'
 
 // Hook used by tools/bouquet/export-assets.mjs to bake the static files.
 ;(window as unknown as { __bouquet: unknown }).__bouquet = {
@@ -212,7 +225,7 @@ async function launchQuickLook() {
       const blob = new Blob([await toUSDZ() as BlobPart], { type: 'model/vnd.usdz+zip' })
       href = URL.createObjectURL(blob)
     }
-    quickLookAnchor.href = href
+    quickLookAnchor.href = href + QUICK_LOOK_FRAGMENT
     quickLookAnchor.click()
   } finally {
     setBusy(false)
@@ -227,7 +240,7 @@ async function launchSceneViewer() {
   }
   const fallback = encodeURIComponent(location.href)
   const intent =
-    `intent://arvr.google.com/scene-viewer/1.0?file=${encodeURIComponent(STATIC_GLB)}&mode=ar_preferred&title=${encodeURIComponent('For ' + name)}` +
+    `intent://arvr.google.com/scene-viewer/1.0?file=${encodeURIComponent(STATIC_GLB)}&mode=ar_preferred&resizable=false&title=${encodeURIComponent('For ' + name)}` +
     `#Intent;scheme=https;package=com.google.android.googlequicksearchbox;action=android.intent.action.VIEW;` +
     `S.browser_fallback_url=${fallback};end;`
   location.href = intent
@@ -330,13 +343,13 @@ $('#ar-exit').addEventListener('click', () => xrSession?.end())
 
 if (supportsQuickLook) {
   arButton.addEventListener('click', launchQuickLook)
-  arHint.textContent = 'Opens in AR Quick Look. Move your phone to find a table.'
+  arHint.textContent = 'Opens in AR at real size. Point your phone at a table or the floor.'
 } else if (isIOS) {
   arButton.hidden = true
   arHint.textContent = 'Open this link in Safari to see the bouquet in your room.'
 } else if (isAndroid) {
   arButton.addEventListener('click', launchWebXR)
-  arHint.textContent = 'Point your camera at a table, then tap to set it down.'
+  arHint.textContent = 'Point your camera at a table or the floor, then tap to set it down.'
 } else {
   arButton.hidden = true
   arHint.textContent = 'Open this on your phone to place the bouquet in your room.'

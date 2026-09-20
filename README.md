@@ -36,11 +36,11 @@ Blocking or reporting removes that demo signal from the receiver for the rest of
 
 ## Bouquet (`/bouquet/`)
 
-A standalone page at [elsewhere.quest/bouquet/](https://elsewhere.quest/bouquet/): a procedurally built 3D bouquet with a name tag, viewable in AR on a phone. It shares the Vite build (`bouquet/index.html` + `src/bouquet/`) and ships as a second page in `dist/`.
+A standalone page at [elsewhere.quest/bouquet/](https://elsewhere.quest/bouquet/): a procedurally built dozen roses with a name tag, at real-world scale (about 55 cm tall), placeable on a table or floor in AR. It shares the Vite build (`bouquet/index.html` + `src/bouquet/`) and ships as a second page in `dist/`.
 
-- Default recipient is Omaris. `?to=Name` changes the name (and the tag), `?from=` the sign-off, `?note=` the line under the bouquet. The name seeds the arrangement, so each name gets its own bouquet.
-- iPhone/iPad (Safari): the button opens AR Quick Look. The default bouquet uses the pre-baked `public/bouquet/omaris.usdz`; other names generate a USDZ in the browser.
-- Android (Chrome): WebXR hit-test placement, with Google Scene Viewer (`omaris.glb`) as the fallback.
+- Default recipient is Omaris. `?to=Name` changes the name (and the tag), `?from=` the sign-off, `?note=` the line under the bouquet, `?color=red|pink|blush|coral|white|yellow` the roses. The name seeds the arrangement, so each name gets its own bouquet.
+- iPhone/iPad (Safari): the button opens AR Quick Look anchored to a horizontal surface with pinch-scaling disabled, so the bouquet stays true size. The default bouquet uses the pre-baked `public/bouquet/omaris.usdz`; other names or colors generate a USDZ in the browser.
+- Android (Chrome): WebXR hit-test placement, with Google Scene Viewer (`omaris.glb`, non-resizable) as the fallback.
 - Desktop: orbit the model, no AR button.
 
 Re-bake the static AR files after changing the model (needs the pre-installed Chromium):

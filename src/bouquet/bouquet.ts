@@ -1,7 +1,7 @@
-// Procedural hand-tied bouquet. Everything is geometry + solid
+// Procedural dozen-rose bouquet. Everything is geometry + solid
 // MeshStandardMaterials so it exports cleanly to GLB (Android) and USDZ
-// (iOS Quick Look). Units are meters; the origin is at the bottom of the
-// stems so the bouquet sits on a table in AR.
+// (iOS Quick Look). Units are meters at real-world scale; the origin is at
+// the bottom of the stems so the bouquet stands on a table in AR.
 
 import * as THREE from 'three'
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
@@ -39,16 +39,23 @@ type Rand = () => number
 
 // ---------------------------------------------------------------- materials
 
+export const ROSE_COLORS = {
+  red: { outer: '#c2263a', inner: '#861325' },
+  pink: { outer: '#ee86a6', inner: '#d3527c' },
+  blush: { outer: '#f3bcc6', inner: '#e58aa0' },
+  coral: { outer: '#ef7a5e', inner: '#d4503b' },
+  white: { outer: '#fbf6ee', inner: '#efe1cf' },
+  yellow: { outer: '#f5c94a', inner: '#e3a02c' },
+} as const
+
+export type RoseColor = keyof typeof ROSE_COLORS
+export const DEFAULT_ROSE_COLOR: RoseColor = 'red'
+
 const PALETTE = {
-  roseOuter: '#f3bcc6',
-  roseInner: '#e58aa0',
-  ranunculusOuter: '#f6b58f',
-  ranunculusInner: '#ec8a68',
-  cosmosPetal: '#fbf6ec',
-  cosmosBlush: '#f7d5dc',
-  pollen: '#e8b53c',
-  lavender: '#9c8bc9',
-  lavenderDeep: '#7d68b3',
+  roseOuter: ROSE_COLORS.red.outer,
+  roseInner: ROSE_COLORS.red.inner,
+  sepal: '#4f7a48',
+  leaf: '#3f6b3c',
   babysBreath: '#fdfbf6',
   sage: '#94ad97',
   stem: '#5e8a5a',
@@ -65,14 +72,15 @@ type MatKey = keyof typeof PALETTE
 // Thin, open surfaces (petals, leaves, paper) need to be visible from both
 // sides. USDZ/Quick Look does not reliably honor double-sided materials, so
 // instead of `side: DoubleSide` we bake a flipped copy of those surfaces.
-const TWO_SIDED = new Set<MatKey>(['roseOuter', 'roseInner', 'ranunculusOuter', 'ranunculusInner', 'cosmosPetal', 'cosmosBlush', 'sage', 'kraft', 'kraftInner'])
+const TWO_SIDED = new Set<MatKey>(['roseOuter', 'roseInner', 'sepal', 'leaf', 'sage', 'kraft', 'kraftInner'])
 
-function makeMaterials(): Record<MatKey, THREE.MeshStandardMaterial> {
+function makeMaterials(color: RoseColor): Record<MatKey, THREE.MeshStandardMaterial> {
   const out = {} as Record<MatKey, THREE.MeshStandardMaterial>
+  const colors: Record<MatKey, string> = { ...PALETTE, roseOuter: ROSE_COLORS[color].outer, roseInner: ROSE_COLORS[color].inner }
   for (const key of Object.keys(PALETTE) as MatKey[]) {
     out[key] = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(PALETTE[key]),
-      roughness: key === 'ribbon' ? 0.45 : key === 'ink' ? 0.6 : 0.85,
+      color: new THREE.Color(colors[key]),
+      roughness: key === 'ribbon' ? 0.45 : key === 'ink' ? 0.6 : key === 'roseOuter' || key === 'roseInner' ? 0.7 : 0.85,
       metalness: 0,
     })
     out[key].name = key
@@ -141,15 +149,17 @@ interface PetalOpts {
   segsU?: number
   segsV?: number
   tipPinch?: number
+  ruffle?: number
 }
 
 /** A single curved petal in the XY plane, base at the origin, growing along +Y. */
 function petalGeometry(o: PetalOpts) {
-  const segsU = o.segsU ?? 5
-  const segsV = o.segsV ?? 8
+  const segsU = o.segsU ?? 4
+  const segsV = o.segsV ?? 7
   const positions: number[] = []
   const indices: number[] = []
   const tipPinch = o.tipPinch ?? 0.35
+  const ruffle = o.ruffle ?? 0.06
   for (let j = 0; j <= segsV; j++) {
     const v = j / segsV
     // width profile: narrow base, widest ~60% up, soft rounded tip
@@ -162,7 +172,7 @@ function petalGeometry(o: PetalOpts) {
       const u = (i / segsU) * 2 - 1
       const x = u * (o.width / 2) * profile
       // cup across the width, plus a soft ruffle toward the tip edge
-      const z = zBend + o.cup * u * u * (0.35 + 0.65 * v) * o.width + 0.06 * o.width * Math.sin(u * Math.PI * 1.5) * v * v * v
+      const z = zBend + o.cup * u * u * (0.35 + 0.65 * v) * o.width + ruffle * o.width * Math.sin(u * Math.PI * 1.5) * v * v * v
       positions.push(x, y, z)
     }
   }
@@ -180,7 +190,7 @@ function petalGeometry(o: PetalOpts) {
   return g
 }
 
-// ---------------------------------------------------------------- flower heads
+// ---------------------------------------------------------------- heads
 // Each head builder adds geometry into the collector at `frame`, a matrix whose
 // +Y axis points along the flower's stem direction (up and out of the bouquet).
 
@@ -189,6 +199,7 @@ const _q = new THREE.Quaternion()
 const _e = new THREE.Euler()
 const _p = new THREE.Vector3()
 const _s = new THREE.Vector3(1, 1, 1)
+const X_AXIS = new THREE.Vector3(1, 0, 0)
 
 function compose(frame: THREE.Matrix4, position: THREE.Vector3, euler: THREE.Euler, scale = 1) {
   _q.setFromEuler(euler)
@@ -197,170 +208,101 @@ function compose(frame: THREE.Matrix4, position: THREE.Vector3, euler: THREE.Eul
   return new THREE.Matrix4().multiplyMatrices(frame, _m)
 }
 
-function spiralHead(
-  c: Collector,
-  frame: THREE.Matrix4,
-  rand: Rand,
-  cfg: {
-    petals: number
-    innerKey: MatKey
-    outerKey: MatKey
-    innerShare: number
-    radius: [number, number]
-    length: [number, number]
-    width: [number, number]
-    tilt: [number, number]
-    curl: [number, number]
-    cup: number
-    segsU: number
-    segsV: number
-    jitter: number
-  },
-) {
+/** Place a petal-like piece around the head axis: yaw to face outward, then tilt open. */
+function radial(frame: THREE.Matrix4, angle: number, r: number, y: number, tilt: number) {
+  _p.set(Math.cos(angle) * r, y, Math.sin(angle) * r)
+  _e.set(0, -angle + Math.PI / 2, 0, 'YXZ')
+  const q = new THREE.Quaternion().setFromEuler(_e).multiply(new THREE.Quaternion().setFromAxisAngle(X_AXIS, tilt))
+  _s.setScalar(1)
+  _m.compose(_p, q, _s)
+  return new THREE.Matrix4().multiplyMatrices(frame, _m)
+}
+
+/**
+ * A long-stem rose head, about 7 cm across when open: a tight spiral bud in
+ * the middle, cupped mid petals, and outer petals that curl back at the tip.
+ */
+function rose(c: Collector, frame: THREE.Matrix4, rand: Rand, openness: number) {
+  const petals = 28
   const start = rand() * Math.PI * 2
-  for (let i = 0; i < cfg.petals; i++) {
-    const t = i / (cfg.petals - 1)
+  for (let i = 0; i < petals; i++) {
+    const t = i / (petals - 1)
     const ease = t * t * (3 - 2 * t)
     const angle = start + i * GOLDEN
-    const r = THREE.MathUtils.lerp(cfg.radius[0], cfg.radius[1], ease)
-    const len = THREE.MathUtils.lerp(cfg.length[0], cfg.length[1], ease) * (1 + (rand() - 0.5) * cfg.jitter)
-    const wid = THREE.MathUtils.lerp(cfg.width[0], cfg.width[1], ease) * (1 + (rand() - 0.5) * cfg.jitter)
-    const tilt = THREE.MathUtils.lerp(cfg.tilt[0], cfg.tilt[1], ease) + (rand() - 0.5) * 0.12
-    const curl = THREE.MathUtils.lerp(cfg.curl[0], cfg.curl[1], ease)
-    const g = petalGeometry({ length: len, width: wid, curl, cup: cfg.cup, segsU: cfg.segsU, segsV: cfg.segsV })
-    _p.set(Math.cos(angle) * r, -0.002 + ease * 0.003, Math.sin(angle) * r)
-    // yaw so the petal faces outward from the center, then tilt it open
-    _e.set(0, -angle + Math.PI / 2, 0, 'YXZ')
-    const yaw = new THREE.Quaternion().setFromEuler(_e)
-    const open = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), tilt)
-    yaw.multiply(open)
-    _s.setScalar(1)
-    _m.compose(_p, yaw, _s)
-    const world = new THREE.Matrix4().multiplyMatrices(frame, _m)
-    c.add(g, world, t < cfg.innerShare ? cfg.innerKey : cfg.outerKey)
+    const r = THREE.MathUtils.lerp(0.002, 0.02, ease)
+    const len = THREE.MathUtils.lerp(0.024, 0.036, ease) * (1 + (rand() - 0.5) * 0.08)
+    const wid = THREE.MathUtils.lerp(0.022, 0.04, ease) * (1 + (rand() - 0.5) * 0.08)
+    // inner petals stand almost upright; outer ones open to ~55° and fold back
+    const tilt = THREE.MathUtils.lerp(0.05, 0.65 + 0.35 * openness, ease) + (rand() - 0.5) * 0.08
+    const curl = THREE.MathUtils.lerp(0.35, 2.4, ease * ease)
+    const cup = THREE.MathUtils.lerp(0.5, 0.3, ease)
+    const g = petalGeometry({ length: len, width: wid, curl, cup, tipPinch: 0.12, ruffle: 0.03 })
+    c.add(g, radial(frame, angle, r, 0.004 + ease * 0.006, tilt), t < 0.45 ? 'roseInner' : 'roseOuter')
+  }
+  // receptacle and five sepals under the bloom
+  const hip = new THREE.SphereGeometry(0.008, 10, 8)
+  hip.scale(1, 1.3, 1)
+  c.add(hip, compose(frame, new THREE.Vector3(0, -0.002, 0), new THREE.Euler()), 'sepal')
+  for (let k = 0; k < 5; k++) {
+    const angle = start + (k / 5) * Math.PI * 2
+    const g = petalGeometry({ length: 0.024, width: 0.007, curl: 0.9, cup: 0.1, segsU: 2, segsV: 4, tipPinch: 0.6, ruffle: 0 })
+    c.add(g, radial(frame, angle, 0.007, 0.002, 1.5 + rand() * 0.25), 'sepal')
   }
 }
 
-function gardenRose(c: Collector, frame: THREE.Matrix4, rand: Rand, scale = 1) {
-  const s = scale
-  spiralHead(c, frame, rand, {
-    petals: 26,
-    innerKey: 'roseInner',
-    outerKey: 'roseOuter',
-    innerShare: 0.42,
-    radius: [0.003 * s, 0.02 * s],
-    length: [0.022 * s, 0.038 * s],
-    width: [0.016 * s, 0.036 * s],
-    tilt: [0.12, 1.25],
-    curl: [0.25, 1.6],
-    cup: 0.32,
-    segsU: 5,
-    segsV: 8,
-    jitter: 0.12,
-  })
-}
-
-function ranunculus(c: Collector, frame: THREE.Matrix4, rand: Rand, scale = 1) {
-  const s = scale
-  spiralHead(c, frame, rand, {
-    petals: 30,
-    innerKey: 'ranunculusInner',
-    outerKey: 'ranunculusOuter',
-    innerShare: 0.35,
-    radius: [0.002 * s, 0.017 * s],
-    length: [0.012 * s, 0.024 * s],
-    width: [0.014 * s, 0.03 * s],
-    tilt: [0.35, 1.45],
-    curl: [0.2, 0.9],
-    cup: 0.25,
-    segsU: 4,
-    segsV: 6,
-    jitter: 0.1,
-  })
-}
-
-function cosmos(c: Collector, frame: THREE.Matrix4, rand: Rand, key: MatKey, scale = 1) {
-  const s = scale
-  const start = rand() * Math.PI * 2
-  for (let ring = 0; ring < 2; ring++) {
-    const n = 8
-    for (let i = 0; i < n; i++) {
-      const angle = start + (i / n) * Math.PI * 2 + ring * (Math.PI / n)
-      const len = (0.024 - ring * 0.003) * s * (1 + (rand() - 0.5) * 0.1)
-      const g = petalGeometry({ length: len, width: 0.013 * s, curl: 0.55, cup: 0.18, segsU: 3, segsV: 5, tipPinch: 0.15 })
-      _p.set(Math.cos(angle) * 0.004 * s, -ring * 0.0015, Math.sin(angle) * 0.004 * s)
-      _e.set(0, -angle + Math.PI / 2, 0, 'YXZ')
-      const yaw = new THREE.Quaternion().setFromEuler(_e)
-      const open = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 1.3 + ring * 0.15 + (rand() - 0.5) * 0.1)
-      yaw.multiply(open)
-      _s.setScalar(1)
-      _m.compose(_p, yaw, _s)
-      c.add(g, new THREE.Matrix4().multiplyMatrices(frame, _m), key)
-    }
+/** A rose leaf: a serrated oval on a short midrib. */
+function roseLeaf(c: Collector, frame: THREE.Matrix4, rand: Rand) {
+  const cluster = 3
+  const stalk = new THREE.CylinderGeometry(0.0009, 0.0011, 0.03, 4, 1)
+  c.add(stalk, compose(frame, new THREE.Vector3(0, 0.015, 0), new THREE.Euler()), 'stem')
+  for (let k = 0; k < cluster; k++) {
+    const g = petalGeometry({ length: 0.045, width: 0.028, curl: 0.5, cup: -0.08, segsU: 4, segsV: 6, tipPinch: 0.75, ruffle: 0.04 })
+    const angle = (k - 1) * 0.9 + (rand() - 0.5) * 0.3
+    const pos = new THREE.Vector3(Math.sin(angle) * 0.004, 0.028 - Math.abs(k - 1) * 0.012, 0)
+    const eul = new THREE.Euler(-1.15, angle, 0, 'YXZ')
+    c.add(g, compose(frame, pos, eul, 0.9 + rand() * 0.25), 'leaf')
   }
-  const center = new THREE.SphereGeometry(0.0055 * s, 12, 8)
-  center.scale(1, 0.6, 1)
-  c.add(center, compose(frame, new THREE.Vector3(0, 0.001, 0), new THREE.Euler()), 'pollen')
-}
-
-function lavender(c: Collector, frame: THREE.Matrix4, rand: Rand) {
-  const bud = new THREE.IcosahedronGeometry(0.0032, 1)
-  bud.scale(0.8, 1.25, 0.8)
-  const whorls = 7
-  for (let w = 0; w < whorls; w++) {
-    const y = w * 0.0075
-    const spread = 0.004 * (1 - w / whorls * 0.35)
-    for (let k = 0; k < 4; k++) {
-      const angle = (k / 4) * Math.PI * 2 + w * 0.7 + rand() * 0.3
-      const pos = new THREE.Vector3(Math.cos(angle) * spread, y, Math.sin(angle) * spread)
-      const eul = new THREE.Euler(Math.cos(angle) * 0.5, 0, -Math.sin(angle) * 0.5)
-      c.add(bud.clone(), compose(frame, pos, eul, 0.85 + rand() * 0.3), w % 2 === 0 ? 'lavender' : 'lavenderDeep')
-    }
-  }
-  const tip = new THREE.ConeGeometry(0.0025, 0.008, 6)
-  c.add(tip, compose(frame, new THREE.Vector3(0, whorls * 0.0075 + 0.002, 0), new THREE.Euler()), 'lavenderDeep')
 }
 
 function babysBreath(c: Collector, frame: THREE.Matrix4, rand: Rand) {
-  const blob = new THREE.IcosahedronGeometry(0.0028, 0)
+  const blob = new THREE.IcosahedronGeometry(0.003, 0)
   const twig = new THREE.CylinderGeometry(0.0005, 0.0006, 1, 4, 1)
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < 10; i++) {
     const angle = rand() * Math.PI * 2
-    const spread = 0.008 + rand() * 0.022
-    const height = 0.01 + rand() * 0.03
+    const spread = 0.01 + rand() * 0.03
+    const height = 0.01 + rand() * 0.04
     const end = new THREE.Vector3(Math.cos(angle) * spread, height, Math.sin(angle) * spread)
-    // twig from base to blob
     const len = end.length()
     const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), end.clone().normalize())
     const mid = end.clone().multiplyScalar(0.5)
     const tm = new THREE.Matrix4().compose(mid, q, new THREE.Vector3(1, len, 1))
     c.add(twig.clone(), new THREE.Matrix4().multiplyMatrices(frame, tm), 'stem')
     for (let b = 0; b < 3; b++) {
-      const off = new THREE.Vector3((rand() - 0.5) * 0.006, (rand() - 0.5) * 0.006, (rand() - 0.5) * 0.006)
+      const off = new THREE.Vector3((rand() - 0.5) * 0.007, (rand() - 0.5) * 0.007, (rand() - 0.5) * 0.007)
       c.add(blob.clone(), compose(frame, end.clone().add(off), new THREE.Euler(rand() * 3, rand() * 3, 0), 0.7 + rand() * 0.6), 'babysBreath')
     }
   }
 }
 
 function eucalyptus(c: Collector, frame: THREE.Matrix4, rand: Rand) {
-  const leaf = new THREE.CircleGeometry(0.0075, 10)
+  const leaf = new THREE.CircleGeometry(0.009, 10)
   leaf.scale(1, 1.2, 1)
-  const stalk = new THREE.CylinderGeometry(0.001, 0.0014, 0.09, 5, 1)
-  c.add(stalk, compose(frame, new THREE.Vector3(0, 0.045, 0), new THREE.Euler()), 'stem')
+  const stalk = new THREE.CylinderGeometry(0.001, 0.0014, 0.11, 5, 1)
+  c.add(stalk, compose(frame, new THREE.Vector3(0, 0.055, 0), new THREE.Euler()), 'stem')
   const yaw0 = rand() * Math.PI * 2
   for (let i = 0; i < 11; i++) {
-    const y = 0.006 + i * 0.008
+    const y = 0.006 + i * 0.01
     const side = i % 2 === 0 ? 1 : -1
     const yaw = yaw0 + (rand() - 0.5) * 0.6
     const eul = new THREE.Euler(-0.4 + rand() * 0.3, yaw, side * 0.95, 'YXZ')
-    const pos = new THREE.Vector3(Math.cos(yaw) * side * 0.007, y, -Math.sin(yaw) * side * 0.007)
+    const pos = new THREE.Vector3(Math.cos(yaw) * side * 0.008, y, -Math.sin(yaw) * side * 0.008)
     c.add(leaf.clone(), compose(frame, pos, eul, 0.8 + rand() * 0.35), 'sage')
   }
 }
 
 // ---------------------------------------------------------------- stems & wrap
 
-function stem(c: Collector, from: THREE.Vector3, to: THREE.Vector3, rand: Rand, radius = 0.0025) {
+function stem(c: Collector, from: THREE.Vector3, to: THREE.Vector3, rand: Rand, radius = 0.003) {
   const mid = from.clone().lerp(to, 0.5)
   mid.x += (rand() - 0.5) * 0.02
   mid.z += (rand() - 0.5) * 0.02
@@ -370,10 +312,11 @@ function stem(c: Collector, from: THREE.Vector3, to: THREE.Vector3, rand: Rand, 
   return curve
 }
 
-function frameAt(curve: THREE.Curve<THREE.Vector3>, t: number) {
+function frameAt(curve: THREE.Curve<THREE.Vector3>, t: number, yaw = 0) {
   const pos = curve.getPoint(t)
   const tangent = curve.getTangent(t).normalize()
   const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent)
+  if (yaw) q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw))
   return new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1))
 }
 
@@ -408,7 +351,7 @@ function wrap(
       rim = t * t
     }
     const wave = 1 + 0.05 * Math.sin(o.waves * angle + o.phase) * rim
-    pos.setXYZ(i, Math.cos(angle) * r * wave, height + 0.014 * Math.sin(o.waves * angle + o.phase) * rim, Math.sin(angle) * r * wave)
+    pos.setXYZ(i, Math.cos(angle) * r * wave, height + 0.016 * Math.sin(o.waves * angle + o.phase) * rim, Math.sin(angle) * r * wave)
   }
   g.computeVertexNormals()
   c.add(g, new THREE.Matrix4(), key)
@@ -430,48 +373,48 @@ function roundedRect(w: number, h: number, r: number) {
 
 function ribbonAndBow(c: Collector, y: number, radius: number, rand: Rand) {
   // band around the binding point
-  const band = new THREE.CylinderGeometry(radius, radius * 1.04, 0.022, 48, 1, true)
+  const band = new THREE.CylinderGeometry(radius, radius * 1.04, 0.025, 48, 1, true)
   c.add(band, compose(new THREE.Matrix4(), new THREE.Vector3(0, y, 0), new THREE.Euler()), 'ribbon')
   // knot on the front
   const knotPos = new THREE.Vector3(0, y, radius + 0.004)
-  const knot = new THREE.SphereGeometry(0.0085, 12, 8)
+  const knot = new THREE.SphereGeometry(0.0095, 12, 8)
   knot.scale(1.2, 0.8, 0.8)
   c.add(knot, compose(new THREE.Matrix4(), knotPos, new THREE.Euler()), 'ribbon')
   // two loops
   for (const side of [-1, 1]) {
-    const loop = new THREE.TorusGeometry(0.02, 0.0045, 8, 24)
+    const loop = new THREE.TorusGeometry(0.023, 0.005, 8, 24)
     loop.scale(1, 0.55, 0.35)
-    const pos = knotPos.clone().add(new THREE.Vector3(side * 0.022, 0.004, 0.002))
+    const pos = knotPos.clone().add(new THREE.Vector3(side * 0.025, 0.004, 0.002))
     c.add(loop, compose(new THREE.Matrix4(), pos, new THREE.Euler(0.15, side * 0.35, side * 0.55)), 'ribbon')
   }
   // two tails with notched ends
   for (const side of [-1, 1]) {
     const tail = new THREE.Shape()
-    const w = 0.014
-    const len = 0.075 + rand() * 0.02
+    const w = 0.016
+    const len = 0.09 + rand() * 0.025
     tail.moveTo(-w / 2, 0)
     tail.lineTo(w / 2, 0)
     tail.lineTo(w / 2, -len)
-    tail.lineTo(0, -len + 0.01)
+    tail.lineTo(0, -len + 0.011)
     tail.lineTo(-w / 2, -len)
     tail.closePath()
     const g = new THREE.ExtrudeGeometry(tail, { depth: 0.0012, bevelEnabled: false, steps: 1 })
-    const pos = knotPos.clone().add(new THREE.Vector3(side * 0.009, -0.004, 0.003))
+    const pos = knotPos.clone().add(new THREE.Vector3(side * 0.01, -0.004, 0.003))
     c.add(g, compose(new THREE.Matrix4(), pos, new THREE.Euler(-0.25, side * 0.15, side * 0.28)), 'ribbon')
   }
   return knotPos
 }
 
 function nameTag(c: Collector, name: string, anchor: THREE.Vector3, font: Font) {
-  const textSize = 0.0155
+  const textSize = 0.017
   const text = new TextGeometry(name, { font, size: textSize, depth: 0.0012, curveSegments: 4, bevelEnabled: false })
   text.computeBoundingBox()
   const bb = text.boundingBox!
   const textW = bb.max.x - bb.min.x
   const textH = bb.max.y - bb.min.y
-  const pad = 0.011
-  const tagW = Math.max(0.06, textW + pad * 2 + 0.008)
-  const tagH = Math.max(0.034, textH + pad * 2)
+  const pad = 0.012
+  const tagW = Math.max(0.065, textW + pad * 2 + 0.008)
+  const tagH = Math.max(0.037, textH + pad * 2)
   const cardShape = roundedRect(tagW, tagH, 0.005)
   const hole = new THREE.Path()
   hole.absarc(-tagW / 2 + 0.007, 0, 0.0022, 0, Math.PI * 2, true)
@@ -479,7 +422,7 @@ function nameTag(c: Collector, name: string, anchor: THREE.Vector3, font: Font) 
   const card = new THREE.ExtrudeGeometry(cardShape, { depth: 0.0018, bevelEnabled: false, steps: 1 })
 
   // tag hangs down-right from the knot, tilted so it reads from the front
-  const tagCenter = anchor.clone().add(new THREE.Vector3(0.052, -0.068, 0.016))
+  const tagCenter = anchor.clone().add(new THREE.Vector3(0.056, -0.074, 0.016))
   const tilt = new THREE.Euler(-0.1, 0.22, -0.32, 'YXZ')
   const cardM = compose(new THREE.Matrix4(), tagCenter, tilt)
   c.add(card, cardM, 'tag')
@@ -501,83 +444,75 @@ function nameTag(c: Collector, name: string, anchor: THREE.Vector3, font: Font) 
 export interface BouquetResult {
   group: THREE.Group
   materials: Record<MatKey, THREE.MeshStandardMaterial>
+  /** Overall height in meters. */
   height: number
 }
 
-export function buildBouquet(name: string): BouquetResult {
+export function buildBouquet(name: string, color: RoseColor = DEFAULT_ROSE_COLOR): BouquetResult {
   const rand = makeRandom(hashString(name.toLowerCase()))
   const font = new Font(tagFontData as unknown as ConstructorParameters<typeof Font>[0])
   const c = new Collector()
-  const materials = makeMaterials()
+  const materials = makeMaterials(color)
 
-  const BIND_Y = 0.15
-  const BIND_R = 0.028
-  const DOME_R = 0.13
+  // Real-world proportions for a wrapped dozen: ~55 cm tall, ~28 cm across.
+  const BIND_Y = 0.19
+  const BIND_R = 0.03
+  const DOME_R = 0.105
 
-  type Kind = 'rose' | 'ranunculus' | 'cosmos' | 'cosmosBlush' | 'lavender' | 'euc' | 'babys'
+  type Kind = 'rose' | 'babys' | 'euc' | 'leaf'
   const plan: Kind[] = [
-    'rose', 'rose', 'rose', 'rose',
-    'ranunculus', 'ranunculus', 'ranunculus', 'ranunculus',
-    'cosmos', 'cosmosBlush', 'cosmos', 'cosmosBlush', 'cosmos',
-    'lavender', 'lavender', 'lavender', 'lavender', 'lavender',
+    ...Array<Kind>(12).fill('rose'),
+    'babys', 'babys', 'babys', 'babys', 'babys',
     'euc', 'euc', 'euc', 'euc',
-    'babys', 'babys', 'babys',
+    'leaf', 'leaf', 'leaf', 'leaf',
   ]
-  // Sort so the showy heads take the middle of the dome and greenery the rim.
-  const rank: Record<Kind, number> = { rose: 0, ranunculus: 1, cosmos: 2, cosmosBlush: 2, babys: 3, lavender: 4, euc: 5 }
-  plan.sort((a, b) => rank[a] - rank[b])
 
   const n = plan.length
   const startAngle = rand() * Math.PI * 2
   plan.forEach((kind, i) => {
+    // roses fill the dome from the centre out; fillers ride the rim
     const t = (i + 0.5) / n
     const angle = startAngle + i * GOLDEN
     const r = DOME_R * Math.sqrt(t) * (0.92 + rand() * 0.16)
-    const lift = kind === 'lavender' ? 0.06 : kind === 'euc' ? 0.01 : kind === 'babys' ? 0.02 : 0
-    const y = 0.345 - 0.08 * (r / DOME_R) ** 2 + lift + (rand() - 0.5) * 0.025
+    const lift = kind === 'babys' ? 0.01 : kind === 'euc' ? -0.035 : kind === 'leaf' ? -0.05 : 0
+    const y = 0.445 - 0.07 * (r / DOME_R) ** 2 + lift + (rand() - 0.5) * 0.02
     const head = new THREE.Vector3(Math.cos(angle) * r, y, Math.sin(angle) * r)
 
     const base = new THREE.Vector3(Math.cos(angle) * BIND_R * 0.5 * rand(), BIND_Y, Math.sin(angle) * BIND_R * 0.5 * rand())
     const foot = new THREE.Vector3(Math.cos(angle) * BIND_R * 1.15, 0.0, Math.sin(angle) * BIND_R * 1.15)
     // stem below the binding point down to the table
     const lower = new THREE.CatmullRomCurve3([foot, base.clone().setY(BIND_Y * 0.5), base])
-    c.add(new THREE.TubeGeometry(lower, 6, 0.0024, 6, false), new THREE.Matrix4(), 'stem')
+    const thick = kind === 'rose' ? 0.003 : 0.0018
+    c.add(new THREE.TubeGeometry(lower, 6, thick, 6, false), new THREE.Matrix4(), 'stem')
 
-    const curve = stem(c, base, head, rand, kind === 'babys' ? 0.0015 : 0.0024)
+    const curve = stem(c, base, head, rand, thick)
     const frame = frameAt(curve, 1)
 
     switch (kind) {
       case 'rose':
-        gardenRose(c, frame, rand, 0.95 + rand() * 0.15)
+        rose(c, frame, rand, 0.6 + rand() * 0.4)
+        // a leaf cluster part way up half the rose stems
+        if (i % 2 === 0) roseLeaf(c, frameAt(curve, 0.8, angle + Math.PI / 2), rand)
         break
-      case 'ranunculus':
-        ranunculus(c, frame, rand, 0.9 + rand() * 0.2)
-        break
-      case 'cosmos':
-        cosmos(c, frame, rand, 'cosmosPetal', 0.9 + rand() * 0.2)
-        break
-      case 'cosmosBlush':
-        cosmos(c, frame, rand, 'cosmosBlush', 0.85 + rand() * 0.2)
-        break
-      case 'lavender':
-        lavender(c, frame, rand)
+      case 'babys':
+        babysBreath(c, frame, rand)
         break
       case 'euc':
         eucalyptus(c, frame, rand)
         break
-      case 'babys':
-        babysBreath(c, frame, rand)
+      case 'leaf':
+        roseLeaf(c, frameAt(curve, 1, angle + Math.PI / 2), rand)
         break
     }
   })
 
   // paper: inner cream tissue peeking above the outer kraft
-  wrap(c, 'kraftInner', { bottomY: BIND_Y - 0.045, bindY: BIND_Y, topY: BIND_Y + 0.125, skirtR: 0.038, bindR: BIND_R * 1.0, topR: 0.105, waves: 4, phase: 1.3 })
-  wrap(c, 'kraft', { bottomY: BIND_Y - 0.05, bindY: BIND_Y, topY: BIND_Y + 0.11, skirtR: 0.042, bindR: BIND_R * 1.04, topR: 0.115, waves: 5, phase: 0.2 })
+  wrap(c, 'kraftInner', { bottomY: BIND_Y - 0.05, bindY: BIND_Y, topY: BIND_Y + 0.16, skirtR: 0.042, bindR: BIND_R * 1.0, topR: 0.12, waves: 4, phase: 1.3 })
+  wrap(c, 'kraft', { bottomY: BIND_Y - 0.055, bindY: BIND_Y, topY: BIND_Y + 0.145, skirtR: 0.046, bindR: BIND_R * 1.04, topR: 0.13, waves: 5, phase: 0.2 })
 
   const knot = ribbonAndBow(c, BIND_Y, BIND_R * 1.12, rand)
   nameTag(c, name, knot, font)
 
   const group = c.build(materials)
-  return { group, materials, height: 0.5 }
+  return { group, materials, height: 0.55 }
 }

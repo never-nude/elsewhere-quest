@@ -37,8 +37,8 @@ Neither computer's checkout, uncommitted changes, unpushed commits, local paths,
 ## AR bouquet page — 2026-09-20
 
 Task / owner / branch: AR flower bouquet for Omaris at `/bouquet/` / Claude Code session / `claude/ar-flower-bouquet-omaris-p6x7vd`.
-Completed: procedural three.js bouquet (`src/bouquet/`), second Vite page (`bouquet/index.html`), pre-baked `public/bouquet/omaris.{usdz,glb}`, asset baking and font tooling under `tools/bouquet/`, README section.
-Validation actually performed: `npm run build` (tsc + vite) passes; page rendered in headless Chromium at phone and desktop sizes with no console errors, including accented and junk `?to=` names; `omaris.usdz` opens in Pixar USD 0.26 (meters, Y-up, 64-byte aligned, materials bound); `omaris.glb` passes the Khronos glTF validator with 0 errors/warnings.
+Completed: procedural three.js dozen-rose bouquet at real scale (`src/bouquet/`), second Vite page (`bouquet/index.html`), pre-baked `public/bouquet/omaris.{usdz,glb}` with horizontal-plane anchoring and content scaling disabled, asset baking and font tooling under `tools/bouquet/`, README section. Second revision: switched from a mixed bouquet to twelve roses per request, `?color=` option added.
+Validation actually performed: `npm run build` (tsc + vite) passes; page rendered in headless Chromium at phone and desktop sizes with no console errors, including accented and junk `?to=` names; `omaris.usdz` opens in Pixar USD 0.26 (meters, Y-up, 64-byte aligned, materials bound); `omaris.glb` passes the Khronos glTF validator with 0 errors/warnings (validated on the first revision; re-baked with the same pipeline).
 Open issues / blockers: AR launch itself (Safari Quick Look, Android WebXR/Scene Viewer) was not exercised on a real device from this sandbox. The Google Fonts stylesheet is blocked by `public/_headers` CSP if that file is ever honored; the main page has the same dependency.
 Next step: open `https://elsewhere.quest/bouquet/` on an iPhone after the Pages deploy and tap "See it in your room".
 Delivery (local, pushed, merged, deployment verified): pushed to the branch above; PR open; not merged or deployment-verified.
