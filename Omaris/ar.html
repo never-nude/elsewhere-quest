@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f9eff0" />
+    <meta name="robots" content="noindex" />
+    <title>Flowers in your room</title>
+  </head>
+  <body>
+    <main class="ar-page">
+      <a id="back-link" class="back-link" href="./">← Back to your flowers</a>
+      <p class="eyebrow">A little closer</p>
+      <h1>Flowers, for <span id="ar-name">Omaris</span></h1>
+      <img id="poster" class="poster" src="omaris-poster.png" width="640" height="640" alt="A garden bouquet in a vase with Omaris’s name in gold" />
+      <p id="instructions">Tap below, choose <strong>AR</strong>, then move your phone slowly over a table or the floor.</p>
+      <!-- A real, directly tapped link with one image child is Safari's native
+           Quick Look contract. No synthetic click, fetch, or camera renderer. -->
+      <a id="ar-link" class="launch-link" rel="ar" href="omaris.usdz?v=20260920-2#allowsContentScaling=0">
+        <img src="ar-button.svg" width="264" height="56" alt="Place your flowers" />
+      </a>
+      <p id="ar-status" class="status" role="status" aria-live="polite">The bouquet opens at its real size.</p>
+      <button id="retry" type="button" hidden>Try again</button>
+      <p id="return-hint" class="return-hint" hidden>You can open it again here. A well-lit table with a little texture helps your camera find the surface.</p>
+      <noscript><p>Open this page in Safari on your iPhone or iPad, then tap “Place your flowers.”</p></noscript>
+    </main>
+    <script type="module" src="/src/bouquet/ar.ts"></script>
+  </body>
+</html>

@@ -36,22 +36,26 @@ Blocking or reporting removes that demo signal from the receiver for the rest of
 
 ## Flowers for Omaris (`/Omaris/`)
 
-A standalone page at [elsewhere.quest/Omaris/](https://elsewhere.quest/Omaris/): a procedurally built garden arrangement (roses in three tones, peonies, ranunculus, lisianthus, hypericum berries, eucalyptus, trailing vines) in a fluted stoneware vase with the recipient's name in raised gold lettering. Real-world scale (about 45 cm tall), placeable on a table or floor in AR. It shares the Vite build (`Omaris/index.html` + `src/bouquet/`) and ships as a second page in `dist/`; `/omaris/` redirects to it.
+A standalone page at [elsewhere.quest/Omaris/](https://elsewhere.quest/Omaris/): a procedural pink garden arrangement in a fluted stoneware vase with the recipient's name in raised gold. The vase is 25 cm tall and the arrangement about 44 cm. It shares the Vite build through `Omaris/index.html`, `Omaris/ar.html`, and `src/bouquet/`; `/omaris/` redirects to it.
 
-- Default recipient is Omaris. `?to=Name` changes the name on the vase, `?from=` the sign-off, `?note=` the line under the flowers. The name seeds the arrangement, so each name gets its own.
-- Petals, leaves and the glaze use procedural canvas textures plus normal maps (`src/bouquet/textures.ts`), which export into the AR files as PNGs.
-- Tap the flowers on the page and a few petals fall. That effect is page-only and never exported.
-- iPhone/iPad (Safari): the button opens AR Quick Look anchored to a horizontal surface with pinch-scaling disabled, so it stays true size. The default arrangement uses the pre-baked `public/Omaris/omaris.usdz`; other names generate a USDZ in the browser.
-- Android (Chrome): WebXR hit-test placement, with Google Scene Viewer (`omaris.glb`, non-resizable) as the fallback.
-- Desktop: orbit the model, no AR button.
+- `?to=Name` changes the vase name and seeds the arrangement; `?from=` and `?note=` change the card. The default recipient is Omaris.
+- Tap the flowers on the main page and petals fall. This decoration is never exported.
+- “See it in your room” releases the preview's WebGL context and opens `/Omaris/ar.html` with the original query. The default AR document loads no three.js or WebGL.
+- iPhone/iPad Safari uses a visible, directly tapped `rel="ar"` image link. The default USDZ is pre-baked; personalized files are prepared before showing the same native link, with a retry if preparation fails.
+- The USDZ uses one 1024² color atlas and simpler PBR materials, preserving horizontal anchoring and a fixed real-world scale. Default Android bouquets use Scene Viewer; personalized Android bouquets retain WebXR.
+- Stems rise through the opening before spreading, and trailing vines remain outside the vase. The clearance validator tests complete botanical triangles against the ceramic walls and gold rim.
 
-Re-bake the static AR files after changing the model (needs the pre-installed Chromium and the `usd-core` Python package):
+Re-bake after changing the model (requires Chromium and Python `usd-core`), then rebuild to include the new files:
 
 ```bash
-npm run build && npm run bouquet:assets
+npm run build
+npm run bouquet:assets
+npm run build
+node tools/bouquet/validate-vase-clearance.mjs public/Omaris/omaris.glb
+node tools/bouquet/test-ar-flow.mjs
 ```
 
-The bake renders the page headless, exports GLB and USDZ, then `tools/bouquet/compact-usdz.py` repacks the USDZ as a binary crate (roughly 60% smaller) and checks it. The vase font is a subset of Liberation Serif Bold Italic (SIL OFL), converted with `tools/bouquet/make-font.mjs`.
+Baking writes `public/Omaris/omaris.{usdz,glb}`, the AR-page poster, and ignored front/side/back previews under `tools/bouquet/`. `compact-usdz.py` repacks the USDZ as a binary crate and checks packaging/anchoring. The browser tests cover routing, native-link markup, query preservation, custom-file retry, and lightweight loading; they do not verify iPhone camera placement. The vase font is a subset of Liberation Serif Bold Italic (SIL OFL), converted by `tools/bouquet/make-font.mjs`.
 
 ## Production seams
 

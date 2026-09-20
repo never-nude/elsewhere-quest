@@ -48,6 +48,12 @@ const outDir = join(ROOT, 'public')
 mkdirSync(outDir, { recursive: true })
 const slug = NAME.toLowerCase().replace(/[^a-z0-9]+/g, '-')
 await page.screenshot({ path: join(ROOT, 'tools', `preview-${slug}.png`) })
+const poster = await page.evaluate(() => window.__bouquet.poster())
+writeFileSync(join(outDir, `${slug}-poster.png`), Buffer.from(poster.split(',')[1], 'base64'))
+for (const [label, angle] of [['left', -Math.PI / 2], ['back', Math.PI], ['right', Math.PI / 2]]) {
+  const view = await page.evaluate((yaw) => window.__bouquet.poster(yaw), angle)
+  writeFileSync(join(ROOT, 'tools', `preview-${slug}-${label}.png`), Buffer.from(view.split(',')[1], 'base64'))
+}
 
 const tris = await page.evaluate(() => window.__bouquet.triangles)
 const { glb, usdz } = await page.evaluate(() => window.__bouquet.exportBase64())

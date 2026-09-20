@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js'
-import { USDZExporter } from 'three/addons/exporters/USDZExporter.js'
+import { toARUSDZ } from './ar-export'
 import { buildBouquet, loosePetalGeometry } from './bouquet'
 import './styles.css'
 
@@ -18,8 +18,7 @@ const isDefaultName = name.toLowerCase() === DEFAULT_NAME.toLowerCase()
 
 // Pre-built AR files for the default recipient live next to the page. Anyone
 // else gets a model generated on the fly.
-const STATIC_USDZ = new URL('omaris.usdz', location.href).href
-const STATIC_GLB = new URL('omaris.glb', location.href).href
+const STATIC_GLB = new URL('omaris.glb?v=20260920-2', location.href).href
 
 document.title = `For ${name}`
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T
@@ -231,23 +230,39 @@ async function toGLB(): Promise<ArrayBuffer> {
 }
 
 async function toUSDZ(): Promise<Uint8Array> {
-  const exporter = new USDZExporter()
-  // Anchor to a horizontal surface (a table, the floor) at real-world scale.
-  return exporter.parseAsync(exportGroup(), {
-    quickLookCompatible: true,
-    includeAnchoringProperties: true,
-    maxTextureSize: 1024,
-    ar: { anchoring: { type: 'plane' }, planeAnchoring: { alignment: 'horizontal' } },
-  })
+  return toARUSDZ(exportGroup())
 }
-
-// Quick Look fragment: keep the arrangement at true size instead of letting a
-// pinch resize it.
-const QUICK_LOOK_FRAGMENT = '#allowsContentScaling=0'
 
 // Hook used by tools/bouquet/export-assets.mjs to bake the static files.
 ;(window as unknown as { __bouquet: unknown }).__bouquet = {
   name,
+  poster(yaw = 0) {
+    const size = renderer.getSize(new THREE.Vector2())
+    const ratio = renderer.getPixelRatio()
+    const rotation = bouquet.rotation.clone()
+    const scale = pivot.scale.clone()
+    const floorVisible = floor.visible
+    bouquet.rotation.set(0, 0, 0)
+    pivot.scale.setScalar(1)
+    floor.visible = false
+    const bounds = new THREE.Box3().setFromObject(bouquet)
+    const center = bounds.getCenter(new THREE.Vector3())
+    const sphere = bounds.getBoundingSphere(new THREE.Sphere())
+    const posterCamera = new THREE.PerspectiveCamera(30, 1, 0.01, 20)
+    const distance = sphere.radius / Math.sin(THREE.MathUtils.degToRad(15)) * 1.04
+    posterCamera.position.copy(center).add(new THREE.Vector3(Math.sin(yaw), 0.18, Math.cos(yaw)).normalize().multiplyScalar(distance))
+    posterCamera.lookAt(center)
+    renderer.setPixelRatio(1)
+    renderer.setSize(640, 640, false)
+    renderer.render(scene, posterCamera)
+    const png = canvas.toDataURL('image/png')
+    bouquet.rotation.copy(rotation)
+    pivot.scale.copy(scale)
+    floor.visible = floorVisible
+    renderer.setPixelRatio(ratio)
+    renderer.setSize(size.x, size.y, false)
+    return png
+  },
   async exportBase64() {
     const [glb, usdz] = await Promise.all([toGLB(), toUSDZ()])
     const b64 = (buf: ArrayBuffer | Uint8Array) => {
@@ -274,7 +289,7 @@ const QUICK_LOOK_FRAGMENT = '#allowsContentScaling=0'
 const arButton = $<HTMLButtonElement>('#ar-button')
 const arHint = $<HTMLElement>('#ar-hint')
 const arOverlay = $<HTMLElement>('#ar-overlay')
-const quickLookAnchor = $<HTMLAnchorElement>('#quick-look')
+const quickLookAnchor = document.createElement('a')
 
 const supportsQuickLook = quickLookAnchor.relList?.supports?.('ar') ?? false
 const isAndroid = /android/i.test(navigator.userAgent)
@@ -296,23 +311,21 @@ function setBusy(on: boolean, label = 'Preparing your flowers…') {
   arButton.textContent = on ? label : 'See it in your room'
 }
 
-async function launchQuickLook() {
-  if (busy) return
-  setBusy(true)
-  try {
-    let href: string
-    if (isDefaultName && (await headExists(STATIC_USDZ))) {
-      href = STATIC_USDZ
-    } else {
-      const blob = new Blob([(await toUSDZ()) as BlobPart], { type: 'model/vnd.usdz+zip' })
-      href = URL.createObjectURL(blob)
-    }
-    quickLookAnchor.href = href + QUICK_LOOK_FRAGMENT
-    quickLookAnchor.click()
-  } finally {
-    setBusy(false)
-  }
+function openARPage() {
+  // Release the live preview before the camera opens. The next document has no
+  // WebGL renderer and launches Quick Look from an ordinary, user-tapped link.
+  renderer.setAnimationLoop(null)
+  renderer.dispose()
+  renderer.forceContextLoss()
+  const destination = new URL('ar.html', location.href)
+  destination.search = location.search
+  location.assign(destination.href)
 }
+
+// A back-forward cache restore must rebuild the preview's released context.
+addEventListener('pageshow', (event) => {
+  if (event.persisted) location.reload()
+})
 
 async function launchSceneViewer() {
   // Android without WebXR: hand the GLB to Google's Scene Viewer.
@@ -425,13 +438,13 @@ async function launchWebXR() {
 $('#ar-exit').addEventListener('click', () => xrSession?.end())
 
 if (supportsQuickLook) {
-  arButton.addEventListener('click', launchQuickLook)
-  arHint.textContent = 'Opens in AR at real size. Point your phone at a table or the floor.'
+  arButton.addEventListener('click', openARPage)
+  arHint.textContent = 'A little space on a table is all you need.'
 } else if (isIOS) {
   arButton.hidden = true
   arHint.textContent = 'Open this link in Safari to see the flowers in your room.'
 } else if (isAndroid) {
-  arButton.addEventListener('click', launchWebXR)
+  arButton.addEventListener('click', isDefaultName ? openARPage : launchWebXR)
   arHint.textContent = 'Point your camera at a table or the floor, then tap to set it down.'
 } else {
   arButton.hidden = true

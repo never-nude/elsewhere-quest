@@ -490,7 +490,9 @@ function vine(c: Collector, rimPoint: THREE.Vector3, outward: THREE.Vector3, ran
   const p1 = rimPoint.clone().addScaledVector(outward, 0.045).add(new THREE.Vector3(0, 0.01, 0))
   const p2 = p1.clone().addScaledVector(outward, 0.03).add(new THREE.Vector3(0, -0.07, 0))
   const p3 = p2.clone().addScaledVector(outward, -0.015).add(new THREE.Vector3(0, -0.07 - rand() * 0.04, 0))
-  const curve = new THREE.CatmullRomCurve3([rimPoint.clone().add(new THREE.Vector3(0, -0.02, 0)), rimPoint, p1, p2, p3])
+  // Start inside the mouth, then arc over the lip before draping outside.
+  const root = rimPoint.clone().addScaledVector(outward, -0.016).add(new THREE.Vector3(0, -0.02, 0))
+  const curve = new THREE.CatmullRomCurve3([root, rimPoint, p1, p2, p3])
   c.add(new THREE.TubeGeometry(curve, 16, 0.0012, 5, false), new THREE.Matrix4(), 'stem')
   for (let i = 0; i < 16; i++) {
     const t = 0.22 + (i / 16) * 0.77
@@ -505,7 +507,7 @@ function vine(c: Collector, rimPoint: THREE.Vector3, outward: THREE.Vector3, ran
 
 function stem(c: Collector, points: THREE.Vector3[], radius: number) {
   const curve = new THREE.CatmullRomCurve3(points)
-  c.add(new THREE.TubeGeometry(curve, 12, radius, 6, false), new THREE.Matrix4(), 'stem')
+  c.add(new THREE.TubeGeometry(curve, 24, radius, 6, false), new THREE.Matrix4(), 'stem')
   return curve
 }
 
@@ -668,7 +670,11 @@ export function buildBouquet(name: string): BouquetResult {
     const foot = new THREE.Vector3((rand() - 0.5) * 0.04, 0.03, (rand() - 0.5) * 0.04)
     const neck = new THREE.Vector3(Math.cos(angle) * NECK_R * (0.3 + 0.7 * Math.sqrt(t)), 0.82 * VASE_H, Math.sin(angle) * NECK_R * (0.3 + 0.7 * Math.sqrt(t)))
     const thick = kind.startsWith('rose') || kind === 'peony' || kind === 'tulip' ? 0.003 : 0.0018
-    const curve = stem(c, [foot, neck, head.clone().lerp(neck, 0.35), head], thick)
+    // Every stem clears the vase opening before fanning out toward its bloom.
+    const mouth = neck.clone().setY(RIM_Y + 0.02)
+    const shoulder = head.clone().lerp(mouth, 0.45)
+    shoulder.y = Math.max(shoulder.y, RIM_Y + 0.03)
+    const curve = stem(c, [foot, neck, mouth, shoulder, head], thick)
     const frame = frameAt(curve, 1)
 
     switch (kind) {
@@ -689,7 +695,7 @@ export function buildBouquet(name: string): BouquetResult {
         break
       case 'tulip':
         tulip(c, frame, rand, 0.95 + rand() * 0.15)
-        tulipLeaf(c, frameAt(curve, 0.78), rand)
+        tulipLeaf(c, frameAt(curve, 0.86), rand)
         break
       case 'hypericum':
         hypericum(c, frame, rand)
@@ -707,7 +713,7 @@ export function buildBouquet(name: string): BouquetResult {
   for (let k = 0; k < 3; k++) {
     const a = startAngle + 0.9 + k * 2.1 + rand() * 0.6
     const outward = new THREE.Vector3(Math.cos(a), 0, Math.sin(a))
-    const rimPoint = outward.clone().multiplyScalar(vaseRadius(1) - 0.006).setY(RIM_Y + 0.01)
+    const rimPoint = outward.clone().multiplyScalar(vaseRadius(1) - 0.006).setY(RIM_Y + 0.02)
     vine(c, rimPoint, outward, rand)
   }
 
