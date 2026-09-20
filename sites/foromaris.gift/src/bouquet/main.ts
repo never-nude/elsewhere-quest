@@ -439,14 +439,16 @@ $('#ar-exit').addEventListener('click', () => xrSession?.end())
 
 if (supportsQuickLook) {
   arButton.addEventListener('click', openARPage)
-  arHint.textContent = 'A little space on a table is all you need.'
+  arHint.textContent = 'Tap above, then “Place your flowers” and “AR.” Point your camera at a table or the floor.'
 } else if (isIOS) {
   arButton.hidden = true
   arHint.textContent = 'Open this link in Safari to see the flowers in your room.'
 } else if (isAndroid) {
   arButton.addEventListener('click', isDefaultName ? openARPage : launchWebXR)
-  arHint.textContent = 'Point your camera at a table or the floor, then tap to set it down.'
+  arHint.textContent = isDefaultName
+    ? 'Tap above, then “Place your flowers.” Point your camera at a table or the floor to set them down.'
+    : 'Tap above, point your camera at a table or the floor, then tap to set the flowers down.'
 } else {
   arButton.hidden = true
-  arHint.textContent = 'Open this on your phone to place the flowers in your room.'
+  arHint.textContent = 'Open this link in Safari on your iPhone or Chrome on Android, then tap “See it in your room.”'
 }
