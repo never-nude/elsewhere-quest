@@ -47,6 +47,7 @@ type MatKey =
   | 'peony'
   | 'ranunculus'
   | 'lisianthus'
+  | 'tulip'
   | 'pollen'
   | 'berry'
   | 'babysBreath'
@@ -61,7 +62,7 @@ type MatKey =
 
 // Thin, open surfaces need to be visible from both sides. USDZ/Quick Look does
 // not reliably honor double-sided materials, so we bake a flipped copy.
-const TWO_SIDED = new Set<MatKey>(['roseCrimson', 'roseApricot', 'roseBlush', 'peony', 'ranunculus', 'lisianthus', 'roseLeaf', 'eucalyptus', 'vineLeaf', 'sepal', 'vaseInside'])
+const TWO_SIDED = new Set<MatKey>(['roseCrimson', 'roseApricot', 'roseBlush', 'peony', 'ranunculus', 'lisianthus', 'tulip', 'roseLeaf', 'eucalyptus', 'vineLeaf', 'sepal', 'vaseInside'])
 
 function makeMaterials(): Record<MatKey, THREE.MeshPhysicalMaterial> {
   const petalN = petalNormal()
@@ -71,14 +72,16 @@ function makeMaterials(): Record<MatKey, THREE.MeshPhysicalMaterial> {
   const leaf = (map: THREE.Texture) => new THREE.MeshPhysicalMaterial({ map, normalMap: leafN, normalScale: new THREE.Vector2(0.8, 0.8), roughness: 0.55, metalness: 0, clearcoat: 0.25, clearcoatRoughness: 0.5 })
 
   const m: Record<MatKey, THREE.MeshPhysicalMaterial> = {
-    roseCrimson: petal(petalTexture({ base: '#42060f', mid: '#9c1027', tip: '#c41f3c', vein: '#2e040b' }, 11), '#d86a7c'),
-    roseApricot: petal(petalTexture({ base: '#b8501f', mid: '#e88a4c', tip: '#f2ad78', vein: '#8f3f18' }, 12), '#f8d9b8'),
-    roseBlush: petal(petalTexture({ base: '#c9627c', mid: '#e9a0b4', tip: '#f2bdcb', vein: '#a24d66' }, 13), '#f7e3e8'),
-    peony: petal(petalTexture({ base: '#cf6b8a', mid: '#e693ab', tip: '#eeadbf', vein: '#b3567a' }, 14), '#f3d2dc'),
-    ranunculus: petal(petalTexture({ base: '#30071a', mid: '#731634', tip: '#9d2c56', vein: '#1f0410' }, 15), '#c2607f'),
-    lisianthus: petal(petalTexture({ base: '#c3cc99', mid: '#ede2c6', tip: '#f4ead5', vein: '#adb78c' }, 16), '#f6f0e2'),
+    // her favorite color is pink, so every bloom is a different pink
+    roseCrimson: petal(petalTexture({ base: '#6e0c34', mid: '#b81f66', tip: '#d94a8f', vein: '#4d0823' }, 11), '#f19ac0'),
+    roseApricot: petal(petalTexture({ base: '#b0386a', mid: '#df739e', tip: '#eea3bf', vein: '#8a2a52' }, 12), '#f9d3e1'),
+    roseBlush: petal(petalTexture({ base: '#cf85a1', mid: '#eeb6c8', tip: '#f6d2dd', vein: '#ab6a85' }, 13), '#fbe9ef'),
+    peony: petal(petalTexture({ base: '#d05f8c', mid: '#e992b5', tip: '#f2b9cd', vein: '#b04a75' }, 14), '#f7d9e4'),
+    ranunculus: petal(petalTexture({ base: '#5c0f3a', mid: '#a1246b', tip: '#c4498e', vein: '#420a29' }, 15), '#e28ab8'),
+    lisianthus: petal(petalTexture({ base: '#c7cca3', mid: '#f1dbe3', tip: '#f8e6ec', vein: '#b3b98f' }, 16), '#fbf0f4'),
+    tulip: petal(petalTexture({ base: '#c04a80', mid: '#e587ad', tip: '#f1b3c9', vein: '#9b3a66' }, 17), '#f9dbe6'),
     pollen: new THREE.MeshPhysicalMaterial({ color: '#e9b63a', roughness: 0.9 }),
-    berry: new THREE.MeshPhysicalMaterial({ color: '#7d1f2c', roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 }),
+    berry: new THREE.MeshPhysicalMaterial({ color: '#d4548a', roughness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.15 }),
     babysBreath: new THREE.MeshPhysicalMaterial({ color: '#fdfbf4', roughness: 0.95 }),
     roseLeaf: leaf(leafTexture('#2c5430', '#5b8b4c', 21)),
     eucalyptus: leaf(leafTexture('#748f7b', '#a8bda9', 22)),
@@ -391,6 +394,29 @@ function lisianthus(c: Collector, frame: THREE.Matrix4, rand: Rand, scale: numbe
   sepals(c, frame, rand, 5, scale * 0.7)
 }
 
+/** A tulip: six cupped petals in two rings, plus one long leaf on the stem. */
+function tulip(c: Collector, frame: THREE.Matrix4, rand: Rand, scale: number) {
+  const start = rand() * Math.PI * 2
+  const open = 0.25 + rand() * 0.3
+  for (let ring = 0; ring < 2; ring++) {
+    for (let i = 0; i < 3; i++) {
+      const angle = start + (i / 3) * Math.PI * 2 + ring * (Math.PI / 3)
+      const g = petalGeometry({ length: (0.042 - ring * 0.003) * scale, width: (0.03 + ring * 0.002) * scale, curl: 0.55 + ring * 0.25, cup: 0.55, segsU: 3, segsV: 6, tipPinch: 0.45, ruffle: 0.015, twist: (rand() - 0.5) * 0.15 })
+      c.add(g, radial(frame, angle, (0.005 + ring * 0.004) * scale, 0.002 + ring * 0.002, open + ring * 0.2 + (rand() - 0.5) * 0.08), 'tulip')
+    }
+  }
+  const stamen = new THREE.SphereGeometry(0.0016, 6, 5)
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2
+    c.add(stamen.clone(), compose(frame, new THREE.Vector3(Math.cos(a) * 0.003, 0.012, Math.sin(a) * 0.003), new THREE.Euler()), 'pollen')
+  }
+}
+
+function tulipLeaf(c: Collector, frame: THREE.Matrix4, rand: Rand) {
+  const g = petalGeometry({ length: 0.11, width: 0.03, curl: 0.9, cup: 0.35, segsU: 3, segsV: 8, tipPinch: 0.7, ruffle: 0.04 })
+  c.add(g, radial(frame, rand() * Math.PI * 2, 0.003, 0, 0.35 + rand() * 0.2), 'roseLeaf')
+}
+
 function hypericum(c: Collector, frame: THREE.Matrix4, rand: Rand) {
   const berry = new THREE.IcosahedronGeometry(0.0052, 1)
   berry.scale(0.9, 1.15, 0.9)
@@ -610,20 +636,21 @@ export function buildBouquet(name: string): BouquetResult {
   const NECK_R = vaseRadius(0.82) - 0.008
   const DOME_R = 0.17
 
-  type Kind = 'roseCrimson' | 'roseApricot' | 'roseBlush' | 'peony' | 'ranunculus' | 'lisianthus' | 'hypericum' | 'eucalyptus' | 'babys'
+  type Kind = 'roseCrimson' | 'roseApricot' | 'roseBlush' | 'peony' | 'ranunculus' | 'lisianthus' | 'tulip' | 'hypericum' | 'eucalyptus' | 'babys'
   const plan: Kind[] = [
-    ...Array<Kind>(5).fill('roseCrimson'),
+    ...Array<Kind>(4).fill('roseCrimson'),
     ...Array<Kind>(4).fill('roseApricot'),
-    ...Array<Kind>(3).fill('roseBlush'),
+    ...Array<Kind>(4).fill('roseBlush'),
     ...Array<Kind>(3).fill('peony'),
     ...Array<Kind>(5).fill('ranunculus'),
-    ...Array<Kind>(6).fill('lisianthus'),
-    ...Array<Kind>(5).fill('hypericum'),
-    ...Array<Kind>(5).fill('eucalyptus'),
+    ...Array<Kind>(5).fill('lisianthus'),
+    ...Array<Kind>(4).fill('tulip'),
+    ...Array<Kind>(4).fill('hypericum'),
+    ...Array<Kind>(4).fill('eucalyptus'),
     ...Array<Kind>(4).fill('babys'),
   ]
   // showy blooms take the middle of the dome; texture and greenery ride the rim
-  const rank: Record<Kind, number> = { peony: 0.6, roseCrimson: 0.5, roseApricot: 0.8, roseBlush: 0.9, ranunculus: 1.6, lisianthus: 2.2, eucalyptus: 2.8, babys: 3.2, hypericum: 3.6 }
+  const rank: Record<Kind, number> = { peony: 0.6, roseCrimson: 0.5, roseApricot: 0.8, roseBlush: 0.9, ranunculus: 1.6, tulip: 1.9, lisianthus: 2.2, eucalyptus: 2.8, babys: 3.2, hypericum: 3.6 }
   // shuffle within rank so colors intermix
   const order = plan.map((k, i) => ({ k, key: rank[k] + rand() * 0.9, i })).sort((a, b) => a.key - b.key).map((o) => o.k)
 
@@ -633,14 +660,14 @@ export function buildBouquet(name: string): BouquetResult {
     const t = (i + 0.5) / n
     const angle = startAngle + i * GOLDEN
     const r = DOME_R * Math.sqrt(t) * (0.9 + rand() * 0.2)
-    const lift = kind === 'babys' ? 0.015 : kind === 'eucalyptus' ? -0.03 : kind === 'hypericum' ? -0.015 : kind === 'peony' ? 0.005 : 0
+    const lift = kind === 'babys' ? 0.015 : kind === 'eucalyptus' ? -0.03 : kind === 'hypericum' ? -0.015 : kind === 'peony' ? 0.005 : kind === 'tulip' ? 0.03 : 0
     // a low, wide dome that sits right on the rim and spills past it
     const y = RIM_Y + 0.105 - 0.085 * (r / DOME_R) ** 2 + lift + (rand() - 0.5) * 0.02
     const head = new THREE.Vector3(Math.cos(angle) * r, y, Math.sin(angle) * r)
 
     const foot = new THREE.Vector3((rand() - 0.5) * 0.04, 0.03, (rand() - 0.5) * 0.04)
     const neck = new THREE.Vector3(Math.cos(angle) * NECK_R * (0.3 + 0.7 * Math.sqrt(t)), 0.82 * VASE_H, Math.sin(angle) * NECK_R * (0.3 + 0.7 * Math.sqrt(t)))
-    const thick = kind.startsWith('rose') || kind === 'peony' ? 0.003 : 0.0018
+    const thick = kind.startsWith('rose') || kind === 'peony' || kind === 'tulip' ? 0.003 : 0.0018
     const curve = stem(c, [foot, neck, head.clone().lerp(neck, 0.35), head], thick)
     const frame = frameAt(curve, 1)
 
@@ -659,6 +686,10 @@ export function buildBouquet(name: string): BouquetResult {
         break
       case 'lisianthus':
         lisianthus(c, frame, rand, 0.9 + rand() * 0.2)
+        break
+      case 'tulip':
+        tulip(c, frame, rand, 0.95 + rand() * 0.15)
+        tulipLeaf(c, frameAt(curve, 0.78), rand)
         break
       case 'hypericum':
         hypericum(c, frame, rand)
