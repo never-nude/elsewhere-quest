@@ -34,6 +34,35 @@ The local microphone meter is real. The remote person and network connection are
 
 Blocking or reporting removes that demo signal from the receiver for the rest of the browser session. Production moderation and cross-session block persistence still require a backend.
 
+## Flowers for Omaris (`/Omaris/`)
+
+A standalone page at [elsewhere.quest/Omaris/](https://elsewhere.quest/Omaris/): a procedural pink garden arrangement in a fluted stoneware vase with the recipient's name in raised gold. The vase is 25 cm tall and the arrangement about 44 cm. It shares the Vite build through `Omaris/index.html`, `Omaris/ar.html`, and `src/bouquet/`; `/omaris/` redirects to it.
+
+- `?to=Name` changes the vase name and seeds the arrangement; `?from=` and `?note=` change the card. The default recipient is Omaris.
+- Tap the flowers on the main page and petals fall. This decoration is never exported.
+- “See it in your room” releases the preview's WebGL context and opens `/Omaris/ar.html` with the original query. The default AR document loads no three.js or WebGL.
+- iPhone/iPad Safari uses a visible, directly tapped `rel="ar"` image link. The default USDZ is pre-baked; personalized files are prepared before showing the same native link, with a retry if preparation fails.
+- The USDZ uses one 1024² color atlas and simpler PBR materials, preserving horizontal anchoring and a fixed real-world scale. Default Android bouquets use Scene Viewer; personalized Android bouquets retain WebXR.
+- Stems rise through the opening before spreading, and trailing vines remain outside the vase. The clearance validator tests complete botanical triangles against the ceramic walls and gold rim.
+
+Re-bake after changing the model (requires Chromium and Python `usd-core`), then rebuild to include the new files:
+
+```bash
+npm run build
+npm run bouquet:assets
+npm run build
+node tools/bouquet/validate-vase-clearance.mjs public/Omaris/omaris.glb
+node tools/bouquet/test-ar-flow.mjs
+```
+
+Baking writes `public/Omaris/omaris.{usdz,glb}`, the AR-page poster, and ignored front/side/back previews under `tools/bouquet/`. `compact-usdz.py` repacks the USDZ as a binary crate and checks packaging/anchoring. The browser tests cover routing, native-link markup, query preservation, custom-file retry, and lightweight loading; they do not verify iPhone camera placement. The vase font is a subset of Liberation Serif Bold Italic (SIL OFL), converted by `tools/bouquet/make-font.mjs`.
+
+The landing page and link preview use the gift-card title “To: Omaris, From: Mike :)”. Regenerate `public/Omaris/social-card.png` from the bouquet poster with `node tools/bouquet/render-social-card.mjs`; both flower pages declare the image under `https://elsewhere.quest/Omaris/`. The baked share image represents the default gift; personalized query values still update the page itself.
+
 ## Production seams
 
 A real release still needs authenticated accounts, age/identity checks, WebSocket signaling, WebRTC with TURN, a matching service, abuse-rate limits, moderation/report review, and carefully written privacy and retention policies. Video is intentionally out of scope.
+
+## foromaris.gift (`sites/foromaris.gift/`)
+
+A standalone copy of the flowers page, built to live at the root of its own GitHub Pages site on the custom domain `foromaris.gift`. It has its own `package.json`, Vite config, and deploy workflow, and carries `public/CNAME`. To publish it: create an empty public repo, push that folder's contents to its `main`, set the custom domain under Settings → Pages, and point the domain's DNS at GitHub Pages. The model source under `src/bouquet/` is a copy of this repo's; keep the two in sync by hand when the arrangement changes.

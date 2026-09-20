@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="264" height="56" viewBox="0 0 264 56">
+  <rect width="264" height="56" rx="28" fill="#c0386f"/>
+  <g fill="none" stroke="#fff7f2" stroke-width="1.5" stroke-linejoin="round">
+    <path d="m33 17 10 6v11l-10 6-10-6V23zm-10 6 10 6 10-6M33 29v11M19 20v-6h6m16 0h6v6M19 36v6h6m16 0h6v-6"/>
+  </g>
+  <text x="60" y="34" font-family="-apple-system, BlinkMacSystemFont, Arial, sans-serif" font-size="17" font-weight="500" fill="#fff7f2">Place your flowers</text>
+</svg>

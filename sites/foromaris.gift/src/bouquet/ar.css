@@ -1,0 +1,18 @@
+:root { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #3a2c31; background: #f9eff0; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100dvh; background: radial-gradient(ellipse at top, #fff7f5, #f2e1e3); }
+.ar-page { max-width: 480px; margin: auto; padding: max(24px, env(safe-area-inset-top)) 24px max(30px, env(safe-area-inset-bottom)); text-align: center; }
+.back-link { display: block; text-align: left; color: #7a6068; text-decoration: none; font-size: .88rem; padding: 8px 0; }
+.eyebrow { margin: 28px 0 6px; color: #7a6068; font-family: Georgia, serif; font-style: italic; }
+h1 { margin: 0; font: 400 clamp(1.7rem, 7vw, 2.3rem)/1.12 Georgia, serif; }
+.poster { display: block; width: 100%; height: min(38dvh, 320px); object-fit: contain; margin: 8px auto; }
+#instructions { max-width: 340px; margin: 12px auto 22px; line-height: 1.5; font-size: .98rem; }
+.launch-link { display: inline-block; border-radius: 28px; box-shadow: 0 10px 24px -10px #c0386f99; line-height: 0; }
+.launch-link img { max-width: 100%; }
+.launch-link:focus-visible, button:focus-visible, .back-link:focus-visible { outline: 3px solid #7a3150; outline-offset: 5px; }
+.launch-link:active { transform: translateY(1px); }
+.status, .return-hint { color: #7a6068; font-size: .85rem; line-height: 1.5; margin: 14px auto 0; max-width: 330px; }
+.return-hint { padding-top: 14px; border-top: 1px solid #e4cbd3; }
+button { margin-top: 14px; padding: 10px 20px; border: 1px solid #c0386f; border-radius: 24px; color: #7a3150; background: transparent; font: inherit; cursor: pointer; }
+[hidden] { display: none !important; }
+@media (max-height: 650px) { .eyebrow { margin-top: 14px; } .poster { height: 30dvh; } }
