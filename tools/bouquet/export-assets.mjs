@@ -4,10 +4,11 @@
 //
 //   npm run build && node tools/bouquet/export-assets.mjs [Name]
 //
-// Writes public/bouquet/<name>.usdz, public/bouquet/<name>.glb and
+// Writes public/Omaris/<name>.usdz, public/Omaris/<name>.glb and
 // tools/bouquet/preview-<name>.png (the PNG is git-ignored).
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { createServer } from 'node:http'
+import { spawnSync } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
 import { chromium } from 'playwright-core'
@@ -15,8 +16,8 @@ import { chromium } from 'playwright-core'
 const NAME = process.argv[2] ?? 'Omaris'
 const ROOT = resolve(new URL('../..', import.meta.url).pathname)
 const DIST = join(ROOT, 'dist')
-if (!existsSync(join(DIST, 'bouquet', 'index.html'))) {
-  console.error('dist/bouquet/index.html missing — run `npm run build` first')
+if (!existsSync(join(DIST, 'Omaris', 'index.html'))) {
+  console.error('dist/Omaris/index.html missing — run `npm run build` first')
   process.exit(1)
 }
 
@@ -39,11 +40,11 @@ const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=sw
 const page = await browser.newPage({ viewport: { width: 430, height: 860 }, deviceScaleFactor: 2 })
 page.on('console', (m) => m.type() !== 'log' && console.log('[page]', m.type(), m.text()))
 page.on('pageerror', (e) => console.error('[pageerror]', e.message))
-await page.goto(`http://127.0.0.1:${port}/bouquet/?to=${encodeURIComponent(NAME)}`)
+await page.goto(`http://127.0.0.1:${port}/Omaris/?to=${encodeURIComponent(NAME)}`)
 await page.waitForFunction(() => window.__bouquet?.triangles > 0)
 await page.waitForTimeout(1200)
 
-const outDir = join(ROOT, 'public', 'bouquet')
+const outDir = join(ROOT, 'public', 'Omaris')
 mkdirSync(outDir, { recursive: true })
 const slug = NAME.toLowerCase().replace(/[^a-z0-9]+/g, '-')
 await page.screenshot({ path: join(ROOT, 'tools', 'bouquet', `preview-${slug}.png`) })
@@ -56,3 +57,10 @@ console.log(`${NAME}: ${tris} triangles → ${slug}.glb (${(glb.length * 0.75 / 
 
 await browser.close()
 server.close()
+
+// Repack the ASCII USDZ as a binary crate (much smaller) and sanity-check it.
+const repack = spawnSync('python3', [join(ROOT, 'tools', 'bouquet', 'compact-usdz.py'), join(outDir, `${slug}.usdz`)], { stdio: 'inherit' })
+if (repack.status !== 0) {
+  console.error('compact-usdz.py failed; the ASCII USDZ was left in place')
+  process.exit(repack.status ?? 1)
+}

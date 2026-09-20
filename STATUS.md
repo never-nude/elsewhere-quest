@@ -34,13 +34,13 @@ Neither computer's checkout, uncommitted changes, unpushed commits, local paths,
 3. Record discovered unfinished work, its branch, actual validation, and next step here. Reconcile it with remote history before implementation.
 4. At task completion, update this handoff and publish it through the existing repository workflow when authorized.
 
-## AR bouquet page — 2026-09-20
+## AR flowers page — 2026-09-20
 
-Task / owner / branch: AR flower bouquet for Omaris at `/bouquet/` / Claude Code session / `claude/ar-flower-bouquet-omaris-p6x7vd`.
-Completed: procedural three.js dozen-rose bouquet at real scale (`src/bouquet/`), second Vite page (`bouquet/index.html`), pre-baked `public/bouquet/omaris.{usdz,glb}` with horizontal-plane anchoring and content scaling disabled, asset baking and font tooling under `tools/bouquet/`, README section. Second revision: switched from a mixed bouquet to twelve roses per request, `?color=` option added.
-Validation actually performed: `npm run build` (tsc + vite) passes; page rendered in headless Chromium at phone and desktop sizes with no console errors, including accented and junk `?to=` names; `omaris.usdz` opens in Pixar USD 0.26 (meters, Y-up, 64-byte aligned, materials bound); `omaris.glb` passes the Khronos glTF validator with 0 errors/warnings (validated on the first revision; re-baked with the same pipeline).
-Open issues / blockers: AR launch itself (Safari Quick Look, Android WebXR/Scene Viewer) was not exercised on a real device from this sandbox. The Google Fonts stylesheet is blocked by `public/_headers` CSP if that file is ever honored; the main page has the same dependency.
-Next step: open `https://elsewhere.quest/bouquet/` on an iPhone after the Pages deploy and tap "See it in your room".
+Task / owner / branch: AR flowers for Omaris at `/Omaris/` / Claude Code session / `claude/ar-flower-bouquet-omaris-p6x7vd`.
+Completed: procedural three.js garden arrangement in a fluted stoneware vase with the name in gold (`src/bouquet/`, textures in `src/bouquet/textures.ts`), second Vite page (`Omaris/index.html`, `/omaris/` redirect), pre-baked `public/Omaris/omaris.{usdz,glb}` with horizontal-plane anchoring and content scaling disabled, bake/repack/font tooling under `tools/bouquet/`, README section. Revisions: mixed hand-tied bouquet → dozen roses → vase arrangement with textured PBR materials and a tap-to-drop-petals effect, per request.
+Validation actually performed: `npm run build` (tsc + vite) passes; page rendered in headless Chromium at phone and desktop sizes with no console errors, including accented and junk `?to=` names; `omaris.usdz` (binary crate repack) opens in Pixar USD 0.26 with all 12 referenced textures present in the package, 64-byte aligned, plane/horizontal anchoring, 0.39 m tall on y=0; `omaris.glb` passes the Khronos glTF validator.
+Open issues / blockers: AR launch itself (Safari Quick Look, Android WebXR/Scene Viewer) was not exercised on a real device from this sandbox. The Google Fonts stylesheet is blocked by `public/_headers` CSP if that file is ever honored; the main page has the same dependency. No "Mike-Kushman" GitHub account is connected to this session; the work lives on `never-nude/elsewhere-quest`.
+Next step: open `https://elsewhere.quest/Omaris/` on an iPhone after the Pages deploy and tap "See it in your room".
 Delivery (local, pushed, merged, deployment verified): pushed to the branch above; PR open; not merged or deployment-verified.
 
 ## Future handoff fields

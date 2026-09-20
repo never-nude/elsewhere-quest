@@ -6,7 +6,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       // Multi-page: the Elsewhere landing page plus the standalone bouquet.
-      input: ['index.html', 'bouquet/index.html'],
+      input: ['index.html', 'Omaris/index.html'],
     },
   },
 })
