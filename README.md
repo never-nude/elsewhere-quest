@@ -34,6 +34,23 @@ The local microphone meter is real. The remote person and network connection are
 
 Blocking or reporting removes that demo signal from the receiver for the rest of the browser session. Production moderation and cross-session block persistence still require a backend.
 
+## Bouquet (`/bouquet/`)
+
+A standalone page at [elsewhere.quest/bouquet/](https://elsewhere.quest/bouquet/): a procedurally built 3D bouquet with a name tag, viewable in AR on a phone. It shares the Vite build (`bouquet/index.html` + `src/bouquet/`) and ships as a second page in `dist/`.
+
+- Default recipient is Omaris. `?to=Name` changes the name (and the tag), `?from=` the sign-off, `?note=` the line under the bouquet. The name seeds the arrangement, so each name gets its own bouquet.
+- iPhone/iPad (Safari): the button opens AR Quick Look. The default bouquet uses the pre-baked `public/bouquet/omaris.usdz`; other names generate a USDZ in the browser.
+- Android (Chrome): WebXR hit-test placement, with Google Scene Viewer (`omaris.glb`) as the fallback.
+- Desktop: orbit the model, no AR button.
+
+Re-bake the static AR files after changing the model (needs the pre-installed Chromium):
+
+```bash
+npm run build && npm run bouquet:assets
+```
+
+The tag font is a subset of Liberation Serif Bold Italic (SIL OFL), converted with `tools/bouquet/make-font.mjs`.
+
 ## Production seams
 
 A real release still needs authenticated accounts, age/identity checks, WebSocket signaling, WebRTC with TURN, a matching service, abuse-rate limits, moderation/report review, and carefully written privacy and retention policies. Video is intentionally out of scope.

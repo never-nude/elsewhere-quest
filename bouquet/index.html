@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f6efe4" />
+    <meta name="robots" content="noindex" />
+    <meta name="description" content="A bouquet you can set down on your own table, in AR." />
+    <meta property="og:title" content="A bouquet, for you" />
+    <meta property="og:description" content="Open on your phone to see it in your room." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500&family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..600&display=swap"
+    />
+    <title>A bouquet, for you</title>
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <p class="eyebrow">A bouquet, for</p>
+        <h1 id="for-name" class="name">Omaris</h1>
+      </header>
+
+      <canvas id="stage" aria-label="A 3D bouquet of garden roses, ranunculus, cosmos, lavender and eucalyptus, tied with a ribbon and a name tag"></canvas>
+
+      <footer class="card">
+        <p id="note" class="note"></p>
+        <p id="from" class="from"></p>
+        <button id="ar-button" class="ar-button" type="button">See it in your room</button>
+        <p id="ar-hint" class="hint"></p>
+        <p class="tiny">Drag to turn it around.</p>
+      </footer>
+    </main>
+
+    <!-- Safari uses this to launch AR Quick Look. -->
+    <a id="quick-look" rel="ar" href="omaris.usdz" hidden aria-hidden="true">
+      <img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" />
+    </a>
+
+    <!-- WebXR overlay (Android). -->
+    <div id="ar-overlay" class="ar-overlay" data-state="">
+      <p class="ar-status scanning">Move your phone slowly to find a surface, then tap to set the bouquet down.</p>
+      <p class="ar-status placed">There it is. Walk around it.</p>
+      <button id="ar-exit" type="button" class="ar-exit">Done</button>
+    </div>
+
+    <script type="module" src="/src/bouquet/main.ts"></script>
+  </body>
+</html>
