@@ -18,6 +18,8 @@ node tools/test-ar-flow.mjs
 
 The clearance check tests complete botanical triangles against the ceramic walls and gold rim. The launch tests verify browser routing, direct link markup, personalization/retry, and lightweight loading; browser emulation does not verify iPhone camera placement. Asset baking also writes the AR-page poster and ignored front/side/back previews.
 
+The landing page uses a quiet gift-card heading, “To: Omaris, From: Mike :)”, with a separate AR invitation. The same title is rendered into `public/social-card.png` for link previews on both pages. Regenerate it after updating the bouquet poster with `node tools/render-social-card.mjs`. Preview metadata uses the currently working HTTP origin; HTTPS enforcement will redirect these public image requests when the certificate is ready. The baked share image is for the default gift; personalized names still update the page itself.
+
 URL options: `?to=Name`, `?from=`, `?note=`.
 
 Deploys to GitHub Pages on every push to `main` (see `.github/workflows/deploy.yml`). The custom domain is set by `public/CNAME` plus the Pages settings.

@@ -57,6 +57,8 @@ node tools/bouquet/test-ar-flow.mjs
 
 Baking writes `public/Omaris/omaris.{usdz,glb}`, the AR-page poster, and ignored front/side/back previews under `tools/bouquet/`. `compact-usdz.py` repacks the USDZ as a binary crate and checks packaging/anchoring. The browser tests cover routing, native-link markup, query preservation, custom-file retry, and lightweight loading; they do not verify iPhone camera placement. The vase font is a subset of Liberation Serif Bold Italic (SIL OFL), converted by `tools/bouquet/make-font.mjs`.
 
+The landing page and link preview use the gift-card title “To: Omaris, From: Mike :)”. Regenerate `public/Omaris/social-card.png` from the bouquet poster with `node tools/bouquet/render-social-card.mjs`; both flower pages declare the image under `https://elsewhere.quest/Omaris/`. The baked share image represents the default gift; personalized query values still update the page itself.
+
 ## Production seams
 
 A real release still needs authenticated accounts, age/identity checks, WebSocket signaling, WebRTC with TURN, a matching service, abuse-rate limits, moderation/report review, and carefully written privacy and retention policies. Video is intentionally out of scope.

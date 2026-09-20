@@ -20,10 +20,11 @@ const isDefaultName = name.toLowerCase() === DEFAULT_NAME.toLowerCase()
 // else gets a model generated on the fly.
 const STATIC_GLB = new URL('omaris.glb?v=20260920-2', location.href).href
 
-document.title = `For ${name}`
+document.title = `To: ${name}${from ? ', From: ' + from + ' :)' : ''}`
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T
 $('#for-name').textContent = name
-$('#from').textContent = from ? `— ${from}` : ''
+$('#from').textContent = from ? `From: ${from} :)` : ''
+$('#from').hidden = !from
 $('#note').textContent = note
 
 // ---------------------------------------------------------------- scene
