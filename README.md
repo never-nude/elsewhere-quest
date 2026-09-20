@@ -56,3 +56,7 @@ The bake renders the page headless, exports GLB and USDZ, then `tools/bouquet/co
 ## Production seams
 
 A real release still needs authenticated accounts, age/identity checks, WebSocket signaling, WebRTC with TURN, a matching service, abuse-rate limits, moderation/report review, and carefully written privacy and retention policies. Video is intentionally out of scope.
+
+## foromaris.gift (`sites/foromaris.gift/`)
+
+A standalone copy of the flowers page, built to live at the root of its own GitHub Pages site on the custom domain `foromaris.gift`. It has its own `package.json`, Vite config, and deploy workflow, and carries `public/CNAME`. To publish it: create an empty public repo, push that folder's contents to its `main`, set the custom domain under Settings → Pages, and point the domain's DNS at GitHub Pages. The model source under `src/bouquet/` is a copy of this repo's; keep the two in sync by hand when the arrangement changes.
