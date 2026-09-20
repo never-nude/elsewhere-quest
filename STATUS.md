@@ -44,6 +44,18 @@ Latest revision (2026-09-20, later): arrangement made mostly pink (roses in thre
 Next step: (1) create an empty public repo, push `sites/foromaris.gift/` contents to its `main`, set custom domain `foromaris.gift` in Settings → Pages; (2) at Porkbun replace the parked records with the four GitHub Pages A records (185.199.108–111.153) and `www` CNAME → `<account>.github.io`; (3) open the site on an iPhone (6s+/iOS 15+) and tap "See it in your room"; (4) decide whether to also merge PR #4 for `elsewhere.quest/Omaris/`.
 Delivery (local, pushed, merged, deployment verified): pushed to the branch above; PR open; not merged or deployment-verified.
 
+### Desktop session, 2026-09-20 (Claude Code) — steps 1 and 2 of the handoff are done
+
+Completed: created the public repo `never-nude/foromaris-gift` and pushed the contents of `sites/foromaris.gift/` to its `main` as one commit (`a7a6875`); enabled GitHub Pages with `build_type=workflow`; set the custom domain to `foromaris.gift` via `PUT /repos/never-nude/foromaris-gift/pages`. The Pages Actions workflow succeeded on the first push (run 35533840593). A durable local clone now lives at `~/Projects/_active/foromaris-gift` (the earlier work was in a throwaway worktree).
+
+Validation actually performed this session: `npm ci && npm run build` in the standalone site passes (tsc + vite, 745 kB JS / 198 kB gzip); because the domain does not resolve yet, the deployment was checked by hitting the Pages edge with a Host override — `curl --resolve foromaris.gift:80:185.199.108.153` returns 200 for `/`, `/omaris.usdz` (4,600,330 bytes) and `/omaris.glb` (5,189,952 bytes), and the served HTML is the right page. HTTPS on that override fails, as expected, because no certificate exists yet. `src/bouquet/` at the repo root and under `sites/foromaris.gift/` are still byte-identical, and so are the two copies of each baked asset.
+
+Open issues / blockers: DNS is untouched — `foromaris.gift` still answers with Porkbun parking (`207.207.210.229`, `207.207.210.107`) and `www` is a CNAME to `pixie.porkbun.com`. No Porkbun API key is stored on the machine and no browser extension is connected, so the registrar change needs Michael. `https_enforced` is `false` and cannot be turned on until the certificate issues. Real-device AR launch is still unvalidated.
+
+Next step: owner is now a Codex session — see the roundtable `foromaris.gift` (`room_17d5e80247c8`, project path `~/Projects/_active/foromaris-gift`) for the full handoff, four open tasks and the recorded decision. Order: Porkbun DNS → wait for cert → `https_enforced=true` → iPhone AR check → ask Michael about merging PR #4.
+
+Delivery (local, pushed, merged, deployment verified): `foromaris-gift` pushed and deployed to GitHub Pages, reachable only by Host override until DNS moves; PR #4 on this repo still an unmerged draft, held deliberately.
+
 ## Future handoff fields
 
 Task / owner / branch:
