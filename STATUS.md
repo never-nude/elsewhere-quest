@@ -42,3 +42,11 @@ Validation actually performed:
 Open issues / blockers:
 Next step:
 Delivery (local, pushed, merged, deployment verified):
+
+## 2026-09-29 — Corpora privacy policy page
+
+- Task: host a public privacy policy URL for the Corpora iPhone app (bundle `com.atrium.scanner`, separate project) so external TestFlight testing can be enabled.
+- Owner: Claude Code cloud session. Branch: `claude/corpora-privacy-policy`.
+- Change: static page `public/corpora/privacy/index.html`, served at `https://elsewhere.quest/corpora/privacy/` once merged to `main` and the Pages deploy runs. No app code changed.
+- Validation: `npm run build` succeeds locally and `dist/corpora/privacy/index.html` is emitted. Live URL not yet verified (not merged).
+- Next: merge, confirm the URL loads, paste it into App Store Connect → App Information → Privacy Policy URL.
