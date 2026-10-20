@@ -366,7 +366,8 @@ async function healTile(ed, spot, D, f) {
   const m = Math.max(2, f);
   const wide = readPadded(read, { x: T.x + D.dx - m, y: T.y + D.dy - m, w: T.w + 2 * m, h: T.h + 2 * m }, W, H);
   if (!wide) return null;
-  const ring = discRing(spot.cx - T.x, spot.cy - T.y, spot.rr, Math.max(3, Math.round(0.25 * spot.rr)), T.w, T.h);
+  // Only the band right at the seam decides whether lines carry on across it.
+  const ring = discRing(spot.cx - T.x, spot.cy - T.y, spot.rr, Math.max(3, Math.min(16, Math.round(0.25 * spot.rr))), T.w, T.h);
   const nudge = refineOffset(target, wide, T.w, T.h, m, ring);
   const used = { dx: D.dx + nudge.dx, dy: D.dy + nudge.dy };
   const source = subBlock(wide, T.w + 2 * m, m + nudge.dx, m + nudge.dy, T.w, T.h);
