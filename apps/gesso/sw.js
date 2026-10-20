@@ -27,6 +27,7 @@ const SHELL = [
   './lib/history.js',
   './lib/image-io.js',
   './lib/inpaint.js',
+  './lib/lasso.js',
   './lib/level.js',
   './lib/navpan.js',
   './lib/patches.js',
