@@ -34,7 +34,8 @@ export function moveScrub(s, x, t) {
   if (!Number.isFinite(x)) return s;
   const time = Number.isFinite(t) ? t : s.t;
   const dx = x - s.x;
-  const speed = Math.abs(dx) / Math.max(1, time - s.t);
+  // No usable clock: count the travel as slow rather than guess.
+  const speed = Number.isFinite(t) ? Math.abs(dx) / Math.max(1, time - s.t) : 0;
   const gain = speed > FAST_PT_PER_MS ? FAST_GAIN : 1;
   // Clamped to the ends, so turning back answers at once instead of first
   // unwinding travel spent past the Original or the newest step.
