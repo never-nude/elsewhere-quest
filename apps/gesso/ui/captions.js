@@ -9,10 +9,13 @@
 //                           the selected caption gets a dashed 1pt box and a 12pt
 //                           round handle on its bottom-right corner.
 //   hit(x, y)               stage CSS px -> 'caption:<id>' | null, topmost first
-//   rasterize(doc, outW, outH, band?) -> canvas | null
+//   rasterize(doc, outW, outH, band?, scale?) -> canvas | null
 //                           transparent, output px, every caption drawn. `band`
 //                           ({ x, y, width, height } in output px) draws only that
 //                           part, so an export can work band by band in less memory.
+//                           `scale` (default 1) draws it smaller, canvas px per output
+//                           px, for a preview: the layout stays at outW x outH, so the
+//                           preview wraps at the same words as the export.
 //                           null when the doc has no captions: nothing to composite.
 //                           Each call makes a new canvas; free it with release()
 //                           once composited: iOS holds canvas memory until GC, and
