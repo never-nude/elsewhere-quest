@@ -60,7 +60,7 @@ export function openSaveSheet(ed, { captions = null } = {}) {
 function ensureJob(ed, captions) {
   if (job && job.doc === ed.doc && !job.error) return job;
   dropUnfinished();
-  const j ={ doc: ed.doc, size: ed.outputSize(), blob: null, error: null, progress: 0, controller: new AbortController() };
+  const j = { doc: ed.doc, size: ed.outputSize(), blob: null, error: null, progress: 0, controller: new AbortController() };
   job = j;
   setFill(0, 0);
   exportJpeg(ed, {

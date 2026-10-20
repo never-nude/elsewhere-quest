@@ -47,6 +47,7 @@ export async function exportJpeg(ed, { captions = null, onProgress, signal, qual
     return out;
   };
   let img = await render();
+  throwIfAborted(signal);
   let blob = null;
   if (workerEncodes()) {
     try {
@@ -148,26 +149,34 @@ function encodeInWorker(img, quality, signal) {
       return;
     }
     let timer = 0;
+    let settled = false;
     const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
       worker.terminate();
       fn(value);
     };
+    const fail = (message, buffer) => finish(reject, Object.assign(new ExportError(message, 'encode'), { buffer }));
     const onAbort = () => finish(reject, abortReason(signal));
     worker.addEventListener('message', (e) => {
       const msg = e.data;
       if (msg?.type === 'blob') finish(resolvePromise, msg.blob);
-      else finish(reject, Object.assign(new ExportError(msg?.message || 'the encoder failed', 'encode'), { buffer: msg?.buffer ?? null }));
+      else fail(msg?.message || 'the encoder failed', msg?.buffer ?? null);
     });
     worker.addEventListener('error', (e) => {
       e.preventDefault?.();
-      finish(reject, Object.assign(new ExportError(`export worker crashed: ${e.message || 'unknown'}`, 'encode'), { buffer: null }));
+      fail(`export worker crashed: ${e.message || 'unknown'}`, null);
     });
-    timer = setTimeout(() => finish(reject, Object.assign(new ExportError('the encoder took too long', 'encode'), { buffer: null })), WORKER_TIMEOUT_MS);
+    timer = setTimeout(() => fail('the encoder took too long', null), WORKER_TIMEOUT_MS);
     signal?.addEventListener('abort', onAbort, { once: true });
     const buffer = img.data.buffer;
-    worker.postMessage({ type: 'encode', buffer, w: img.width, h: img.height, quality }, [buffer]);
+    try {
+      worker.postMessage({ type: 'encode', buffer, w: img.width, h: img.height, quality }, [buffer]);
+    } catch (err) {
+      fail(`could not hand the pixels to the encoder: ${err?.message ?? err}`, buffer.byteLength ? buffer : null);
+    }
   });
 }
 

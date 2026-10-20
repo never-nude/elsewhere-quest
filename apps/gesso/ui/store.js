@@ -28,7 +28,7 @@
 const DB_NAME = 'gesso';
 const DB_VERSION = 1;
 const STORES = ['blobs', 'docs', 'meta'];
-const OPEN_TIMEOUT_MS = 4000;
+const OPEN_TIMEOUT_MS = 3000;
 const PERSIST_TIMEOUT_MS = 1000;
 const CURRENT = 'current';
 // Failures that mean the connection, not the request, went bad. WebKit reports a
