@@ -34,7 +34,7 @@ jobs:
         run: |
           mkdir -p dist/gesso
           cp -r apps/gesso/. dist/gesso/
-          rm -rf dist/gesso/test dist/gesso/e2e dist/gesso/package.json dist/gesso/SPEC.md
+          rm -rf dist/gesso/test dist/gesso/e2e dist/gesso/package.json dist/gesso/SPEC.md dist/gesso/design
           # A new shell cache name whenever any Gesso file changes: the service worker
           # then installs the whole shell again, in one piece, and retires the old one.
           HASH=$(cd dist/gesso && find . -type f ! -name sw.js -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-12)
