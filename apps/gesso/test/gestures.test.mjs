@@ -327,6 +327,16 @@ test('pointercancel cancels a drag, ends a hold and a pinch cleanly', () => {
   assert.deepEqual(run([down(0, 0, 0), down(10, 50, 0, 2), cancel(20, 50, 0, 2), up(30, 0, 0)]).types, ['pinch-start', 'pinch-end']);
 });
 
+// A tool that acts on a held finger (Outline claims the hold) must tell a lift
+// from an interruption: only a lift is a plain hold-end.
+test('a hold that is interrupted says so', () => {
+  const last = (evs) => run(evs).gestures.find((g) => g.type === 'hold-end');
+  assert.deepEqual(last([down(0, 0, 0), tick(HOLD_MS), up(600, 0, 0)]), { type: 'hold-end' });
+  assert.deepEqual(last([down(0, 0, 0), tick(HOLD_MS), cancel(600, 0, 0)]), { type: 'hold-end', cancelled: true });
+  assert.deepEqual(last([down(0, 0, 0), tick(HOLD_MS), { type: 'reset' }]), { type: 'hold-end', cancelled: true });
+  assert.deepEqual(last([down(0, 0, 0), tick(HOLD_MS), down(600, 50, 0, 2)]), { type: 'hold-end', cancelled: true });
+});
+
 test('reset drops everything and says what ended', () => {
   const drag = run([down(0, 0, 0), move(10, 30, 0), { type: 'reset' }]);
   assert.deepEqual(drag.types, ['drag-start', 'drag', 'drag-cancel']);

@@ -106,22 +106,22 @@ test('H5 is the third Undo of the session; counters do not persist', () => {
 
 test('H1 turns on photo drag; H2 follows on a later ruler drag', () => {
   const r = rig();
-  assert.equal(r.hints.event('ruler-drag', { tool: 'light' }), 'H1');
+  assert.equal(r.hints.event('ruler-drag', { tool: 'light', scrub: true }), 'H1');
   assert.equal(r.storage.getItem(PHOTO_DRAG_KEY), '1');
-  assert.equal(r.hints.event('ruler-drag', { tool: 'light' }), null); // H1 still up
+  assert.equal(r.hints.event('ruler-drag', { tool: 'light', scrub: true }), null); // H1 still up
   r.wait(HINT_MS);
-  assert.equal(r.hints.event('ruler-drag', { tool: 'crop' }), 'H2');
+  assert.equal(r.hints.event('ruler-drag', { tool: 'crop', scrub: false }), 'H2');
 });
 
 test('a ruler drag outside Light and Color earns nothing on the first go', () => {
   const r = rig();
-  assert.equal(r.hints.event('ruler-drag', { tool: 'crop' }), null);
+  assert.equal(r.hints.event('ruler-drag', { tool: 'crop', scrub: false }), null);
   assert.equal(r.storage.getItem(PHOTO_DRAG_KEY), null);
 });
 
 test('a hint earned while the panel is faded waits for the fade to lift', () => {
   const r = rig({ faded: true });
-  assert.equal(r.hints.event('ruler-drag', { tool: 'color' }), null);
+  assert.equal(r.hints.event('ruler-drag', { tool: 'color', scrub: true }), null);
   assert.equal(r.hints.pending, 'H1');
   assert.equal(r.tips.length, 0);
   assert.equal(r.storage.getItem(HINTS_KEY), null); // not marked until seen

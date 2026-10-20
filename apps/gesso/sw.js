@@ -33,6 +33,7 @@ const SHELL = [
   './lib/level.js',
   './lib/magnifier.js',
   './lib/navpan.js',
+  './lib/outline-paint.js',
   './lib/patches.js',
   './lib/remove-plan.js',
   './lib/ruler.js',

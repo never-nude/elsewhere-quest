@@ -25,7 +25,7 @@ function drag(spec, value, moves) {
 const repeat = (n, move) => Array.from({ length: n }, () => move);
 
 test('every ruler in the spec table exists with sane limits', () => {
-  const ids = ['brightness', 'contrast', 'highlights', 'shadows', 'warmth', 'tint', 'vividness', 'strength', 'straighten', 'removeSize', 'textSize', 'textAngle'];
+  const ids = ['brightness', 'contrast', 'highlights', 'shadows', 'warmth', 'tint', 'vividness', 'strength', 'straighten', 'removeSize', 'textSize', 'textAngle', 'outlineAmount'];
   assert.deepEqual(Object.keys(RULERS).sort(), [...ids].sort());
   for (const [id, s] of Object.entries(RULERS)) {
     assert.equal(s.id, id);
@@ -45,6 +45,7 @@ test('every ruler in the spec table exists with sane limits', () => {
   assert.deepEqual([RULERS.removeSize.min, RULERS.removeSize.max, RULERS.removeSize.def, RULERS.removeSize.unitsPerPt], [8, 120, 36, 0.25]);
   assert.deepEqual([RULERS.textSize.min, RULERS.textSize.max, RULERS.textSize.def], [0.03, 0.3, 0.08]);
   assert.deepEqual([RULERS.textAngle.min, RULERS.textAngle.max, RULERS.textAngle.def], [-180, 180, 0]);
+  assert.deepEqual([RULERS.outlineAmount.min, RULERS.outlineAmount.max, RULERS.outlineAmount.def, RULERS.outlineAmount.unitsPerPt], [-100, 100, 67, 0.25]);
   assert.deepEqual([...RULERS.textAngle.detents].sort((a, b) => a - b), [-90, 0, 90]);
 });
 

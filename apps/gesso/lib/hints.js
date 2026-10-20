@@ -8,7 +8,8 @@
 //   id = nextHint(event, counters, shown)           // shown ids persist across sessions
 // or both at once with observe(). Events are a name, or { name, ...data }:
 //
-//   'ruler-drag'   { tool }   a ruler drag (any ruler, any tool; once per drag)
+//   'ruler-drag'   { tool, scrub }   a ruler drag (any ruler, any tool; once per drag);
+//                             scrub: a photo drag could adjust it (not Paint / Outline)
 //   'before-tap'              the Before button was tapped
 //   'before-hold'             the Before button was held
 //   'hold-photo'   { tool }   a still hold on the photo showed Before
@@ -21,6 +22,9 @@
 //   'ratio-chip'              the 4:5 or 16:9 chip was tapped (Crop)
 //   'paint-select'            the Paint dial was selected (Light)
 //   'auto-enhance'            Auto-enhance was tapped (Home)
+//   'outline-on'   { tool }   the Outline chip was switched on (Remove, Light)
+//   'outline-done' { tool }   a traced loop was filled (Remove) or brightened/darkened
+//                             (Light; not sent for an Erase loop, which shows no ruler)
 // These are the names ui/editor.js and ui/tools/* emit; any other name is ignored.
 
 export const HINT_MS = 4000;
@@ -37,7 +41,7 @@ function deepFreeze(o) {
 // must hold one of the listed values.
 export const COUNTERS = deepFreeze({
   rulerDrag: { event: 'ruler-drag' },
-  rulerDragLightColor: { event: 'ruler-drag', match: { tool: ['light', 'color'] } },
+  rulerDragLightColor: { event: 'ruler-drag', match: { tool: ['light', 'color'], scrub: [true] } },
   beforeTap: { event: 'before-tap' },
   beforeHold: { event: 'before-hold' },
   undoTap: { event: 'undo' },
@@ -50,6 +54,9 @@ export const COUNTERS = deepFreeze({
   ratioChip: { event: 'ratio-chip' },
   paintSelect: { event: 'paint-select' },
   autoEnhance: { event: 'auto-enhance' },
+  outlineOn: { event: 'outline-on' },
+  outlineDoneRemove: { event: 'outline-done', match: { tool: ['remove'] } },
+  outlineDoneLight: { event: 'outline-done', match: { tool: ['light'] } },
 });
 
 // SPEC §4 hints table. A hint is eligible on its trigger event when the event itself
@@ -74,6 +81,9 @@ export const HINTS = deepFreeze([
   hint('H12', 'ratio-chip', 'ratioChip', 1, null, 'first 4:5 or 16:9 tap', 'Tap Tall/Wide to turn the frame.'),
   hint('H13', 'paint-select', 'paintSelect', 1, null, 'first Paint selection', 'Paint with one finger. Paint again to build it up.'),
   hint('H14', 'auto-enhance', 'autoEnhance', 1, null, 'first Auto-enhance', 'Tap a change to fine-tune it.'),
+  hint('H15', 'outline-on', 'outlineOn', 1, null, 'first time Outline is switched on', 'Loop loosely around it. The line snaps to the edges.'),
+  hint('H16', 'outline-done', 'outlineDoneRemove', 1, null, 'first Outline fill in Remove', 'Filled inside the outline. Try another gives a different fill.'),
+  hint('H17', 'outline-done', 'outlineDoneLight', 1, null, 'first brighten or darken Outline loop in Light (an Erase loop shows no ruler)', 'Drag the ruler to change how much.'),
 ]);
 
 const BY_ID = new Map(HINTS.map((h) => [h.id, h]));
@@ -108,6 +118,8 @@ export const GESTURES = deepFreeze([
   g('remove-tap', 'Tap photo', 'Remove', 'heal the spot at brush size', '#panel', null),
   g('remove-rub', 'One-finger drag on photo', 'Remove', 'paint the area; lift fills it', '#panel', null),
   g('remove-source', 'Drag dashed ring', 'Remove, Source selected', 'choose the copy source; lift re-fills', '[data-dial="source"]', 'H8'),
+  g('outline-remove', 'One-finger drag on photo', 'Remove with Outline on', 'trace a loop that snaps to edges; lift fills the inside', '[data-dial="outline"]', 'H16'),
+  g('outline-light', 'One-finger drag on photo', 'Light with Outline on', 'trace a loop that snaps to edges; lift brightens, darkens or erases the inside', '[data-dial="outline"]', 'H17'),
   g('text-tap-caption', 'Tap caption / tap the selected caption', 'Text', 'select / edit words (keyboard)', null, 'H10'),
   g('text-drag-caption', 'Drag caption', 'Text', 'move with centre and thirds snapping, with guide lines', null, 'H10'),
   g('text-handle', 'Drag corner handle', 'Text, selected caption', 'scale and rotate', '#stage', null),

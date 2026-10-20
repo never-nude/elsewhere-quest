@@ -11,7 +11,10 @@
 //   drag-start / drag / drag-end
 //                one finger travelling more than SLOP (brush, scrub, move, ruler)
 //   drag-cancel  the drag was interrupted (a second finger, pointercancel, reset):
-//                the tool throws the partial action away with no history step
+//                the tool throws the partial action away with no history step.
+//                A hold interrupted the same way ends with hold-end { cancelled:
+//                true }, for a tool that acts on a held finger (Outline claims
+//                the hold) and must not act on a lift that never happened
 //   pinch-start / pinch / pinch-end
 //                two fingers: zoom, pan and twist together, relative to where the
 //                pinch started
@@ -174,7 +177,7 @@ function release(s, key, t, cancelled, out) {
     } else if (s.mode === 'drag') {
       out.push({ type: cancelled ? 'drag-cancel' : 'drag-end', target: s.start.target });
     } else if (s.mode === 'hold') {
-      out.push({ type: 'hold-end' });
+      out.push(cancelled ? { type: 'hold-end', cancelled: true } : { type: 'hold-end' });
     }
     s.mode = 'idle';
     s.start = null;
@@ -218,7 +221,7 @@ export function reduceGesture(state, ev) {
         // history step, whatever it was, and the pair becomes a pinch.
         catchUp(s, ev.t, out);
         if (s.mode === 'drag') out.push({ type: 'drag-cancel', target: s.start.target });
-        else if (s.mode === 'hold') out.push({ type: 'hold-end' });
+        else if (s.mode === 'hold') out.push({ type: 'hold-end', cancelled: true });
         startPinch(s, out);
       }
       break;
@@ -257,7 +260,7 @@ export function reduceGesture(state, ev) {
 
     case 'reset': {
       if (s.mode === 'drag') out.push({ type: 'drag-cancel', target: s.start.target });
-      else if (s.mode === 'hold') out.push({ type: 'hold-end' });
+      else if (s.mode === 'hold') out.push({ type: 'hold-end', cancelled: true });
       else if (s.mode === 'pinch') out.push({ type: 'pinch-end', target: s.pinch.target, onCaption: s.pinch.onCaption });
       return { state: initialGestures(), gestures: out, wakeAt: null };
     }

@@ -178,7 +178,7 @@ Behaviour:
   - Auto sets all four dials from the histogram, and the dials animate to their new values over 400ms.
   - Brighter and Darker are ±15 brightness and stack on repeated taps.
   - Punchier is contrast +15. Softer is contrast −15 with shadows +10.
-- **Dial row:** **Brightness · Contrast · Highlights · Shadows · Paint**. Brightness is selected on open.
+- **Dial row:** **Brightness · Contrast · Highlights · Shadows · Paint · Outline**. Brightness is selected on open. Outline is a mode chip (F19).
 - **Ruler:** the selected dial, −100 to +100.
 - **Drag on the photo:** after the user's first ruler drag, a one-finger horizontal drag on the photo also adjusts the selected dial (hint H1). Before that, one-finger drags on the photo do nothing.
 
@@ -210,7 +210,7 @@ Behaviour:
 **F10. Remove.**
 - The hint reads "Tap a spot, or rub over something."
 - **Quick row:** **Small · Medium · Large** brush (20, 36 and 64pt on screen; Medium on open) and **Try another**, which is disabled until a fill exists.
-- **Dial row:** **Size** (8–120pt) · **Source**.
+- **Dial row:** **Size** (8–120pt) · **Outline** (mode, F19) · **Source**.
 - **Tap a spot:** on lift, a ring at brush size appears at once, and the spot is healed in under 300ms with a 0.4s shimmer.
 - **Rub:** a one-finger drag paints a translucent coral area. A 2× loupe sits above-left of the finger. On lift, the area shimmers while the fill computes.
 - **Size cap:** a single area is capped at 20% of the photo, measured by bounding box. Past that, the stroke stops growing and the hint reads "Big area. Do it in smaller pieces."
@@ -272,6 +272,16 @@ Behaviour:
 - The app installs via Safari's Share → Add to Home Screen and then works in airplane mode.
 - Landscape reflows to a side column (see §3).
 - `?probe=1` opens a device diagnostics page. It is not linked anywhere in the UI.
+
+**F19. Outline (magnetic lasso), in Remove and Light.** (Called F15 in `design/`; numbered here after the sections that existed first.)
+- **Outline** is a mode chip in the dial row of Remove and of Light (`kind: 'mode'`, value On/Off). Tapping it again turns it off. The hint while it is on: "Loop around it. The line snaps to edges."
+- While it is on, a one-finger drag traces a loop. The line snaps to the nearest strong edge within 18pt of the finger (`lib/lasso.js` live wire on a 1024px copy of the cropped photo, built off the finger when the chip comes on and dropped when the tool closes); anchors drop every 24pt along it; a still finger starts a loop rather than Before; a second finger cancels the loop with no step. Lifting closes the loop along edges, and the inside is acted on at once, with no Done.
+- A 140pt, 3× **corner magnifier** (`ui/magnifier.js`) sits at the stage's top-left while tracing, with a crosshair, the snapped line and its anchors, and a faint ring for the snap reach; it jumps to the top-right when the finger comes within 40pt of it and fades 300ms after lift.
+- The polygon is kept in source px (`polygonRecord`, plain numbers), so a later crop, rotation or flip never moves what it did, and a relaunch brings it back exactly.
+- **Remove:** the inside is filled by the rub engine with the polygon as the shape (grown by the same fringe as a rub; shimmer in the loop's shape; the hint reads "Filling inside the outline…" meanwhile), as the step "Removed outline"; Try another and Source work as for a rub. The 20% size cap is judged on lift by the loop's bounding box: past it, the hint reads "Big area. Do it in smaller pieces." and the loop is dropped. A loop enclosing less than about 4×4pt on screen (a tap, a line out and back) does nothing. A loop that runs off the photo is clamped to its edge. A plain tap with Outline on still heals a spot at brush size.
+- **Light:** the Brighten / Darken / Erase segment (shared with Paint) picks what the loop does. On lift the inside is painted through a soft polygon mask (`renderer.paintMask`, feathered about 24 source px) as one step, "Brightened inside outline" / "Darkened inside outline" / "Erased inside outline", stored in `pools.strokes` as `{ kind: 'outline', mode, poly, amount }` with its id in `doc.paint`. After a brighten or darken loop the ruler slot shows **Amount** (−100…100, right brightens and left darkens, ±100 = ±1.5 EV, default +67 ≈ +1 EV) for that loop: dragging it previews live and each release re-commits the loop as one step, so Undo returns the exact pixels of the amount before. A new loop takes the ruler's current amount and direction. The ruler stays while that loop is the newest paint step; switching the chip off and on brings the segment back.
+- **Cost:** the edge map (about 13 bytes/px, 10MB at 1024×768) is built off the finger when Outline is switched on, rebuilt when the crop or the fills change, and dropped when the tool closes. A move costs well under 4ms at the 1024px analysis size; nothing runs per frame when idle.
+- Hints: H15 the first time Outline is switched on, H16 (Remove) after the first fill / H17 (Light) after the first brighten or darken loop (an Erase loop shows no ruler, so no hint) (§4).
 
 ### Not in v1
 - Layers, layer cards, blend modes, masks or selections UI, and the Where chip.
@@ -375,7 +385,7 @@ In Remove, the default is the ready brush, so a tap on the photo is the default 
 **Arbitration rules** (implemented in `lib/gestures.js` and covered by tests):
 1. **One finger** does the open tool's action. **Two fingers** move the view (zoom and pan) in every tool. The single exception is a two-finger gesture whose first finger landed on the selected caption in Text, which resizes and rotates that caption.
 2. A **second finger landing** during a one-finger action (paint, rub, crop drag, caption drag, ruler) cancels that action with no history step, and the gesture becomes a pinch. This is how pan and zoom coexist with brushes.
-3. **One-finger classification:** movement over 8pt before 500ms is a drag. Release before 500ms with less than 8pt of movement is a tap, recognised on lift with no double-tap wait. Still for 500ms is a hold, which means Before.
+3. **One-finger classification:** movement over 8pt before 500ms is a drag. Release before 500ms with less than 8pt of movement is a tap, recognised on lift with no double-tap wait. Still for 500ms is a hold, which means Before, except while Outline is on (F19), where the tool claims the hold and a still finger starts the loop.
 4. **What is under the finger wins:** crop handle, then caption or its handle, then the source ring, then the photo.
 5. In Light and Color, a photo drag is axis-locked within the first 10pt. Only horizontal drags (|dx| > 1.5·|dy|) adjust. Vertical drags do nothing.
 
@@ -399,6 +409,8 @@ In Remove, the default is the ready brush, so a tap on the photo is the default 
 | Tap photo | Remove | heal the spot at brush size | Remove hint |
 | One-finger drag on photo | Remove | paint the area; lift fills it | Remove hint |
 | Drag dashed ring | Remove, Source selected | choose the copy source; lift re-fills | Source chip; H8 |
+| One-finger drag on photo | Remove with Outline on | trace a loop that snaps to edges; lift fills the inside | Outline chip; H15, H16 |
+| One-finger drag on photo | Light with Outline on | trace a loop that snaps to edges; lift brightens, darkens or erases the inside | Outline chip; H15, H17 |
 | Tap caption / tap the selected caption | Text | select / edit words (keyboard) | H10 |
 | Drag caption | Text | move with centre and thirds snapping, with guide lines | H10 |
 | Drag corner handle | Text, selected caption | scale and rotate | visible handle |
@@ -424,6 +436,9 @@ In Remove, the default is the ready brush, so a tap on the photo is the default 
 | H12 | first 4:5 or 16:9 tap | "Tap Tall/Wide to turn the frame." | none |
 | H13 | first Paint selection | "Paint with one finger. Paint again to build it up." | none |
 | H14 | first Auto-enhance | "Tap a change to fine-tune it." | none |
+| H15 | first time Outline is switched on (Remove or Light) | "Loop loosely around it. The line snaps to the edges." | none |
+| H16 | first Outline fill in Remove | "Filled inside the outline. Try another gives a different fill." | none |
+| H17 | first brighten or darken Outline loop in Light (an Erase loop shows no ruler) | "Drag the ruler to change how much." | none |
 
 ---
 

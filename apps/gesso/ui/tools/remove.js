@@ -16,7 +16,7 @@
 // relaunch. `settle()` resolves once every fill asked for has landed, so Save can
 // wait for a fill still computing instead of saving the photo without it.
 //
-// Outline (SPEC F15) is a mode chip in the dial row. While it is on, a drag
+// Outline (SPEC F19) is a mode chip in the dial row. While it is on, a drag
 // traces a loop whose line clings to the nearest strong edge (lib/lasso.js, on a
 // 1024 px copy of the cropped photo), with the photo around the finger shown at
 // 3x in a corner window (ui/magnifier.js) so the hand never hides the edge. Lift
@@ -48,7 +48,7 @@ const RING_HIT_PT = 22; // the Source ring is grabbable within at least a 44pt c
 const CAP_TIP = 'Big area. Do it in smaller pieces.';
 const MATCH_MAX_PX = 8_000_000; // a rub's window read back at full size (32 MB) to copy its matches
 const ANALYSIS_PX = 1024; // the lasso's edge map: the cropped photo at this long side
-const SNAP_PT = 18; // SPEC F15: the line snaps to an edge within this of the finger, on screen
+const SNAP_PT = 18; // SPEC F19: the line snaps to an edge within this of the finger, on screen
 const ANCHOR_PT = 24; // an anchor every this far along the snapped line, on screen
 const TINY_PT2 = 16; // a loop enclosing less than this on screen (4 x 4 pt) is nothing to fill
 
@@ -59,7 +59,12 @@ let stroke = null; // the rub under the finger: { pts, r, rr, b (point box), cap
 // Built off the finger when Outline comes on and after every fill; dropped on close.
 let costMap = null;
 let costTimer = 0;
-let trace = null; // the loop under the finger: { lasso, pending (analysis px, moved once per frame), kx, ky, spacing }
+// The loop under the finger: { lasso, pending (analysis px, moved once per frame), kx, ky, spacing,
+// reach (the snap radius on screen), crop (what the edge map was built through) }.
+let trace = null;
+// A loop a held finger just lifted: filled on the next microtask unless the
+// reducer's next word is pinch-start (see onGesture 'hold-end').
+let ending = null;
 let mag = null; // the corner magnifier, made on the first trace
 let ringDrag = null; // { id, rec, start: [x, y], cur: [x, y] } source px
 let movedRing = null; // a dropped ring, drawn there until its fill lands
@@ -129,9 +134,10 @@ export default {
     const sourceOk = last?.rec.kind === 'tap';
     const showSource = dial === 'source' && sourceOk;
     const outline = dial === 'outline';
+    const filling = outline && jobs.some((j) => j.kind === 'outline');
     return {
       title: 'Remove',
-      hint: outline ? 'Loop around it. The line snaps to edges.' : 'Tap a spot, or rub over something.',
+      hint: filling ? 'Filling inside the outline…' : outline ? 'Loop around it. The line snaps to edges.' : 'Tap a spot, or rub over something.',
       cancel: true,
       done: true,
       quick: [
@@ -215,10 +221,21 @@ export default {
         if (trace) return moveTrace(ed, g);
         return false;
       case 'drag-end':
-      case 'hold-end':
         if (ringDrag) return endRing(ed);
         if (stroke) return endRub(ed);
         if (trace) return endTrace(ed);
+        return false;
+      case 'hold-end':
+        // Only a loop can be under a held finger (claimsHold). The reducer says
+        // hold-end for a second finger landing and for a pointercancel as well as
+        // for a lift (SPEC §4 rule 2 wants those to cancel, not fill): a pinch-start
+        // follows the second finger in the same batch, so the fill waits a
+        // microtask for it; a reducer that marks the other says `cancelled`.
+        if (!trace) return false;
+        if (g.cancelled) { cancelTrace(ed); return true; }
+        return endTrace(ed, { later: true });
+      case 'pinch-start':
+        cancelTrace(ed); // a loop still live or just lifted by the first finger: no step
         return false;
       case 'drag-cancel':
         if (!ringDrag && !stroke && !trace) return false;
@@ -297,7 +314,7 @@ function setDial(ed, id) {
 }
 
 // The lasso's edge map of the cropped photo at analysis size, built once per
-// photo state (SPEC F15 note §5: ~40–90 ms, so off the finger when possible) and
+// photo state (design/lasso-integration.md §5: ~40–90 ms, so off the finger when possible) and
 // keyed on what it saw: the crop and the fills.
 function ensureCostMap(ed) {
   const st = ed.committed;
@@ -348,7 +365,7 @@ function startTrace(ed, g) {
   const spacing = clamp((ANCHOR_PT / ed.view.scale) * kx, 8, 48);
   const lasso = createLasso(cm, { snapRadius: R, anchorSpacing: spacing });
   lasso.begin(toAnalysis(ed, g.x, g.y, kx, ky));
-  trace = { lasso, pending: null, kx, ky, spacing };
+  trace = { lasso, pending: null, kx, ky, spacing, reach: (R / kx) * ed.view.scale, crop: map.crop };
   (mag ??= createMagnifier(ed)).begin({ x: g.x, y: g.y });
   ed.requestRender();
   return true;
@@ -363,18 +380,35 @@ function moveTrace(ed, g) {
   return true;
 }
 
-function endTrace(ed) {
-  const { lasso, pending, kx, ky } = trace;
+function endTrace(ed, { later = false } = {}) {
+  const t = trace;
   trace = null;
+  if (!later) return finishTrace(ed, t);
+  ending = t;
+  queueMicrotask(() => {
+    if (ending !== t) return; // a pinch-start (or a close) got there first
+    ending = null;
+    finishTrace(ed, t);
+  });
+  return true;
+}
+
+function finishTrace(ed, t) {
+  const { lasso, pending, kx, ky } = t;
   if (pending) lasso.move(pending);
   mag.end();
   const poly = lasso.end(); // closes the loop along edges; analysis px
   ed.requestRender();
+  // A fill landing mid-trace found `trace` set and left the map stale: now, off the finger.
+  if (dial === 'outline') scheduleCostMap(ed);
   if (!poly) return true;
+  const st = ed.committed;
+  // Undo under the other hand took the crop the loop was traced through away:
+  // its analysis px no longer mean anything on this photo.
+  if (st.crop !== t.crop) return true;
   // A tap-sized loop, or a line out and back, encloses nothing worth a step.
   const areaPt = (polygonArea(poly) / (kx * ky)) * ed.view.scale ** 2;
   if (areaPt < TINY_PT2) return true;
-  const st = ed.committed;
   const toSource = multiply(outputToSource(st.crop, st.source.w, st.source.h), [1 / kx, 0, 0, 1 / ky, 0, 0]);
   // Kept at 0.1 px, exactly as the pool entry stores it, so a retry after a
   // relaunch rasterises the very same pixels.
@@ -389,15 +423,18 @@ function endTrace(ed) {
   }
   const job = { kind: 'outline', poly: polyS, seed: 1, attempt: 0 };
   enqueue(ed, job, (gen) => fillOutline(ed, job, gen));
+  ed.refresh(); // the hint says the fill is computing (enqueue refreshes again when it lands)
   return true;
 }
 
 function cancelTrace(ed) {
-  if (!trace) return;
-  trace.lasso.cancel();
-  trace = null;
+  const t = trace ?? ending;
+  if (!t) return;
+  trace = ending = null;
+  t.lasso.cancel();
   mag?.cancel();
   ed.requestRender();
+  if (dial === 'outline') scheduleCostMap(ed); // as finishTrace; close()/setDial drop it right after
 }
 
 // The snapped line on the stage at 1x, then the magnifier. While the magnifier
@@ -407,7 +444,7 @@ function drawTraceOverlay(ed, ctx) {
     if (mag?.active) mag.draw(ctx);
     return;
   }
-  const { lasso, kx, ky, spacing } = trace;
+  const { lasso, kx, ky, spacing, reach } = trace;
   if (trace.pending) {
     lasso.move(trace.pending);
     trace.pending = null;
@@ -443,7 +480,7 @@ function drawTraceOverlay(ed, ctx) {
   }
   drawTrace(ctx, { path, anchors });
   ctx.restore();
-  mag.draw(ctx, { path, anchors, snapRadius: SNAP_PT });
+  mag.draw(ctx, { path, anchors, snapRadius: reach }); // the reach as clamped, not as asked for
 }
 
 // Flat source-px points (a polygon) mapped to stage px.
@@ -836,6 +873,9 @@ function enqueue(ed, job, work) {
       if (!jobs.length) hideShimmer(false);
       ed.requestRender();
       ed.refresh();
+      // The photo the edge map saw has changed: rebuild it now, off the finger,
+      // not under the next drag-start.
+      if (dial === 'outline') scheduleCostMap(ed);
     }
   });
 }

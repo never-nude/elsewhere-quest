@@ -1,4 +1,4 @@
-// The Outline magnifier (SPEC F15): a 140 pt rounded window in a top corner of
+// The Outline magnifier (SPEC F19): a 140 pt rounded window in a top corner of
 // the stage showing the photo around the finger at 3x, with the snapped path and
 // its anchors drawn magnified, a crosshair where the finger is and a faint dotted
 // ring for the snap reach. It is a corner window, not a loupe under the finger,
