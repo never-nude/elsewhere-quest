@@ -24,7 +24,7 @@ import {
   PRESETS, DEFAULT_SIZE, DILATE_PX, FILTER_BLEED, brushRadius, solveFactor, discBox, clipRect, grow,
   findRegion, fullOffsets, rubWindow, mapPoints, extendBounds, boundsRect, readPadded, shrink, shrinkMask,
   stackSide, stackPair, correctionField, upsampleCorrection, cutTile, upsampleFill, discRing, refineOffset, subBlock,
-  rankSources, addCorrection, SEAM_PX, recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill,
+  rankSources, addCorrection, SEAM_PX, recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill, silhouetteSvg,
 } from '../../lib/remove-plan.js';
 import { createHealClient } from '../heal-client.js';
 
@@ -51,6 +51,7 @@ const fills = new Map(); // patch id -> how it was made, for Try another and Sou
 let heal = null;
 let shimmerAt = 0;
 let shimmerTimer = 0;
+let shimmerMask = ''; // the mask #shimmer has now (set only on change: it can be long)
 
 const client = () => (heal ??= createHealClient());
 
@@ -653,26 +654,18 @@ function placeShimmer(ed, map) {
   // A rubbed area shimmers in its own shape. The mask is drawn once, in this
   // frame's stage px; mask-size 100% keeps it fitted through a pinch.
   if (j.kind === 'rub' && !j.mask) j.mask = silhouette(map, j, x0, y0, x1 - x0, y1 - y0, ed.sourcePerStagePx());
-  const url = j.kind === 'rub' && j.mask ? `url(${j.mask})` : 'none';
-  el.style.maskImage = el.style.webkitMaskImage = url;
-  el.style.maskSize = el.style.webkitMaskSize = '100% 100%';
+  const url = j.kind === 'rub' && j.mask ? `url("${j.mask}")` : 'none';
+  if (url !== shimmerMask) {
+    shimmerMask = url;
+    el.style.maskImage = el.style.webkitMaskImage = url;
+    el.style.maskSize = el.style.webkitMaskSize = '100% 100%';
+  }
 }
 
 function silhouette(map, j, x0, y0, w, h, perPx) {
-  try {
-    const s = Math.min(1, 256 / Math.max(w, h, 1));
-    const c = document.createElement('canvas');
-    c.width = Math.max(1, Math.round(w * s));
-    c.height = Math.max(1, Math.round(h * s));
-    const ctx = c.getContext('2d');
-    ctx.setTransform(s, 0, 0, s, -x0 * s, -y0 * s);
-    coral(ctx, map, j.pts, j.rr / perPx, '#fff');
-    const url = c.toDataURL();
-    c.width = c.height = 0;
-    return url;
-  } catch {
-    return null; // a plain box shimmer is fine
-  }
+  const pts = [];
+  for (let i = 0; i + 1 < j.pts.length; i += 2) pts.push(...map(j.pts[i], j.pts[i + 1]));
+  return silhouetteSvg(pts, j.rr / perPx, { x: x0, y: y0, w, h });
 }
 
 function pick({ width, height, data }) {

@@ -225,6 +225,27 @@ function spanCapsule(mask, w, h, ax, ay, bx, by, r) {
   }
 }
 
+// The rubbed area's outline as an SVG data URL, for the shimmer's CSS mask:
+// `pts` (flat x, y) and `radius` in the same px as the box { x, y, w, h } it is
+// drawn into. A string, not a canvas: a canvas readback (toDataURL) waits for the
+// GPU, which is busy with the photo, and stalled the main thread for seconds.
+export function silhouetteSvg(pts, radius, box) {
+  const n = (v) => Math.round(v * 10) / 10;
+  const w = Math.max(1, n(box.w)), h = Math.max(1, n(box.h));
+  const r = Math.max(0.5, n(radius));
+  let shape = '';
+  const at = (i) => `${n(pts[i] - box.x)} ${n(pts[i + 1] - box.y)}`;
+  if (pts.length === 2) {
+    shape = `<circle cx="${n(pts[0] - box.x)}" cy="${n(pts[1] - box.y)}" r="${r}" fill="#fff"/>`;
+  } else if (pts.length > 2) {
+    let d = `M${at(0)}`;
+    for (let i = 2; i + 1 < pts.length; i += 2) d += `L${at(i)}`;
+    shape = `<path d="${d}" fill="none" stroke="#fff" stroke-width="${n(2 * r)}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none">${shape}</svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+}
+
 // ------------------------------------------------------------------ reading pixels
 
 // The rect's pixels, with anything off the photo filled by repeating the nearest

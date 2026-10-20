@@ -4,7 +4,7 @@ import {
   PRESETS, DEFAULT_SIZE, brushRadius, solveFactor, discBox, clipRect, grow, findRegion, fullOffsets, rankSources,
   rubWindow, mapPoints, extendBounds, boundsRect, discRing, refineOffset, subBlock, readPadded, shrink, shrinkMask,
   stackSide, stackLayout, stackPair, correctionField, upsampleCorrection, cutTile, upsampleFill, addCorrection,
-  recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill,
+  recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill, silhouetteSvg,
 } from '../lib/remove-plan.js';
 import { diskMask, strokeMask, maskBounds, composeRef, handleHealMessage } from '../lib/heal.js';
 import { planRemoval, mulberry32 } from '../lib/inpaint.js';
@@ -429,4 +429,17 @@ test('shrinkFill is upsampleFill shrunk, without the full-size copy', () => {
     for (let i = 0; i < got.data.length; i++) worst = Math.max(worst, Math.abs(got.data[i] - want.data[i]));
     assert.ok(worst <= 1, `f ${f}: off by ${worst}`);
   }
+});
+
+test('silhouetteSvg draws the rubbed path into its box as an SVG data URL', () => {
+  const url = silhouetteSvg([110, 220, 150.04, 260, 190, 230], 12.34, { x: 100, y: 200, w: 120.5, h: 80 });
+  assert.ok(url.startsWith('data:image/svg+xml,'));
+  const svg = decodeURIComponent(url.slice('data:image/svg+xml,'.length));
+  assert.match(svg, /viewBox="0 0 120.5 80"/);
+  assert.match(svg, /preserveAspectRatio="none"/);
+  assert.match(svg, /d="M10 20L50 60L90 30"/);
+  assert.match(svg, /stroke-width="24.6"/);
+  assert.ok(!url.includes('"'), 'safe inside url("…")');
+  const dot = decodeURIComponent(silhouetteSvg([105, 210], 3, { x: 100, y: 200, w: 10, h: 10 }).split(',')[1]);
+  assert.match(dot, /<circle cx="5" cy="10" r="3"/);
 });
