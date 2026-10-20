@@ -47,6 +47,7 @@ const SHELL = [
   './ui/heal-client.js',
   './ui/hints-ui.js',
   './ui/importer.js',
+  './ui/magnifier.js',
   './ui/navigator.js',
   './ui/panel.js',
   './ui/probe.js',
