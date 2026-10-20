@@ -425,6 +425,9 @@ function pageHelpers() {
             out.sliders.push({ desc: acc.describe(el), valuetext: norm(el.getAttribute('aria-valuetext')), name: acc.accName(el) });
             continue;
           }
+          // A colour swatch's colour is its content (as a thumbnail is a look's):
+          // it needs a spoken name, and the chosen colour's name shows in the dial row.
+          if (el.classList.contains('swatch') && norm(el.getAttribute('aria-label'))) continue;
           if (!acc.text(el)) out.unlabelled.push(`${acc.describe(el)}${el.getAttribute('aria-label') ? ` (aria-label ${JSON.stringify(el.getAttribute('aria-label'))} only)` : ''}`);
         }
       }

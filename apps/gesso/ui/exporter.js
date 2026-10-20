@@ -22,7 +22,7 @@ import { outputQuad } from '../lib/view.js';
 import { developInput } from '../lib/doc.js';
 import { resolve, uniforms as developUniforms } from '../lib/develop.js';
 import { captionBounds } from '../lib/text-layout.js';
-import { JPEG_QUALITY, JPEG_TYPE, bandMatrix, bandRendered, renderProgress, coverRect, clipToBand, compositeOver } from '../lib/export-plan.js';
+import { JPEG_QUALITY, JPEG_TYPE, bandMatrix, bandRendered, renderProgress, coverRect, bandRaster, compositeOver } from '../lib/export-plan.js';
 
 const WORKER_URL = new URL('../workers/export-worker.js', import.meta.url);
 // A 24 MP encode takes about a second on a phone; far past that the worker is
@@ -83,7 +83,7 @@ export async function renderOutput(ed, { doc = ed.doc, captions = null, onProgre
     const band = plan[i];
     const quad = outputQuad(doc.crop, srcW, srcH, outW, outH, bandMatrix(band));
     renderBand(renderer, { width: outW, height: band.h, quad, uniforms, grainScale: [outW, outH], into: data, offset: band.y * outW * 4 });
-    const part = words === 'all' ? clipToBand({ x: 0, y: 0, width: outW, height: outH }, band) : clipToBand(words, band);
+    const part = words && bandRaster(words.rect, band, words.reach);
     if (part) overlayCaptions(captions, doc, data, outW, outH, part);
     onProgress?.(renderProgress(i + 1, plan.length));
     if (i < plan.length - 1) await nextFrame();
@@ -106,34 +106,42 @@ function renderBand(renderer, opts) {
   if (px !== into) into.set(px, offset);
 }
 
-// The output rows the captions can reach (their shadows included), so bands
-// without words skip the raster, and bands with words raster only that strip.
-// 'all' when the captions module can't say where its words are.
+// { rect, reach }: the output px the captions can touch (their shadows included),
+// so bands without words skip the raster and bands with words raster only that
+// strip; and how far a caption's pixels reach past its box, which is how far past
+// a band its strip is drawn. The whole output when the captions module can't say
+// where its words are.
 function captionCover(captions, doc, outW, outH) {
   const list = Array.isArray(doc.text) ? doc.text : [];
   if (list.length === 0) return null;
-  if (typeof captions.layout !== 'function') return 'all';
+  // (no reach then: a whole-output raster per band would be ~100 MB each)
+  const all = { rect: { x: 0, y: 0, width: outW, height: outH }, reach: 0 };
+  if (typeof captions.layout !== 'function') return all;
   try {
-    return coverRect(list.map((cap) => {
+    let reach = 0;
+    const rect = coverRect(list.map((cap) => {
       const lay = captions.layout(cap, outW, outH);
       // the same reach captions.rasterize allows for the shadow
-      return { ...captionBounds(cap, lay, outW, outH), margin: lay.fontPx * 0.5 + 2 };
+      const margin = lay.fontPx * 0.5 + 2;
+      reach = Math.max(reach, margin);
+      return { ...captionBounds(cap, lay, outW, outH), margin };
     }), outW, outH);
+    return rect ? { rect, reach } : null;
   } catch {
-    return 'all';
+    return all;
   }
 }
 
-function overlayCaptions(captions, doc, data, outW, outH, rect) {
-  const raster = captions.rasterize(doc, outW, outH, rect);
+function overlayCaptions(captions, doc, data, outW, outH, { draw, keep }) {
+  const raster = captions.rasterize(doc, outW, outH, draw);
   if (!raster) return;
   try {
     const ctx = raster.getContext('2d');
-    // A raster of the whole output means `rect` was not honoured: read our part of it.
+    // A raster of the whole output means `draw` was not honoured: read our part of it.
     const whole = raster.width === outW && raster.height === outH;
-    const sx = whole ? rect.x : 0, sy = whole ? rect.y : 0;
-    const img = ctx.getImageData(sx, sy, rect.width, rect.height);
-    compositeOver(data, outW, outH, img.data, img.width, img.height, rect.x, rect.y);
+    const sx = whole ? keep.x : keep.x - draw.x, sy = whole ? keep.y : keep.y - draw.y;
+    const img = ctx.getImageData(sx, sy, keep.width, keep.height);
+    compositeOver(data, outW, outH, img.data, img.width, img.height, keep.x, keep.y);
   } finally {
     // iOS keeps a canvas's pixels until GC, and this one can be a whole band
     // (~32 MB) at the export's memory peak.

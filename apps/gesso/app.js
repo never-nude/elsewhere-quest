@@ -11,6 +11,7 @@ import { createHints } from './ui/hints-ui.js';
 import { createCaptions } from './ui/captions.js';
 import { openSaveSheet } from './ui/savesheet.js';
 import { attachTape } from './ui/tape.js';
+import { attachNavigator } from './ui/navigator.js';
 import home from './ui/tools/home.js';
 import crop from './ui/tools/crop.js';
 import light from './ui/tools/light.js';
@@ -101,6 +102,7 @@ async function main() {
   editor.hitCaption = (x, y) => captions.hit(x, y);
   editor.captions = captions;
   attachTape(editor, $('#undo'));
+  attachNavigator(editor);
   installBubble(editor);
 
   // ---- import ------------------------------------------------------------------

@@ -93,7 +93,7 @@ These run in a browser harness (Playwright or equivalent; dev-only, never a runt
    - There is no `aria-haspopup` in the chrome.
    - In every state (home, crop, light, color, remove, text), `#panel`, `#dock`, `#actions` and every chip row have `scrollWidth <= clientWidth + 1` and `scrollHeight <= clientHeight + 1`.
 3. **Fixed places.** For each tool state, the rects of Undo, Redo, Before, Save, each dock button, `#panel` and `#stage` equal the home-state rects within 1px. `#panel` height is 204±1.
-4. **No unlabelled controls.** Every `button`, `[role=button]`, `[role=radio]` and `[role=slider]` in `#chrome` and `#panel` has visible text. A thumbnail chip's caption counts as its text. Each ruler has `role=slider` and a non-empty `aria-valuetext`.
+4. **No unlabelled controls.** Every `button`, `[role=button]`, `[role=radio]` and `[role=slider]` in `#chrome` and `#panel` has visible text. A thumbnail chip's caption counts as its text. A colour swatch, whose colour is its content, needs an `aria-label` naming the colour instead; the chosen colour's name shows in the dial row. Each ruler has `role=slider` and a non-empty `aria-valuetext`.
 5. **Glanceable count.** The home state has at most 12 enabled interactive controls outside `#stage`.
 6. **Static paint.** With JavaScript disabled, `index.html` renders the five dock labels and the four action labels.
 7. **One-tap defaults.**

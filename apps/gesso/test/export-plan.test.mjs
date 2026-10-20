@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   JPEG_TYPE, JPEG_QUALITY, RENDER_SHARE, ENCODE_CEILING, bandMatrix, bandRendered, renderProgress, encodeEstimateMs,
-  coverRect, clipToBand, compositeOver, shareRoute, shareOutcome, previewFit,
+  coverRect, clipToBand, bandRaster, compositeOver, shareRoute, shareOutcome, previewFit,
   swipeCloses, sheetOffset, SWIPE_CLOSE_PT, SWIPE_FLICK_MIN_PT,
 } from '../lib/export-plan.js';
 import { bandPlan } from '../lib/image-io.js';
@@ -80,6 +80,32 @@ test('clipToBand keeps only the rows a band holds', () => {
   assert.deepEqual(clipToBand(rect, { y: 100, h: 100 }), { x: 10, y: 100, width: 30, height: 30 });
   assert.equal(clipToBand(rect, { y: 130, h: 100 }), null);
   assert.equal(clipToBand(null, { y: 0, h: 100 }), null);
+});
+
+test('bandRaster draws past the band (inside the cover) and keeps only the band rows', () => {
+  const cover = { x: 10, y: 90, width: 30, height: 400 };
+  // a band in the middle of the cover: grows both ways
+  assert.deepEqual(bandRaster(cover, { y: 200, h: 100 }, 25), {
+    draw: { x: 10, y: 175, width: 30, height: 150 },
+    keep: { x: 10, y: 200, width: 30, height: 100 },
+  });
+  // the first band the cover reaches: never above the cover
+  assert.deepEqual(bandRaster(cover, { y: 0, h: 100 }, 25), {
+    draw: { x: 10, y: 90, width: 30, height: 35 },
+    keep: { x: 10, y: 90, width: 30, height: 10 },
+  });
+  // the last: never below it
+  assert.deepEqual(bandRaster(cover, { y: 450, h: 100 }, 25), {
+    draw: { x: 10, y: 425, width: 30, height: 65 },
+    keep: { x: 10, y: 450, width: 30, height: 40 },
+  });
+  // fractional reach rounds up; no reach draws exactly the kept rows
+  assert.equal(bandRaster(cover, { y: 200, h: 100 }, 2.2).draw.height, 106);
+  assert.deepEqual(bandRaster(cover, { y: 200, h: 100 }).draw, bandRaster(cover, { y: 200, h: 100 }).keep);
+  assert.deepEqual(bandRaster(cover, { y: 200, h: 100 }, NaN).draw, { x: 10, y: 200, width: 30, height: 100 });
+  // nothing of the cover in this band
+  assert.equal(bandRaster(cover, { y: 600, h: 100 }, 25), null);
+  assert.equal(bandRaster(null, { y: 0, h: 100 }, 25), null);
 });
 
 test('compositeOver blends straight alpha onto the opaque photo, in place, clipped', () => {

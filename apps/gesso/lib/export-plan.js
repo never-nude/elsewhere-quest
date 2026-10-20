@@ -73,6 +73,20 @@ export function clipToBand(rect, band) {
   return { x: rect.x, y, width: rect.width, height: bottom - y };
 }
 
+// The caption raster for one band: `keep` is the band's share of the cover (the
+// rows it composites), `draw` the same columns with up to `over` more rows above
+// and below, still inside the cover. A canvas cuts a shadow's blur off where the
+// canvas ends, so rastering exactly the band's rows would leave a visible step in
+// a caption's shadow at the seam between two bands. null when the band has none.
+export function bandRaster(cover, band, over = 0) {
+  const keep = clipToBand(cover, band);
+  if (!keep) return null;
+  const o = Number.isFinite(over) && over > 0 ? Math.ceil(over) : 0;
+  const y0 = Math.max(cover.y, keep.y - o);
+  const y1 = Math.min(cover.y + cover.height, keep.y + keep.height + o);
+  return { draw: { x: keep.x, y: y0, width: keep.width, height: y1 - y0 }, keep };
+}
+
 // Lay straight-alpha RGBA `src` (srcW x srcH, e.g. getImageData of the caption
 // raster) over the opaque photo `dst` (dstW x dstH) with its top-left at (x0, y0),
 // in place. Fully transparent pixels are skipped, so a mostly empty raster costs

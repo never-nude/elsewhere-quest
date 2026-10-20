@@ -174,8 +174,17 @@ export function createPanel(root, handlers) {
     }
   }
 
+  function endTip() {
+    clearTimeout(hintTimer);
+    tipShowing = false;
+    els.hint.classList.remove('is-tip');
+    els.hint.textContent = baseHint;
+  }
+
   return {
     render(spec) {
+      // A tip belongs to the tool it was earned in: switching tools ends it.
+      if (tipShowing && (spec.title ?? '') !== els.name.textContent) endTip();
       els.name.textContent = spec.title ?? '';
       baseHint = spec.hint ?? '';
       if (!tipShowing) els.hint.textContent = baseHint;
@@ -191,11 +200,7 @@ export function createPanel(root, handlers) {
       tipShowing = true;
       els.hint.textContent = text;
       els.hint.classList.add('is-tip');
-      hintTimer = setTimeout(() => {
-        tipShowing = false;
-        els.hint.classList.remove('is-tip');
-        els.hint.textContent = baseHint;
-      }, ms);
+      hintTimer = setTimeout(endTip, ms);
     },
     get tipShowing() { return tipShowing; },
     fade(on) { els.panel.classList.toggle('is-faded', !!on); },

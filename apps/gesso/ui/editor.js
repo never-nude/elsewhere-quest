@@ -194,12 +194,14 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     app.dataset.tool = id;
     for (const b of dockButtons) b.setAttribute('aria-pressed', b.dataset.tool === id ? 'true' : 'false');
     tool.open?.(ed, opts);
-    viewKey = '';
+    // The zoom is kept across tools (Crop fits its own frame; see ensureView).
     refresh();
     requestRender();
   }
 
-  function closeTool({ cancel = false, quiet = false } = {}) {
+  // quiet: another tool opens next, so Home is never really shown. hint: false when
+  // something covers the panel next (Save's sheet), so no hint is burned unseen.
+  function closeTool({ cancel = false, quiet = false, hint = !quiet } = {}) {
     if (toolId === 'home') return;
     if (liveState) liveState = null;
     if (cancel) {
@@ -215,8 +217,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     app.dataset.tool = 'home';
     for (const b of dockButtons) b.setAttribute('aria-pressed', 'false');
     tool.open?.(ed, {});
-    viewKey = '';
-    if (current()?.text?.length) ed.hint('home-with-caption');
+    if (hint && current()?.text?.length) ed.hint('home-with-caption');
     if (!quiet) afterChange();
   }
 
@@ -596,7 +597,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     // first, so the saved copy has it. Sharing needs its own tap on the sheet, so
     // waiting here costs no user activation.
     const pending = Object.values(tools).map((t) => t?.settle?.(ed)).filter(Boolean);
-    if (toolId !== 'home') closeTool({ cancel: false });
+    if (toolId !== 'home') closeTool({ cancel: false, hint: false });
     if (pending.length) await Promise.all(pending);
     onSave?.(ed);
   });
@@ -724,8 +725,10 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
 
     // Jump to any history step (rewind tape).
     jumpTo(i) {
+      const next = H.jumpTo(hist, i);
+      if (next === hist) return; // already there: no new revision, no autosave
       liveState = null;
-      hist = H.jumpTo(hist, i);
+      hist = next;
       revision++;
       syncGpu(current());
       tool.onHistory?.(ed);

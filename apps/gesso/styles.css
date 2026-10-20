@@ -300,6 +300,8 @@ button:disabled { cursor: default; }
 .panel__cancel { justify-self: start; color: var(--ink-2); }
 .panel__done { justify-self: end; color: var(--accent); font-weight: 600; }
 .panel__titles { grid-column: 2; text-align: center; min-width: 0; }
+/* Home has no tool name and no Cancel or Done: its hint gets the whole header. */
+.panel__titles:has(.panel__name:empty) { grid-column: 1 / -1; padding: 0 12px; }
 .panel__name {
   margin: 0;
   font-size: 16px;
@@ -317,6 +319,11 @@ button:disabled { cursor: default; }
   text-overflow: ellipsis;
   transition: color 0.2s;
 }
+/* The hint with the header to itself (Home), and an earned tip, which takes both
+   lines, may wrap: cut off on a 402pt or landscape panel they would teach nothing. */
+.panel__titles:has(.panel__hint.is-tip) .panel__name { display: none; }
+.panel__name:empty + .panel__hint,
+.panel__hint.is-tip { white-space: normal; max-height: 2.5em; }
 .panel__hint.is-tip { color: var(--ink); }
 .panel__hint.is-tip::before {
   content: "";
@@ -389,6 +396,15 @@ button:disabled { cursor: default; }
   object-fit: cover;
 }
 .chip--note { background: none; color: var(--ink-2); font-weight: 500; }
+/* Auto beside look thumbnails takes their shape (icon over word), so in a narrow
+   landscape column it fits its share of the row instead of cutting "Auto". */
+.panel__quick:has(.chip--thumb) .chip:not(.chip--thumb) {
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 2px 2px;
+  font-size: 11px;
+}
+.panel__quick:has(.chip--thumb) .chip:not(.chip--thumb) .icon { width: 26px; height: 26px; }
 
 .dial {
   position: relative;
