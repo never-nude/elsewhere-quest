@@ -269,7 +269,10 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
       gl.bindTexture(gl.TEXTURE_2D, pristine);
       for (let y = 0; y < h; y += STRIP_ROWS) {
         const rows = Math.min(STRIP_ROWS, h - y);
-        ctx.clearRect(0, 0, w, strip.height);
+        // A JPEG has no alpha and the develop pass ignores it: flatten transparent
+        // pixels (a PNG drawing, a sticker) onto white here, once, for every use.
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, strip.height);
         ctx.drawImage(image, 0, y, w, rows, 0, 0, w, rows);
         if (rows === strip.height) {
           gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, y, gl.RGBA, gl.UNSIGNED_BYTE, strip);
@@ -497,7 +500,10 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
     // included) through the crop but with no tone, for analysis.
     // `into` (+ `offset`, in bytes): read the rows into that array and return it.
     renderPixels({ width, height, quad, uniforms, grainScale = [width, height], before = false, tone = true, into = null, offset = 0 }) {
-      if (!ok || lost) throw new Error('WebGL is not available right now');
+      // !pristine: the context is back but the photo is not on it yet (it is being
+      // decoded again). A render now would be opaque black, which nothing
+      // downstream can tell from a dark photo.
+      if (!ok || lost || !pristine) throw new Error('WebGL is not available right now');
       const plain = before || !tone;
       return renderToBuffer(width, height, quad, plain ? IDENTITY : uniforms, {
         texture: before ? pristine : base ?? pristine,

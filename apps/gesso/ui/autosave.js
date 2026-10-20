@@ -8,6 +8,7 @@
 //                                 every write in flight has settled
 //   startDraft(id, file)          a new photo: store the original File/Blob as 'source:<id>', set current
 //   saveTile(id, rgba, meta)      a Remove fill tile: write 'tile:<id>' BEFORE the history entry that references it
+//   forgetTiles(ids)              fills no step names any more: their tiles go once a record without them is stored
 //   loadDraft() -> null | { file, info, history, pools, tiles: Map<id, Uint8ClampedArray>, savedRevision: boolean, maxPixels }
 //                                 throws when the stored draft is damaged (the app then discards it)
 //   discard()                     forget the current draft and its blobs
@@ -45,6 +46,7 @@ export function createAutosave(store, getEditor, { debounceMs = 300, now = () =>
   let pointed; // what meta 'current' is known to name (undefined: not known yet)
   let epoch = 0; // bumped by startDraft and discard, so an older loadDraft stands down
   let healing = null; // tiles being stored again before a record may name them
+  const dead = new Set(); // fills no step names any more, deleted once a record without them lands
   let toldFull = false;
   const inflight = new Set();
   let ops = Promise.resolve(); // startDraft / loadDraft / discard, one at a time, in call order
@@ -93,11 +95,13 @@ export function createAutosave(store, getEditor, { debounceMs = 300, now = () =>
     }
     const saved = ed.isSaved === true;
     if (written && written.history === ed.history && written.pools === ed.pools && written.saved === saved) return null;
-    let record;
+    let record, gone;
     try {
       // A record naming a tile that is not stored would make the whole draft
       // unrestorable; keep the last good record until the tile is stored.
-      const missing = [...referencedIds(ed.history).patches].filter((pid) => !stored.has(tileKey(pid)));
+      const refs = referencedIds(ed.history).patches;
+      gone = [...dead].filter((pid) => !refs.has(pid));
+      const missing = [...refs].filter((pid) => !stored.has(tileKey(pid)));
       if (missing.length) {
         storeAgain(ed, id, missing);
         return null;
@@ -120,6 +124,14 @@ export function createAutosave(store, getEditor, { debounceMs = 300, now = () =>
     }
     p = p.then(() => {
       if (point && draftId === id) pointed = id;
+      // The stored record no longer names these: their tiles can go.
+      for (const pid of gone) {
+        const key = tileKey(pid);
+        dead.delete(pid);
+        stored.delete(key);
+        kept.delete(key);
+        track(Promise.resolve().then(() => store.deleteBlob(key)).catch(report));
+      }
     }, (err) => {
       if (written === mark) written = null; // retry on the next schedule or flush
       throw err;
@@ -195,7 +207,16 @@ export function createAutosave(store, getEditor, { debounceMs = 300, now = () =>
         const sk = sourceKey(id);
         if (!keys.stored.has(sk)) {
           keys.kept.add(sk);
-          await store.putBlob(sk, file);
+          try {
+            await store.putBlob(sk, file);
+          } catch (err) {
+            if (err?.name !== 'QuotaExceededError') throw err;
+            // The previous photo's draft (swept below anyway) may be what is in the way.
+            await dropOtherDocs(id);
+            await store.gc(keeper(id));
+            if (draftId !== id) return;
+            await store.putBlob(sk, file);
+          }
           keys.stored.add(sk);
         }
         if (draftId !== id) return;
@@ -359,6 +380,9 @@ export function createAutosave(store, getEditor, { debounceMs = 300, now = () =>
     },
     startDraft,
     saveTile,
+    forgetTiles(ids) {
+      for (const pid of ids) dead.add(pid);
+    },
     loadDraft,
     discard,
     get available() { return store.available === true; },

@@ -84,6 +84,17 @@ export default {
     select(ed, null);
   },
 
+  // The app is going to the background: the words typed so far become a step, so
+  // the flush that follows keeps them. (The blur WebKit sends then leaves the field
+  // focused, so the blur handler below cannot act on it.) Typing carries on, and a
+  // later Done updates the caption.
+  commitTyping(ed) {
+    if (!editing || dropIfStale(ed) || editing.draft.text.trim() === '') return;
+    const next = withCaption(ed.committed, editing.draft);
+    if (next !== ed.committed) ed.commit(next);
+    editing = { ...editing, isNew: false };
+  },
+
   // Undo, Redo: whatever was being typed belonged to the state that is gone.
   onHistory(ed) {
     if (editing) {
@@ -258,12 +269,12 @@ function tap(ed, target) {
   if (target.startsWith('caption:')) {
     const id = target.slice(8);
     if (editing?.id === id) return true; // already typing into it
-    if (editing) finishEditing(ed, { fromBar: true });
+    if (editing && !withdrawUntyped(ed)) finishEditing(ed, { fromBar: true });
     if (id === selectedId && findCaption(ed.committed, id)) startEditing(ed, id);
     else select(ed, id);
   } else {
     // Empty photo: put the keyboard away (keeping the words) and deselect.
-    if (editing) finishEditing(ed, { fromBar: true });
+    if (editing && !withdrawUntyped(ed)) finishEditing(ed, { fromBar: true });
     select(ed, null);
   }
   ed.refresh();
@@ -363,7 +374,7 @@ function startNew(ed) {
   if (editing) settle(ed, takeEdit());
   const doc = ed.committed;
   const cap = { ...newCaption(captionId(doc.text)), cy: freeSpot(doc.text) };
-  editing = { id: cap.id, isNew: true, draft: cap };
+  editing = { id: cap.id, isNew: true, draft: cap, typed: false };
   select(ed, cap.id);
   ed.live(withCaption(doc, cap));
   keepInView(ed, cap);
@@ -403,6 +414,17 @@ function finishEditing(ed, { fromBar = false } = {}) {
   if (fromBar && findCaption(ed.committed, e.id)) ed.hint('caption-done');
   ed.refresh();
   ed.requestRender();
+}
+
+// A new caption nobody has typed into is only an offer: tapping away from it (to
+// the caption you came to fix, or the empty photo) withdraws it, so "Your words"
+// never lands on the photo unasked. Done keeps it.
+function withdrawUntyped(ed) {
+  if (!editing?.isNew || editing.typed) return false;
+  takeEdit();
+  hideBar();
+  ed.live(null);
+  return true;
 }
 
 function takeEdit() {
@@ -498,6 +520,7 @@ function onInput() {
   const text = clipCaptionText(raw);
   if (text !== raw) bar.input.value = text;
   editing.draft = { ...editing.draft, text };
+  editing.typed = true;
   edRef.live(withCaption(edRef.committed, editing.draft));
   place();
 }

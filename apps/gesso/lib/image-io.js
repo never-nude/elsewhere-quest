@@ -73,7 +73,7 @@ export function sniffImageType(bytes) {
 }
 
 const FRIENDLY = {
-  raw: "That's a RAW photo, which Safari can't open. In Photos, pick the regular version (or turn off RAW for this shot) and try again.",
+  raw: "That's a RAW photo, which Safari can't open. In Photos, pick the regular version.",
   unknown: "That file doesn't look like a photo Gesso can open. Try a JPEG, HEIC or PNG.",
 };
 

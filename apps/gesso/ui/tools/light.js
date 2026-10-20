@@ -46,7 +46,7 @@ export default {
     const painting = selected === 'paint';
     return {
       title: 'Light',
-      hint: painting ? 'Paint with one finger. Paint again to build it up.' : 'Tap Auto, or pick a dial and drag the ruler.',
+      hint: painting ? 'Drag on the photo to paint light.' : 'Tap Auto, or pick a dial and drag.',
       cancel: true,
       done: true,
       quick: [
@@ -73,7 +73,11 @@ export default {
       let next = ed.committed;
       for (const k of DIALS) next = setIn(next, ['light', k], L[k] ?? 0);
       if (next === ed.committed) ed.toast('Light looks good already');
-      else ed.commit(next, 'Auto light');
+      else {
+        const from = ed.committed.light[selected];
+        ed.commit(next, 'Auto light');
+        ed.panel.ruler()?.animateTo(next.light[selected], 400, from);
+      }
     } else if (id === 'brighter') nudge(ed, { brightness: 15 }, null);
     else if (id === 'darker') nudge(ed, { brightness: -15 }, null);
     else if (id === 'punchier') nudge(ed, { contrast: 15 }, null);
@@ -108,11 +112,11 @@ export default {
   onGesture(ed, g) {
     if (selected === 'paint') return paintGesture(ed, g);
     if (g.type === 'drag-start') {
-      scrub.start(ed, selected, ['light', selected], g.x, performance.now());
+      scrub.start(ed, selected, ['light', selected], g.x);
       return true;
     }
     if (g.type === 'drag' && scrub.active) {
-      scrub.move(ed, g.x, performance.now());
+      scrub.move(ed, g.x, g.t);
       ed.bubble?.(formatValue(rulerSpec(selected), Math.round(scrub.value)), g.x, g.y);
       return true;
     }

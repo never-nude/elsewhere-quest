@@ -54,13 +54,14 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
   let toolMark = null; // history mark when the tool opened
   let view = null;
   let viewKey = '';
+  let keptView = null; // the photo's view while Crop shows its own frame: { key, view }
   let compare = { mode: 'off', x: 0 };
   let gesture = initialGestures();
   let wakeTimer = 0;
   let renderQueued = false;
   let blurTimer = 0;
   let toastTimer = 0;
-  let savedRevision = -1;
+  let savedState = null; // the state last put in Photos (states are immutable: same object, same pixels)
   let revision = 0;
   let sourceInfo = null;
   let pinch = null;
@@ -84,6 +85,8 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
 
   const current = () => (hist ? H.current(hist) : null);
   const shown = () => liveState ?? current();
+  // By state, not by revision: a Cancel with no change, or Undo then Redo, is still saved.
+  const inPhotos = () => savedState !== null && current() === savedState;
 
   function setLive(next) {
     liveState = next;
@@ -98,18 +101,36 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     const pushed = H.push(hist, next, text, t);
     liveState = null;
     if (pushed === hist) { syncGpu(current()); requestRender(); refresh(); return null; }
+    const before = H.referencedIds(hist).patches;
     hist = pushed;
     revision++;
     syncGpu(next);
+    dropDeadFills(before);
     afterChange();
     return text;
+  }
+
+  // Fills that no history step names any more (a redo branch a new step replaced, a
+  // cancelled Remove session) can never come back: let their pixels go, here and in
+  // the store. `before`: the fills the history named before the change.
+  function dropDeadFills(before) {
+    const now = H.referencedIds(hist).patches;
+    const gone = [...before].filter((id) => !now.has(id));
+    if (!gone.length) return;
+    const patches = { ...pools.patches };
+    for (const id of gone) {
+      tiles.delete(id);
+      delete patches[id];
+    }
+    pools = { ...pools, patches };
+    store?.forgetTiles?.(gone);
   }
 
   function afterChange() {
     requestRender();
     refresh();
     store?.schedule?.();
-    statusEl.textContent = revision === savedRevision ? 'Saved' : (H.canUndo(hist) ? 'Edited' : '');
+    statusEl.textContent = inPhotos() ? 'Saved' : (H.canUndo(hist) ? 'Edited' : '');
   }
 
   // Keep the GPU's fills and painted light in step with whatever state is shown.
@@ -205,9 +226,11 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     if (toolId === 'home') return;
     if (liveState) liveState = null;
     if (cancel) {
+      const before = H.referencedIds(hist).patches;
       hist = H.revertToMark(hist);
       revision++;
       syncGpu(current());
+      dropDeadFills(before);
     }
     tool.close?.(ed, { cancel });
     hist = H.clearMark(hist);
@@ -263,7 +286,12 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     // the output size stays the same.
     const key = c.mode === 'frame' ? `f:${s.width}x${s.height}` : `o:${c.width}x${c.height}:${s.width}x${s.height}`;
     if (key !== viewKey || !view) {
-      view = fitView(c.width, c.height, s.width, s.height, c.mode === 'frame' ? 28 : STAGE_MARGIN);
+      // Back from Crop with the same output on the same stage, the zoom the user left
+      // is theirs again (SPEC F14).
+      if (c.mode === 'frame' && view && viewKey.startsWith('o:')) keptView = { key: viewKey, view };
+      const back = c.mode === 'output' && viewKey.startsWith('f:') && keptView?.key === key;
+      view = back ? keptView.view : fitView(c.width, c.height, s.width, s.height, c.mode === 'frame' ? 28 : STAGE_MARGIN);
+      if (c.mode === 'output') keptView = null;
       viewKey = key;
     }
     if (c.mode === 'frame') {
@@ -631,11 +659,11 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     get sourceInfo() { return sourceInfo; },
     get revision() { return revision; },
     markSaved() {
-      savedRevision = revision;
+      savedState = current();
       statusEl.textContent = 'Saved';
       store?.schedule?.(); // persist "in Photos" so a relaunch doesn't ask to save again
     },
-    get isSaved() { return revision === savedRevision; },
+    get isSaved() { return inPhotos(); },
     live: setLive,
     commit,
     refresh,
@@ -652,13 +680,15 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
 
     // The cropped photo, small: { width, height, data }. tone: false for analysis
     // (Auto reads the photo, not its own edits); `state` overrides the shown one
-    // (look thumbnails).
-    readOutput({ maxSide = 512, tone = false, state = null, before = false } = {}) {
+    // (look thumbnails); `rect` (output px) reads just that part, scaled so its
+    // long side is maxSide (the loupe).
+    readOutput({ maxSide = 512, tone = false, state = null, before = false, rect = null } = {}) {
       const st = state ?? shown();
       const o = outputSize(st.crop);
-      const s = Math.min(1, maxSide / Math.max(o.width, o.height));
-      const w = Math.max(1, Math.round(o.width * s)), h = Math.max(1, Math.round(o.height * s));
-      const quad = outputQuad(st.crop, st.source.w, st.source.h, o.width, o.height, [s, 0, 0, s, 0, 0]);
+      const r = rect ?? { x: 0, y: 0, w: o.width, h: o.height };
+      const s = rect ? maxSide / Math.max(r.w, r.h) : Math.min(1, maxSide / Math.max(o.width, o.height));
+      const w = Math.max(1, Math.round(r.w * s)), h = Math.max(1, Math.round(r.h * s));
+      const quad = outputQuad(st.crop, st.source.w, st.source.h, o.width, o.height, [s, 0, 0, s, -r.x * s, -r.y * s]);
       const { adjust, look } = developInput(st);
       const data = renderer.renderPixels({ width: w, height: h, quad, uniforms: developUniforms(resolve(adjust, look)), grainScale: [o.width, o.height], tone, before });
       return { width: w, height: h, data };
@@ -689,7 +719,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       liveState = null;
       applied = null;
       revision = 0;
-      savedRevision = -1;
+      savedState = null;
       syncGpu(doc);
       rebuildBlur();
       app.dataset.state = 'editing';
@@ -712,7 +742,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       liveState = null;
       applied = null;
       revision = 0;
-      savedRevision = sr ? 0 : -1;
+      savedState = sr ? current() : null;
       syncGpu(current());
       rebuildBlur();
       app.dataset.state = 'editing';
@@ -745,10 +775,13 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     },
 
     serialize() {
-      return { history: H.serialize(hist), pools, savedRevision: revision === savedRevision };
+      return { history: H.serialize(hist), pools, savedRevision: inPhotos() };
     },
 
     newPhoto() { onNewPhoto?.(ed); },
+
+    // Before a flush (the app is going to the background): words being typed become a step.
+    commitTyping() { tool.commitTyping?.(ed); },
   };
 
   return ed;

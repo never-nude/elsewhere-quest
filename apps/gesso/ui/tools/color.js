@@ -11,8 +11,9 @@ const DIALS = ['warmth', 'tint', 'vividness', 'strength'];
 let selected = 'warmth';
 let picking = false;
 let thumbsFor = '';
-let loupe = null;
+let loupe = null; // { x, y, img } stage px; img is the 2× view while pressing
 const scrub = createPhotoScrub();
+const LOUPE_R = 48; // pt
 
 export default {
   id: 'color',
@@ -35,10 +36,13 @@ export default {
   panel(ed) {
     const C = ed.doc.color;
     const noLook = C.look === 'none';
+    // Strength means nothing without a look (None, or Undo back past one): never
+    // leave the ruler on that disabled dial.
+    if (noLook && selected === 'strength') selected = 'warmth';
     queueThumbs(ed);
     return {
       title: 'Color',
-      hint: picking ? 'Tap something that should be white or grey.' : 'Tap Auto or a look.',
+      hint: picking ? 'Tap something white or grey.' : 'Tap Auto or a look.',
       cancel: true,
       done: true,
       quick: [
@@ -65,7 +69,11 @@ export default {
       let next = ed.committed;
       for (const k of ['warmth', 'tint', 'vividness']) next = setIn(next, ['color', k], c[k] ?? 0);
       if (next === ed.committed) ed.toast('Color looks good already');
-      else ed.commit(next, 'Auto color');
+      else {
+        const from = ed.committed.color[selected];
+        ed.commit(next, 'Auto color');
+        ed.panel.ruler()?.animateTo(next.color[selected], 400, from);
+      }
       return;
     }
     if (id.startsWith('look:')) {
@@ -106,7 +114,7 @@ export default {
         return true;
       }
       if (g.type === 'hold-start' || g.type === 'hold-move') {
-        loupe = { x: g.x, y: g.y, live: true };
+        loupe = { x: g.x, y: g.y, img: loupeImage(ed, g.x, g.y) };
         ed.requestRender();
         return true;
       }
@@ -118,11 +126,11 @@ export default {
     }
     if (g.type === 'drag-start') {
       if (selected === 'strength' && ed.committed.color.look === 'none') return false;
-      scrub.start(ed, selected, ['color', selected], g.x, performance.now());
+      scrub.start(ed, selected, ['color', selected], g.x);
       return true;
     }
     if (g.type === 'drag' && scrub.active) {
-      scrub.move(ed, g.x, performance.now());
+      scrub.move(ed, g.x, g.t);
       ed.bubble?.(formatValue(rulerSpec(selected), Math.round(scrub.value)), g.x, g.y);
       return true;
     }
@@ -137,6 +145,7 @@ export default {
 
   drawOverlay(ed, ctx) {
     if (!loupe) return;
+    if (loupe.img) drawLoupe(ed, ctx, loupe);
     ctx.save();
     ctx.strokeStyle = '#f3eee6';
     ctx.lineWidth = 2;
@@ -159,6 +168,46 @@ export default {
   },
 };
 
+// The photo under the finger at 2× (as shown, tone included), for the loupe.
+function loupeImage(ed, x, y) {
+  try {
+    const [ox, oy] = ed.stageToDoc(x, y);
+    const half = LOUPE_R / 2 / ed.view.scale; // output px: 48pt of photo fills the 96pt loupe
+    const dpr = window.devicePixelRatio || 1;
+    const img = ed.readOutput({ rect: { x: ox - half, y: oy - half, w: 2 * half, h: 2 * half }, maxSide: Math.round(LOUPE_R * 2 * dpr), tone: true });
+    const c = new OffscreenCanvas(img.width, img.height);
+    c.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+    return c;
+  } catch {
+    return null;
+  }
+}
+
+// Above-left of the finger, so the finger never hides it; flipped at the stage edges.
+function drawLoupe(ed, ctx, l) {
+  const { width: W } = ed.stageSize();
+  const off = LOUPE_R * 1.5;
+  const cx = l.x - off - LOUPE_R < 0 ? Math.min(W - LOUPE_R, l.x + off) : l.x - off;
+  const cy = l.y - off - LOUPE_R < 0 ? l.y + off : l.y - off;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, LOUPE_R, 0, Math.PI * 2);
+  ctx.save();
+  ctx.clip();
+  ctx.drawImage(l.img, cx - LOUPE_R, cy - LOUPE_R, LOUPE_R * 2, LOUPE_R * 2);
+  ctx.restore();
+  ctx.strokeStyle = '#f3eee6';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - 8, cy); ctx.lineTo(cx + 8, cy);
+  ctx.moveTo(cx, cy - 8); ctx.lineTo(cx, cy + 8);
+  ctx.stroke();
+  ctx.restore();
+}
+
 // Average a 9×9 patch of the photo (fills included, before any tone) in linear
 // light and set Warmth/Tint so it reads neutral.
 function pickWhite(ed, x, y) {
@@ -180,8 +229,10 @@ function pickWhite(ed, x, y) {
   setTimeout(() => { loupe = null; ed.requestRender(); }, 600);
   picking = false;
   selected = 'warmth';
-  if (next !== st) ed.commit(next, 'Picked white');
-  else ed.toast('Already neutral');
+  if (next !== st) {
+    ed.commit(next, 'Picked white');
+    ed.panel.ruler()?.animateTo(wb.warmth, 400, st.color.warmth);
+  } else ed.toast('Already neutral');
   ed.refresh();
 }
 

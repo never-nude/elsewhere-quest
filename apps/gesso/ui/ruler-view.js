@@ -39,17 +39,29 @@ export function createRulerView(container, { onStart, onChange, onEnd, onReset, 
   let lastTap = 0;
   let tickTimer = 0;
   let raf = 0;
+  let anim = 0; // an Auto animation in flight
+  let animTarget = 0;
 
-  reset.addEventListener('pointerdown', (e) => e.stopPropagation());
+  // A touch or key takes over from an animation at the value it was going to.
+  function stopAnim() {
+    if (!anim) return;
+    cancelAnimationFrame(anim);
+    anim = 0;
+    value = animTarget;
+  }
+
+  // A touch on Reset is the ruler's like anywhere else (a drag from there slides it;
+  // a tap resets, in finish()); click is left to the keyboard and VoiceOver.
   reset.addEventListener('click', (e) => {
     e.stopPropagation();
-    onReset?.();
+    if (e.detail === 0) onReset?.();
   });
 
   el.addEventListener('pointerdown', (e) => {
     if (!spec || drag) return;
+    stopAnim();
     el.setPointerCapture(e.pointerId);
-    drag = { id: e.pointerId, x: e.clientX, x0: e.clientX, y: e.clientY, t: e.timeStamp, moved: false, started: false };
+    drag = { id: e.pointerId, x: e.clientX, x0: e.clientX, y: e.clientY, t: e.timeStamp, moved: false, started: false, onReset: !reset.hidden && reset.contains(e.target) };
   });
   el.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.id) return;
@@ -84,6 +96,10 @@ export function createRulerView(container, { onStart, onChange, onEnd, onReset, 
       onEnd?.(value);
       return;
     }
+    if (d.onReset) {
+      if (e.type === 'pointerup') onReset?.();
+      return;
+    }
     // A tap: two of them quickly is a reset.
     if (e.type === 'pointerup') {
       if (e.timeStamp - lastTap < DOUBLE_TAP_MS) {
@@ -106,6 +122,7 @@ export function createRulerView(container, { onStart, onChange, onEnd, onReset, 
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = value - step;
     if (next === null) return;
     e.preventDefault();
+    stopAnim();
     onStart?.();
     value = Math.max(spec.min, Math.min(spec.max, Math.round(next * 10) / 10));
     draw();
@@ -190,22 +207,34 @@ export function createRulerView(container, { onStart, onChange, onEnd, onReset, 
       const changedSpec = !spec || nextSpec.id !== spec.id;
       spec = nextSpec;
       if (drag && !changedSpec) return; // the finger owns the value mid-drag
+      if (anim && !changedSpec) { animTarget = nextValue; return; } // Auto's sweep lands there
+      stopAnim();
       value = nextValue;
       if (changedSpec) detent = null;
       draw();
     },
-    // Auto animates the needle to the value it chose.
-    animateTo(target, ms = 400) {
-      const from = value, t0 = performance.now();
+    // Auto animates the needle to the value it chose, from the value it had before
+    // (the commit has already set the ruler to the new one).
+    animateTo(target, ms = 400, from = value) {
+      cancelAnimationFrame(anim);
+      anim = 0;
+      animTarget = target;
+      if (from === target || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        value = target;
+        draw();
+        return;
+      }
+      const t0 = performance.now();
+      value = from;
       const step = (now) => {
         const k = Math.min(1, (now - t0) / ms);
         const e = 1 - Math.pow(1 - k, 3);
-        value = from + (target - from) * e;
+        value = from + (animTarget - from) * e;
         paint();
-        if (k < 1) requestAnimationFrame(step);
-        else { value = target; draw(); }
+        if (k < 1) anim = requestAnimationFrame(step);
+        else { anim = 0; value = animTarget; draw(); }
       };
-      requestAnimationFrame(step);
+      anim = requestAnimationFrame(step);
     },
     get value() { return value; },
     get dragging() { return !!drag; },
@@ -214,6 +243,7 @@ export function createRulerView(container, { onStart, onChange, onEnd, onReset, 
       bubble.remove();
       el.remove();
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(anim);
     },
   };
 }

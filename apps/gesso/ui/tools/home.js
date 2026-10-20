@@ -6,9 +6,9 @@ import { toGray, detectTilt } from '../../lib/level.js';
 import { RULERS, formatValue } from '../../lib/ruler.js';
 
 let changes = [];
-let changesFor = -1; // history length the chips belong to
+let changesFor = null; // the state Auto-enhance made: the chips describe only it
 let tip = null; // { text, action }
-let tipFor = -1;
+let tipFor = ''; // doc id + revision: revision restarts at 0 for every photo
 let tiltCache = null;
 
 export function readAnalysis(ed, maxSide = 512) {
@@ -17,7 +17,8 @@ export function readAnalysis(ed, maxSide = 512) {
 
 export function photoTilt(ed) {
   const st = ed.committed;
-  const key = `${st.source.w}x${st.source.h}:${st.remove.length}`;
+  // Per photo, not per size: every photo from one camera has the same size.
+  const key = `${st.id}:${st.remove.join(',')}`;
   if (tiltCache && tiltCache.key === key) return tiltCache.tilt;
   const img = ed.renderer.readSource({ maxSide: 512 });
   const t = detectTilt(toGray(img.data, img.width, img.height), img.width, img.height);
@@ -33,8 +34,9 @@ export function orientedTilt(ed) {
 }
 
 function updateSuggestion(ed) {
-  if (tipFor === ed.revision) return;
-  tipFor = ed.revision;
+  const key = `${ed.committed.id}:${ed.revision}`;
+  if (tipFor === key) return;
+  tipFor = key;
   try {
     const stats = analyze(readAnalysis(ed, 256));
     const tilt = orientedTilt(ed);
@@ -52,16 +54,14 @@ export default {
   viewMode: 'output',
 
   open(ed) {
-    if (changesFor !== ed.history?.entries?.length) {
-      // chips only describe the most recent Auto-enhance
-      if (changesFor >= 0 && ed.history.entries?.length !== changesFor) changes = [];
-    }
     updateSuggestion(ed);
   },
 
   panel(ed) {
     updateSuggestion(ed);
-    const dials = changes.map((c) => ({ id: `chip:${c.dial}`, label: RULERS[c.dial]?.label ?? c.dial, value: RULERS[c.dial] ? formatValue(RULERS[c.dial], c.value) : String(c.value), kind: 'action' }));
+    // Any later edit, or an undo (in any tool), makes them untrue.
+    const shown = changesFor === ed.committed ? changes : [];
+    const dials = shown.map((c) => ({ id: `chip:${c.dial}`, label: RULERS[c.dial]?.label ?? c.dial, value: RULERS[c.dial] ? formatValue(RULERS[c.dial], c.value) : String(c.value), kind: 'action' }));
     return {
       title: '',
       hint: 'Pick a tool below. Hold the photo to compare.',
@@ -83,7 +83,7 @@ export default {
     }
     ed.commit(next, 'Auto-enhance');
     changes = ch;
-    changesFor = ed.history.entries?.length ?? -1;
+    changesFor = ed.committed;
     ed.hint('auto-enhance');
   },
 

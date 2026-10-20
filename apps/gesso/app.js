@@ -56,6 +56,9 @@ async function main() {
   let currentFile = null; // the original Blob, the source of truth for restores
   const renderer = createRenderer(glCanvas, {
     onLost: () => {
+      // Nothing reads or edits the photo until it is back on the GPU (Save would
+      // otherwise export a black picture).
+      $('#app').inert = true;
       $('#busy').hidden = false;
       $('#busy span').textContent = 'Recovering…';
       restoring = setTimeout(() => location.reload(), 3000); // autosave brings the work back
@@ -69,7 +72,11 @@ async function main() {
           bitmap.close();
           editor.resync();
         }
+      } catch (err) {
+        console.error(err);
+        location.reload(); // autosave brings the work back
       } finally {
+        $('#app').inert = false;
         $('#busy').hidden = true;
       }
     },
@@ -133,12 +140,14 @@ async function main() {
         decoded = await decodeForEditing(file, { maxPixels: workCap() });
         renderer.loadSource(decoded.bitmap);
       } catch (err) {
-        if (err instanceof ImportError) throw err;
-        // Out of memory or GPU trouble at full size: step down once, for good.
         decoded?.bitmap?.close?.();
-        stepDownWorkCap();
+        // A lost context is not a memory problem: it says nothing about the size.
+        if (err instanceof ImportError || renderer.lost) throw err;
+        // Out of memory or GPU trouble at full size: step down for good, once the
+        // smaller size has worked.
         decoded = await decodeForEditing(file, { maxPixels: WORK_FALLBACK_PIXELS });
         renderer.loadSource(decoded.bitmap);
+        stepDownWorkCap();
       }
       decoded.bitmap.close();
       currentFile = file;
@@ -152,8 +161,10 @@ async function main() {
     } catch (err) {
       console.error(err);
       const msg = err instanceof ImportError ? err.message : "This photo couldn't be opened.";
-      $('#hint').textContent = msg;
-      editor.toast?.(msg, 2600);
+      // While editing, a toast: the open tool keeps its hint. On the start screen
+      // the hint line says it, and nothing else does.
+      if (editor.committed) editor.toast(msg, 4000);
+      else $('#hint').textContent = msg;
     } finally {
       importing = false;
       busy.hidden = true;
@@ -197,8 +208,10 @@ async function main() {
   // wins, and the restore stands down.
   const picked = () => importing || !!editor.committed;
   if (earlyFile) importFile(earlyFile);
+  let damaged = true; // until the stored draft has been read and checked
   try {
     const draft = picked() ? null : await autosave.loadDraft();
+    damaged = false; // past here a failure is the decoder or the GPU, which can pass
     if (draft && !picked()) {
       $('#busy').hidden = false;
       $('#busy span').textContent = 'Opening…';
@@ -214,6 +227,7 @@ async function main() {
         const got = renderer.size;
         if (got.width !== src.w || got.height !== src.h) {
           renderer.unloadSource();
+          damaged = true;
           throw new Error(`restore: decoded ${got.width}x${got.height}, edited at ${src.w}x${src.h}`);
         }
         currentFile = draft.file;
@@ -223,9 +237,13 @@ async function main() {
     }
   } catch (err) {
     console.warn('restore failed', err);
-    if (!picked()) {
+    if (!picked() && damaged) {
       autosave.discard?.();
       $('#hint').textContent = "Your last edit couldn't be restored.";
+    } else if (!picked()) {
+      // Out of memory or a GPU reset at launch: keep the draft (its original may be
+      // the only copy, from Take Photo) for the next launch.
+      $('#hint').textContent = "Your last edit couldn't be opened just now. Close Gesso and open it again.";
     }
   } finally {
     if (!importing) $('#busy').hidden = true;
@@ -251,9 +269,9 @@ async function main() {
   // openStore() asks for persistent storage (store.persistent).
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') autosave.flush();
+    if (document.visibilityState === 'hidden') { editor.commitTyping(); autosave.flush(); }
   });
-  window.addEventListener('pagehide', () => autosave.flush());
+  window.addEventListener('pagehide', () => { editor.commitTyping(); autosave.flush(); });
 
   window.gesso = { editor, renderer, importFile }; // handy for the on-device probe and tests
 }

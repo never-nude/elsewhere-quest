@@ -41,15 +41,18 @@ export function rulerEdit(ed, path, phase, value, specId = path[path.length - 1]
 export function createPhotoScrub() {
   let s = null;
   return {
-    start(ed, id, path, x, t) {
+    start(ed, id, path, x) {
       const doc = ed.committed;
-      s = { id, path, x, t, value: path.reduce((o, k) => o[k], doc), detent: null };
+      s = { id, path, x, t: null, value: path.reduce((o, k) => o[k], doc), detent: null };
     },
     move(ed, x, t) {
       if (!s) return null;
       const spec = rulerSpec(s.id);
       const dx = x - s.x;
-      const r = stepValue(spec, s.value, dx, Math.abs(dx) / Math.max(1, t - s.t), s.detent);
+      // Speed from the touch's own timestamps. The first step is the slop the
+      // recogniser waited out, so it has no speed of its own: never the fast gain.
+      const speed = s.t === null || !Number.isFinite(t) ? 0 : Math.abs(dx) / Math.max(1, t - s.t);
+      const r = stepValue(spec, s.value, dx, speed, s.detent);
       s.value = r.value;
       s.detent = r.detentState;
       s.x = x;

@@ -422,7 +422,7 @@ async function healTile(ed, spot, D, f) {
 async function fillArea(ed, job, gen) {
   const under = ed.committed.remove;
   const tile = await rubTile(ed, job);
-  if (await land(ed, tile, job, { under, gen })) ed.hint('rub-fill');
+  if (await land(ed, tile, job, { under, gen, label: 'Removed area' })) ed.hint('rub-fill');
 }
 
 // PatchMatch over the rubbed area, inside its local window. Small windows run at

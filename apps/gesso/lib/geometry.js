@@ -183,13 +183,17 @@ export function moveRect(crop, width, height, dx, dy) {
   const o = orientedSize(width, height, crop.quarter);
   const to = { ...crop.rect, x: crop.rect.x + dx, y: crop.rect.y + dy };
   if (rectFits(to, o.width, o.height, crop.angle)) return { ...crop, rect: to };
-  // Slide along each axis separately so the frame glides along an edge.
-  let rect = crop.rect;
-  const tx = { ...rect, x: rect.x + dx };
-  rect = rectFits(tx, o.width, o.height, crop.angle) ? tx : bisect(rect, tx, (r) => rectFits(r, o.width, o.height, crop.angle));
-  const ty = { ...rect, y: rect.y + dy };
-  rect = rectFits(ty, o.width, o.height, crop.angle) ? ty : bisect(rect, ty, (r) => rectFits(r, o.width, o.height, crop.angle));
-  return { ...crop, rect };
+  // Every corner test in rectFits is a slab along the photo's own axes, so the
+  // places the rect fits form a rectangle in those axes: clamp to it. That is the
+  // nearest fit to the finger, so the frame glides along an edge and never jumps.
+  const c = Math.cos(crop.angle * DEG), s = Math.sin(crop.angle * DEG);
+  const r = crop.rect;
+  const us = [], vs = [];
+  for (const px of [0, r.width]) for (const py of [0, r.height]) { us.push(px * c + py * s); vs.push(-px * s + py * c); }
+  const clamp = (v, lo, hi) => (lo > hi ? (lo + hi) / 2 : Math.max(lo, Math.min(hi, v)));
+  const u = clamp(to.x * c + to.y * s, -o.width / 2 - Math.min(...us), o.width / 2 - Math.max(...us));
+  const v = clamp(-to.x * s + to.y * c, -o.height / 2 - Math.min(...vs), o.height / 2 - Math.max(...vs));
+  return { ...crop, rect: { ...r, x: u * c - v * s, y: u * s + v * c } };
 }
 
 // Drag a corner or edge handle. `handle` is any of 'n','s','e','w','ne','nw','se','sw'.
@@ -202,7 +206,17 @@ export function dragHandle(crop, width, height, handle, dx, dy) {
   const aspect = aspectValue(crop.aspect, o.width, o.height);
   const target = resizeByHandle(crop.rect, handle, dx, dy, aspect);
   if (fits(target)) return { ...crop, rect: target };
-  return { ...crop, rect: bisect(crop.rect, target, fits) };
+  if (aspect) return { ...crop, rect: bisect(crop.rect, target, fits) };
+  // Free: each edge goes as far as it can on its own, so a corner whose one edge
+  // is already on the photo's edge still follows the finger along the other.
+  const step = (r, ddx, ddy) => {
+    const t = resizeByHandle(r, handle, ddx, ddy, null);
+    return fits(t) ? t : bisect(r, t, fits);
+  };
+  const a = step(step(crop.rect, dx, 0), 0, dy);
+  const b = step(step(crop.rect, 0, dy), dx, 0);
+  const miss = (r) => Math.abs(r.x - target.x) + Math.abs(r.y - target.y) + Math.abs(r.x + r.width - target.x - target.width) + Math.abs(r.y + r.height - target.y - target.height);
+  return { ...crop, rect: miss(a) <= miss(b) ? a : b };
 }
 
 function resizeByHandle(r, handle, dx, dy, aspect) {

@@ -11,8 +11,10 @@
 // handler with an already-encoded File: iOS refuses a share that comes after an
 // await. AbortError (the share sheet was closed) leaves the sheet as it was. No
 // share support, or any other failure, opens the long-press fallback (#fallback).
-// Success: "Done. It's the newest photo in Photos.", ed.markSaved(), and the
-// coaching line ("Next, tap Save Image.") is retired for good.
+// Success: "Done. If you tapped Save Image, it's the newest photo in Photos." (a
+// share resolves for any target the user picks, Copy and Save to Files included,
+// and never says which), ed.markSaved(), and the coaching line ("Next, tap Save
+// Image.") is retired for good.
 //
 // Closing: Keep editing, the scrim, Escape, or a swipe down on the sheet. Closing
 // before the JPEG is ready cancels the export so editing stays smooth.

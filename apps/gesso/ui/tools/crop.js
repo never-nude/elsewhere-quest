@@ -90,7 +90,7 @@ export default {
         return;
       }
       commitCrop(ed, setAngle(st.crop, w, h, angle), `Straightened ${formatValue(rulerSpec('straighten'), angle).replace(/^\+/, '')}`);
-      ed.panel.ruler()?.animateTo(angle);
+      ed.panel.ruler()?.animateTo(angle, 400, st.crop.angle);
       ed.panel.showTip(`Straightened ${Math.abs(angle).toFixed(1)}°`);
       return;
     }
