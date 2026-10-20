@@ -34,7 +34,7 @@ jobs:
         run: |
           mkdir -p dist/gesso
           cp -r apps/gesso/. dist/gesso/
-          rm -rf dist/gesso/test dist/gesso/package.json
+          rm -rf dist/gesso/test dist/gesso/e2e dist/gesso/package.json dist/gesso/SPEC.md
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

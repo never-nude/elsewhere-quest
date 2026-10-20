@@ -50,3 +50,14 @@ Delivery (local, pushed, merged, deployment verified):
 - Change: static page `public/corpora/privacy/index.html`, served at `https://elsewhere.quest/corpora/privacy/` once merged to `main` and the Pages deploy runs. No app code changed.
 - Validation: `npm run build` succeeds locally and `dist/corpora/privacy/index.html` is emitted. Live URL not yet verified (not merged).
 - Next: merge, confirm the URL loads, paste it into App Store Connect → App Information → Privacy Policy URL.
+
+## 2026-10-20 — Gesso: simple Photoshop-style photo editor PWA (in progress)
+
+- Task: build Gesso, an on-device photo editor for iPhone, at `apps/gesso/` → `https://elsewhere.quest/gesso/` (same pattern as TextLock: vanilla ES modules, no build step, pure logic in `lib/` under `node --test`).
+- Owner: Claude Code cloud session. Branch: `claude/gesso-photo-editor`. Draft PR #6.
+- Design: `apps/gesso/SPEC.md` (iOS Safari research + three UX concepts + two judges, held to the owner's bar: know where everything is in 2 s, finish a real task in 1 min, proficient by minute 10). Build notes at its top record deliberate deviations.
+- Done so far: static shell (5 labelled tools + 4 actions paint before JS), WebGL2 renderer, editor core (history, live preview, tool sessions, Before/wipe, zoom), Home/Light/Color/Crop tools, the full `lib/` layer (develop pipeline, geometry, gestures, ruler, hints, level, autofix, heal, PatchMatch inpaint, text layout, image I/O, history, patches). TextLock's service worker now only deletes `textlock-*` caches (it used to wipe other apps' caches on the shared origin).
+- In progress: Remove, Text, Save/export, persistence (IndexedDB autosave/restore), hints/rewind tape/zoom navigator/probe, and a Playwright acceptance harness (`apps/gesso/e2e/`, excluded from deploy).
+- Validation so far: `cd apps/gesso && npm test` — 413 node tests pass; manual Playwright runs on an emulated iPhone 17 Pro Max (Chromium/SwiftShader — not WebKit) import a 12 MP photo and exercise Light/Color/Crop/Undo without errors. Not yet tested on a real iPhone or in WebKit.
+- Next: integrate wave-2 features, run the acceptance harness, adversarial review, then mark PR #6 ready. Device check with `?probe=1` on a real iPhone before relying on it.
+- Delivery: pushed to the branch only; not merged, not deployed.

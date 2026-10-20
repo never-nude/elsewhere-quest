@@ -215,6 +215,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     for (const b of dockButtons) b.setAttribute('aria-pressed', 'false');
     tool.open?.(ed, {});
     viewKey = '';
+    if (current()?.text?.length) ed.hint('home-with-caption');
     if (!quiet) afterChange();
   }
 
@@ -521,6 +522,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     };
     if (held < 250 && e.type === 'pointerup') {
       ed.hint('before-tap');
+      toast('Hold to compare', BEFORE_TAP_MS);
       beforeTimer = setTimeout(off, BEFORE_TAP_MS);
     } else {
       if (held >= 250) ed.hint('before-hold');
@@ -604,6 +606,14 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       return { width: w, height: h, data };
     },
     resetView() { viewKey = ''; requestRender(); },
+    // Pan/zoom from elsewhere (the zoom navigator), kept inside the content.
+    setView(v) {
+      if (!view) return;
+      const c = content();
+      const s = stageRect();
+      view = clampView({ ...view, ...v }, c.width, c.height, s.width, s.height);
+      requestRender();
+    },
     setCompare(mode, x = 0) { compare = { mode, x }; requestRender(); },
     hint(event, data) { hints?.event(event, data); },
     // Persist a Remove fill tile before the history step that references it.
