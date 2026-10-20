@@ -51,13 +51,14 @@ Delivery (local, pushed, merged, deployment verified):
 - Validation: `npm run build` succeeds locally and `dist/corpora/privacy/index.html` is emitted. Live URL not yet verified (not merged).
 - Next: merge, confirm the URL loads, paste it into App Store Connect → App Information → Privacy Policy URL.
 
-## 2026-10-20 — Gesso: simple Photoshop-style photo editor PWA (in progress)
+## 2026-10-20 — Gesso: simple Photoshop-style photo editor PWA (in review)
 
 - Task: build Gesso, an on-device photo editor for iPhone, at `apps/gesso/` → `https://elsewhere.quest/gesso/` (same pattern as TextLock: vanilla ES modules, no build step, pure logic in `lib/` under `node --test`).
 - Owner: Claude Code cloud session. Branch: `claude/gesso-photo-editor`. Draft PR #6.
 - Design: `apps/gesso/SPEC.md` (iOS Safari research + three UX concepts + two judges, held to the owner's bar: know where everything is in 2 s, finish a real task in 1 min, proficient by minute 10). Build notes at its top record deliberate deviations.
-- Done so far: static shell (5 labelled tools + 4 actions paint before JS), WebGL2 renderer, editor core (history, live preview, tool sessions, Before/wipe, zoom), Home/Light/Color/Crop tools, the full `lib/` layer (develop pipeline, geometry, gestures, ruler, hints, level, autofix, heal, PatchMatch inpaint, text layout, image I/O, history, patches). TextLock's service worker now only deletes `textlock-*` caches (it used to wipe other apps' caches on the shared origin).
-- In progress: Remove, Text, Save/export, persistence (IndexedDB autosave/restore), hints/rewind tape/zoom navigator/probe, and a Playwright acceptance harness (`apps/gesso/e2e/`, excluded from deploy).
-- Validation so far: `cd apps/gesso && npm test` — 413 node tests pass; manual Playwright runs on an emulated iPhone 17 Pro Max (Chromium/SwiftShader — not WebKit) import a 12 MP photo and exercise Light/Color/Crop/Undo without errors. Not yet tested on a real iPhone or in WebKit.
-- Next: integrate wave-2 features, run the acceptance harness, adversarial review, then mark PR #6 ready. Device check with `?probe=1` on a real iPhone before relying on it.
+- Done: static shell (5 labelled tools + 4 actions paint before JS), WebGL2 renderer, editor core (history, live preview, tool sessions, Before/wipe, zoom + navigator), all six panels (Home with Auto-enhance, Crop, Light incl. paint light, Color incl. looks and Pick white, Remove with tap heal and rub-to-fill in a worker, Text captions), Save to Photos (banded GPU export + worker JPEG encode, share sheet with a touch-and-hold fallback), IndexedDB autosave/restore, earned hints, rewind tape (hold Undo), `?probe=1` device probe, Playwright acceptance harness (`apps/gesso/e2e/`, excluded from deploy). App icon: "Pigment Wheel" iris (owner's pick). TextLock's service worker now only deletes `textlock-*` caches (it used to wipe other apps' caches on the shared origin).
+- Validation: `cd apps/gesso && npm test` — 539 node tests pass. `node e2e/acceptance.mjs` — 17/17 checks pass at strict timings on an emulated iPhone 17 Pro Max (Chromium + SwiftShader; Remove spot 542 ms, Save ready 1.7 s). Feature agents' browser suites (Remove, Text, Save, autosave/restore incl. broken-IndexedDB and lost-connection cases) pass on the integrated app. Not yet tested on a real iPhone or in WebKit.
+- In progress: final adversarial review (9 dimensions, each finding independently verified with a tested fix), then apply fixes, re-run the harness, mark PR #6 ready.
+- Known gaps: rub-to-fill on large areas takes 2-5 s under SwiftShader; iOS-only behaviour (share sheet, HEIC, canvas memory limits, touch callout) unverified until `?probe=1` and a real-device pass.
+- Next: after review fixes, open `https://elsewhere.quest/gesso/?probe=1` on the iPhone once deployed and read the report; then a 10-minute hands-on session.
 - Delivery: pushed to the branch only; not merged, not deployed.
