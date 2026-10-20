@@ -3,6 +3,7 @@
 
 import { analyze, autoEnhance, suggestion } from '../../lib/autofix.js';
 import { toGray, detectTilt } from '../../lib/level.js';
+import { RULERS, formatValue } from '../../lib/ruler.js';
 
 let changes = [];
 let changesFor = -1; // history length the chips belong to
@@ -39,7 +40,7 @@ function updateSuggestion(ed) {
     const tilt = orientedTilt(ed);
     const st = ed.committed;
     // Already straightened by hand? Don't nag.
-    tip = st.crop.angle !== 0 ? suggestion(stats, { ...tilt, confidence: 0 }) : suggestion(stats, tilt);
+    tip = suggestion(stats, st.crop.angle !== 0 ? { ...tilt, confidence: 0 } : tilt, st);
   } catch {
     tip = null;
   }
@@ -60,7 +61,7 @@ export default {
 
   panel(ed) {
     updateSuggestion(ed);
-    const dials = changes.map((c) => ({ id: `chip:${c.dial}`, label: c.label.replace(/\s[+−]\d+$/, ''), value: c.label.match(/[+−]\d+$/)?.[0] ?? '', kind: 'action' }));
+    const dials = changes.map((c) => ({ id: `chip:${c.dial}`, label: RULERS[c.dial]?.label ?? c.dial, value: RULERS[c.dial] ? formatValue(RULERS[c.dial], c.value) : String(c.value), kind: 'action' }));
     return {
       title: '',
       hint: 'Pick a tool below. Hold the photo to compare.',

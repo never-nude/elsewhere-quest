@@ -2,6 +2,7 @@
 // Contrast, Highlights, Shadows; and Paint — dodge and burn with a finger.
 
 import { analyze, autoLight } from '../../lib/autofix.js';
+import { dabs } from '../../lib/stroke.js';
 import { setIn } from '../../lib/doc.js';
 import { formatValue } from '../../lib/ruler.js';
 import { rulerSpec, dialChip, rulerEdit, photoDragEnabled, enablePhotoDrag, createPhotoScrub } from './dials.js';
@@ -148,30 +149,24 @@ export default {
   },
 };
 
+// Points are kept at half-pixel precision as they arrive, and dabs come from the
+// same dabs() the editor replays with — and dabs() is prefix-stable — so a stroke
+// looks exactly the same after undo, redo or a reload as it did while painting.
 function paintGesture(ed, g) {
+  const half = (v) => Math.round(v * 2) / 2;
   if (g.type === 'drag-start') {
     const r = (BRUSH_PT / 2) * ed.sourcePerStagePx();
     const [sx, sy] = ed.stageToSource(g.x, g.y);
-    stroke = { id: newId(), mode: paintMode, r, pts: [sx, sy] };
+    stroke = { id: newId(), mode: paintMode, r, pts: [half(sx), half(sy)], painted: 0 };
     ring = { x: g.x, y: g.y };
-    ed.renderer.paintDabs(stroke.mode, [sx, sy], r);
+    paintNew();
     ed.requestRender();
     return true;
   }
   if (g.type === 'drag' && stroke) {
     const [sx, sy] = ed.stageToSource(g.x, g.y);
-    const n = stroke.pts.length;
-    const px = stroke.pts[n - 2], py = stroke.pts[n - 1];
-    const step = stroke.r * 0.25;
-    const d = Math.hypot(sx - px, sy - py);
-    if (d >= step) {
-      // dabs by distance, never per event, so speed doesn't change density
-      const k = Math.floor(d / step);
-      const out = [];
-      for (let i = 1; i <= k; i++) out.push(px + ((sx - px) * i * step) / d, py + ((sy - py) * i * step) / d);
-      stroke.pts.push(...out);
-      ed.renderer.paintDabs(stroke.mode, out, stroke.r);
-    }
+    stroke.pts.push(half(sx), half(sy));
+    paintNew();
     ring = { x: g.x, y: g.y };
     ed.requestRender();
     return true;
@@ -180,7 +175,7 @@ function paintGesture(ed, g) {
     const s = stroke;
     stroke = null;
     ring = null;
-    ed.pools = { ...ed.pools, strokes: { ...ed.pools.strokes, [s.id]: { mode: s.mode, r: s.r, pts: s.pts.map((v) => Math.round(v * 2) / 2) } } };
+    ed.pools = { ...ed.pools, strokes: { ...ed.pools.strokes, [s.id]: { mode: s.mode, r: s.r, pts: s.pts } } };
     const next = { ...ed.committed, paint: [...ed.committed.paint, s.id] };
     ed.commit(next, s.mode === 'brighten' ? 'Painted light' : s.mode === 'darken' ? 'Painted shade' : 'Erased paint');
     return true;
@@ -192,6 +187,14 @@ function paintGesture(ed, g) {
     return true;
   }
   return false;
+
+  function paintNew() {
+    const all = dabs(stroke.pts, stroke.r);
+    if (all.length > stroke.painted) {
+      ed.renderer.paintDabs(stroke.mode, all.slice(stroke.painted), stroke.r);
+      stroke.painted = all.length;
+    }
+  }
 }
 
 function newId() {

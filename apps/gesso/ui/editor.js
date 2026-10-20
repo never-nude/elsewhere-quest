@@ -94,8 +94,10 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     const prev = current();
     if (next === prev) { liveState = null; requestRender(); return; }
     const text = label ?? describeChange(prev, next);
-    hist = H.push(hist, next, text, t);
+    const pushed = H.push(hist, next, text, t);
     liveState = null;
+    if (pushed === hist) { syncGpu(current()); requestRender(); refresh(); return null; }
+    hist = pushed;
     revision++;
     syncGpu(next);
     afterChange();
@@ -121,10 +123,20 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       } else {
         // Revert newest-first: put pristine back under each undone fill, then
         // replay the fills that stay (the common prefix) clipped to that area.
-        const kept = state.remove.filter((k) => !plan.apply.includes(k));
+        const kept = state.remove.slice(0, plan.keep);
+        if (plan.revert.some((id) => !pools.patches[id])) {
+          // A fill we know nothing about: rebuild base from scratch rather than
+          // leave stale pixels behind.
+          renderer.resetBase();
+          for (const pid of kept) {
+            const pm = pools.patches[pid];
+            const tile = tiles.get(pid);
+            if (pm && tile) renderer.pasteTile({ x: pm.x, y: pm.y, w: pm.w, h: pm.h }, tile);
+          }
+          plan.revert.length = 0;
+        }
         for (const id of plan.revert) {
           const meta = pools.patches[id];
-          if (!meta) continue;
           const rect = { x: meta.x, y: meta.y, w: meta.w, h: meta.h };
           renderer.restoreRect(rect);
           for (const pid of repaintPlan(rect, kept, pools.patches)) {
@@ -195,6 +207,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       syncGpu(current());
     }
     tool.close?.(ed, { cancel });
+    hist = H.clearMark(hist);
     toolMark = null;
     toolId = 'home';
     tool = tools.home;
@@ -433,7 +446,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       ed.hint('pinch');
       return;
     }
-    if (g.type === 'hold-start' && (g.target ?? 'photo') === 'photo' && !tool.claimsHold) {
+    if (g.type === 'hold-start' && !tool.claimsHold) {
       compare = { mode: 'before', x: g.x };
       ed.hint('hold-photo', { tool: toolId });
       requestRender();
@@ -463,7 +476,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
 
   undoBtn.addEventListener('click', () => {
     if (!H.canUndo(hist)) return;
-    const label = H.labels(hist)[hist.index]?.label;
+    const label = H.undoLabel(hist);
     liveState = null;
     hist = H.undo(hist);
     revision++;
@@ -475,9 +488,9 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
   });
   redoBtn.addEventListener('click', () => {
     if (!H.canRedo(hist)) return;
+    const label = H.redoLabel(hist);
     liveState = null;
     hist = H.redo(hist);
-    const label = H.labels(hist)[hist.index]?.label;
     revision++;
     syncGpu(current());
     tool.onHistory?.(ed);

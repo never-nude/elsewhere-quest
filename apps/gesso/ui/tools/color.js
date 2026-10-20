@@ -18,6 +18,8 @@ export default {
   id: 'color',
   label: 'Color',
   viewMode: 'output',
+  // While picking, a press is the pick (with a loupe), not Before.
+  get claimsHold() { return picking; },
 
   open(ed, opts = {}) {
     selected = opts.dial && DIALS.includes(opts.dial) ? opts.dial : 'warmth';
@@ -101,6 +103,15 @@ export default {
     if (picking) {
       if (g.type === 'tap') {
         pickWhite(ed, g.x, g.y);
+        return true;
+      }
+      if (g.type === 'hold-start' || g.type === 'hold-move') {
+        loupe = { x: g.x, y: g.y, live: true };
+        ed.requestRender();
+        return true;
+      }
+      if (g.type === 'hold-end' && loupe) {
+        pickWhite(ed, loupe.x, loupe.y);
         return true;
       }
       return false;
