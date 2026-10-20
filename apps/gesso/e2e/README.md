@@ -23,7 +23,7 @@ node e2e/acceptance.mjs --only 7,8,9,10,11,16,17 --viewport 956x440   # behaviou
 | `--base URL` | `http://127.0.0.1:4174/gesso/` | where the app is served |
 | `--only 1,2,8` | every check | comma-separated check numbers; anything else is an error (exit 2) |
 | `--out DIR` | `$GESSO_E2E_OUT`, else the session scratchpad path in the script | fixture, failure screenshots, console logs, `results.json` |
-| `--time-scale N` | `1` (the spec) | stretches the two time budgets (Remove 1 s, Save ready 4 s), the harness's own waits and the per-scenario limit on slow hosts |
+| `--time-scale N` | `1` (the spec) | stretches the two time budgets (Remove 1 s, Save ready 4 s), the longer waits (an export, a heal) and the per-scenario limit on slow hosts |
 | `--viewport WxH` | `440x956` | where the behaviour checks (7–11, 12's browser half, 14–17) run; the layout checks always run at all five |
 
 Playwright is found as `$PLAYWRIGHT_MODULE`, then `playwright`, then the global npm
@@ -61,7 +61,8 @@ The portrait viewports are 402×874, 430×932 and 440×956, and the landscape on
 sides plus 21 pt bottom in landscape. Without that, `env()` would be 0 in Chromium.
 
 The layout checks (1, 2, 3, 4, 5, 13) and static paint (6) run at all five
-viewports. The behaviour checks run at 440×956, the iPhone 17 Pro Max.
+viewports. The behaviour checks run at 440×956, the iPhone 17 Pro Max, or at the
+viewport `--viewport` names (they pass at 956×440 too).
 
 ## How each check is read
 
@@ -69,9 +70,10 @@ viewports. The behaviour checks run at 440×956, the iPhone 17 Pro Max.
    exactly the listed buttons in order. Each sits inside the viewport minus the
    measured `env(safe-area-inset-*)`, is at least 44×44, overlaps no other control,
    and every visible text piece is at least 12px.
-2. **Nothing hidden.** In ten states (Home; Crop; Light and Light › Paint; Color and
-   Color › Pick white; Remove; Text with the edit bar up, Text after Done, and Text ›
-   Color), it checks the following:
+2. **Nothing hidden.** In twelve states (Home, and Home after Auto-enhance with its
+   change chips; Crop; Light and Light › Paint; Color and Color › Pick white; Remove,
+   and Remove › Source after a fill; Text with the edit bar up, Text after Done, and
+   Text › Color), it checks the following:
    - No element anywhere has an accessible name matching the regex. The name is
      approximately the browser's: labelledby, aria-label, alt or label, content for
      roles that are named from content, then title.
@@ -100,18 +102,23 @@ viewports. The behaviour checks run at 440×956, the iPhone 17 Pro Max.
    - "Exactly one history entry" means the history up to the old position is
      unchanged, the redo branch is dropped and one step is added.
    - The Remove tap is a pointer down and up 40 ms apart with no movement. Its time
-     is measured in the page, from the `pointerup` to the history step.
+     is measured in the page, from the `pointerup` to the history step. The label is
+     not enough on its own: the exact base pixels (`renderer.readRect`) around the
+     speck must change, and the darkest luma inside it must rise above 0.25 (it is
+     about 0.02 before and 0.5 after a heal).
    - Each action starts from the photo as opened: Undo runs after each one.
 8. **One-minute flow.** The flow is import, Auto-enhance, Crop, Auto, Save, Save to
    Photos. The import counts as one tap (the "Choose a photo" tap a person makes),
    so the flow uses 6 taps.
-   - `navigator.share` is a stub. Every event listener in the page is wrapped so the
-     stub knows whether it was called inside a click listener's synchronous extent.
-     `window.event` cannot tell this, because it stays set while the microtasks
-     that the listener queued run.
+   - `navigator.share` is a stub. Every event listener in the page (and every
+     `onclick` property) is wrapped so the stub knows whether it was called inside a
+     click listener's synchronous extent. `window.event` cannot tell this, because
+     it stays set while the microtasks that the listener queued run. The stub also
+     requires `navigator.userActivation.isActive`, as iOS does.
    - The shared JPEG is decoded in the page and compared with
      `editor.outputSize()`.
-9. **Save fallback.** With `navigator.share` deleted, Save to Photos must show a
+9. **Save fallback.** It waits as long as an export can take (30 s), since check 8
+   is the one with a time limit. With `navigator.share` deleted, Save to Photos must show a
    visible `<img src="blob:…">` inside a full-screen element, with visible text
    "Touch and hold the picture". Chromium has no `-webkit-touch-callout`, so the
    callout value comes from the loaded stylesheets: matching rules by specificity
@@ -119,13 +126,17 @@ viewports. The behaviour checks run at 440×956, the iPhone 17 Pro Max.
    is used.
 10. **Undo integrity.** After each check-7 action that added a step, Undo must
     restore a stable-JSON-equal document and show a toast beginning "Undid:". For
-    Text, the step is the caption's Done.
+    Text, the step is the caption's Done. For Remove, the base pixels around the
+    speck must also be bit-identical to the ones before the tap: a document can be
+    deep-equal while the fill is still on the photo.
 11. **Before.**
     - Before is tapped with a 60 ms press; `data-compare` is sampled every 25 ms and
       must stay on for 1.0–1.5 s, and "Hold to compare" must be visible.
     - Then Before is held for 620 ms.
     - Then the photo centre gets a still 600 ms press in Home, Crop, Light, Color,
-      Remove and Text.
+      Remove and Text. It must also leave the document alone (Remove must not heal
+      on lift). In Text the press takes focus from the caption field, and that blur
+      commits the words like the edit bar's Done; that one step is noted.
 12. **Gesture coverage.**
     - Live DOM: for each `GESTURES` row (lib/hints.js as served), every part of its
       `visibleEquivalent` must exist in at least one of the ten states, or its `hint`
@@ -157,7 +168,8 @@ viewports. The behaviour checks run at 440×956, the iPhone 17 Pro Max.
 16. **Cancel.** It starts from an Auto-enhanced photo. In each tool it makes one
     change and taps Cancel; the document must equal the state when the tool opened,
     the history labels must equal the ones from then, and no live preview may
-    remain. The changes are:
+    remain; after Remove, the pixels around the speck must be the ones from when the
+    tool opened. The changes are:
     - Crop: Square.
     - Light: Brighter.
     - Color: Film.
@@ -166,19 +178,26 @@ viewports. The behaviour checks run at 440×956, the iPhone 17 Pro Max.
 17. **Resume.** After check 8, it closes the sheet, waits for autosave, reloads,
     and compares the document, the undo labels and the history position.
 
-A page error during a check fails that check.
+A page error during a check fails that check; one outside every check fails the
+session's first check (see above).
 
 ## Caveats
 
 - Timing budgets run on SwiftShader. Measured so far:
-  - "Removed spot": 0.67–1.1 s, against a 1 s budget.
-  - Save to Photos `[data-ready]`: about 3.4 s, against a 4 s budget.
+  - "Removed spot": 0.54–1.2 s, against a 1 s budget.
+  - Save to Photos `[data-ready]`: 2.2–4.6 s, against a 4 s budget.
+
+  The upper ends are from runs with a load average of 11–13 on 4 cores.
 
   On a loaded machine these can fail. Check the reported ms before treating such a
   failure as a regression, or rerun with `--time-scale 1.5`. The default stays
   strict.
 - The harness was checked against deliberately broken copies of the app, with one
-  injected fault per check. Every check failed for the injected reason.
+  injected fault per check. Every check failed for the injected reason. Later
+  rounds added: Undo and Cancel that leave a fill's pixels in place (checks 10 and
+  16), a heal that lands off the speck (7), a hold on the photo that also heals on
+  lift (11), and a page error thrown while the fixture opens (the session's first
+  check).
 - Taps are touch taps (`locator.tap`), and each is dispatched exactly once, after
   the harness has checked that the target is present, enabled, visible and on top.
   Photo gestures (the speck tap, holds, Before) use pointer events through
