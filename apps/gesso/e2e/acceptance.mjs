@@ -55,7 +55,9 @@ const UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0 like Mac OS X) AppleWebKit/6
 const DOCK = ['Crop', 'Light', 'Color', 'Remove', 'Text'];
 const ACTIONS = ['Undo', 'Redo', 'Before', 'Save'];
 const TOOLS = ['crop', 'light', 'color', 'remove', 'text'];
-const SCENARIO_MS = 240_000;
+// Per scenario, stretched by --time-scale. Running out fails every check the
+// scenario serves; it never leaves a partial run looking like a pass.
+const SCENARIO_MS = 300_000;
 
 // ------------------------------------------------------------------ arguments
 
@@ -1461,6 +1463,7 @@ async function scenarioBefore() {
         try {
           if (id !== 'home') await openTool(s, id);
           const p = await stageCenter(s);
+          const h0 = await snap(s);
           await s.page.mouse.move(...p);
           await s.page.mouse.down();
           await sleep(600);
@@ -1469,8 +1472,19 @@ async function scenarioBefore() {
           await s.page.mouse.up();
           await settle(s, 60);
           const after = await s.page.evaluate(() => window.__acc.compare());
+          // Remove fills off the main thread: give a stray heal time to land.
+          await waitEntry(s, h0, id === 'remove' ? budget(2500) : 300);
+          const h1 = await snap(s);
           await t.expect(held === 'before', `${id}: a still 600 ms press on the photo left data-compare=${quote(held)} (want "before")`);
           await t.expect(after === 'off', `${id}: lifting after the press left data-compare=${quote(after)} (want "off")`);
+          // Before, like the button: the press must not also edit (Remove healing on
+          // lift, say). In Text the press takes focus from the caption field, and
+          // that blur commits the words, which is the edit bar's Done.
+          const added = h1.labels.slice(h0.index + 1, h1.index + 1);
+          if (h1.state !== h0.state || h1.index !== h0.index) {
+            if (id === 'text' && added.length === 1 && /^Caption/.test(added[0])) t.note('text: the press blurred the caption field, which committed the words');
+            else await t.fail(`${id}: the press on the photo also changed the document (${added.length ? `added ${quote(added.join(' › '))}` : diffKeys(h0.state, h1.state).join(', ')})`);
+          }
         } catch (err) {
           await t.fail(`${id}: ${firstLine(err)}`);
         }

@@ -15,23 +15,34 @@ cd apps/gesso
 node e2e/acceptance.mjs                         # all 17 checks
 node e2e/acceptance.mjs --only 7,8,10           # some of them
 node e2e/acceptance.mjs --base http://127.0.0.1:4174/gesso/ --out /tmp/gesso-e2e
+node e2e/acceptance.mjs --only 7,8,9,10,11,16,17 --viewport 956x440   # behaviour in landscape
 ```
 
 | Option | Default | |
 |---|---|---|
 | `--base URL` | `http://127.0.0.1:4174/gesso/` | where the app is served |
-| `--only 1,2,8` | every check | comma-separated check numbers |
+| `--only 1,2,8` | every check | comma-separated check numbers; anything else is an error (exit 2) |
 | `--out DIR` | `$GESSO_E2E_OUT`, else the session scratchpad path in the script | fixture, failure screenshots, console logs, `results.json` |
-| `--time-scale N` | `1` (the spec) | stretches the two time budgets (Remove 1 s, Save ready 4 s) on slow hosts |
+| `--time-scale N` | `1` (the spec) | stretches the two time budgets (Remove 1 s, Save ready 4 s), the harness's own waits and the per-scenario limit on slow hosts |
+| `--viewport WxH` | `440x956` | where the behaviour checks (7–11, 12's browser half, 14–17) run; the layout checks always run at all five |
 
 Playwright is found as `$PLAYWRIGHT_MODULE`, then `playwright`, then the global npm
 install. WebGL2 comes from SwiftShader (`--use-angle=swiftshader`), so no GPU is
 needed.
 
 The output is a table with one row per check (PASS, FAIL or SKIP and a one-line
-reason), then every failure in full with its screenshots. The exit code is 0 when
-nothing failed, 1 when a check failed, and 2 when the harness could not run (for
-example, the server is down).
+reason), then every failure in full with its notes (measured times and values) and
+screenshots. The exit code is 0 when nothing failed, 1 when a check failed, and 2
+when the harness could not run (for example, the server is down, or a bad option).
+
+Nothing fails quietly:
+
+- A page error fails the check whose window it falls in. One that happens outside
+  every check (while the app starts or the fixture opens, or between checks) fails
+  the first check that session serves, as "outside a check".
+- Each scenario has a time limit (300 s × `--time-scale`). A scenario that runs out
+  is stopped (its browser contexts are closed) and every check it serves fails,
+  even ones with some finished runs: four viewports out of five is not a pass.
 
 ## Fixture
 
