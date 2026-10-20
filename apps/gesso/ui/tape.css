@@ -1,0 +1,93 @@
+/* Rewind tape (ui/tape.js): covers the fixed 204pt panel while Undo is held. The
+   chosen step sits under a fixed needle; the strip slides with the finger. */
+
+.tape {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  grid-template-rows: 48px minmax(0, 1fr);
+  background: var(--panel);
+  animation: tape-rise 0.16s var(--ease);
+}
+
+.tape__head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0 16px;
+  text-align: center;
+}
+.tape__title { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.2; }
+.tape__hint {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tape__window {
+  position: relative;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+}
+/* the needle: ticks above and below the chosen step */
+.tape__window::before,
+.tape__window::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 2px;
+  height: 14px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.tape__window::before { top: 12px; }
+.tape__window::after { bottom: 12px; }
+
+.tape__strip {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 72px;
+  margin-top: -36px;
+  transition: transform 0.12s var(--ease);
+  will-change: transform;
+}
+
+.tape__step {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 76px;
+  max-width: 172px;
+  height: 72px;
+  padding: 0 14px;
+  border-radius: 14px;
+  background: var(--raised);
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 600;
+  transition: opacity 0.12s, background 0.12s, color 0.12s, box-shadow 0.12s;
+}
+.tape__step span { max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tape__step .icon { width: 22px; height: 22px; }
+.tape__step.is-on { background: var(--raised-2); color: var(--ink); box-shadow: inset 0 0 0 2px var(--accent); }
+/* steps that lifting here would undo: outlined instead of filled, words still readable */
+.tape__step.is-ahead { background: none; box-shadow: inset 0 0 0 1.5px var(--line); }
+
+@keyframes tape-rise { from { opacity: 0; transform: translateY(14px); } }

@@ -1,0 +1,12 @@
+{
+  "name": "gesso",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "A simple, Photoshop-style photo editor for iPhone. Everything stays on your device.",
+  "scripts": {
+    "test": "node --test",
+    "start": "python3 -m http.server 4174 --bind 127.0.0.1",
+    "e2e": "node e2e/acceptance.mjs"
+  }
+}

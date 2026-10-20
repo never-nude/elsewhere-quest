@@ -1,0 +1,772 @@
+/* Gesso — a primed canvas in a dark studio. The chrome is warm near-black and
+   quiet; the photo is always the brightest thing on screen. One accent (cadmium
+   orange) is filled only on Save, Save to Photos and Choose a photo. */
+
+:root {
+  color-scheme: dark;
+  --ground: #0d0c0b;
+  --panel: #161413;
+  --raised: #221f1d;
+  --raised-2: #2c2826;
+  --line: #34302c;
+  --ink: #f3eee6;
+  --ink-2: #a8a097;
+  --ink-3: #6b645d;
+  --accent: #ff7a2f;
+  --on-accent: #1b0f07;
+  --danger: #ff6b5e;
+  --mask: rgba(255, 77, 109, 0.45);
+  --scrim: rgba(13, 12, 11, 0.6);
+
+  --font: -apple-system, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+  --safe-top: max(env(safe-area-inset-top), 24px);
+  --safe-bottom: env(safe-area-inset-bottom);
+  --safe-left: env(safe-area-inset-left);
+  --safe-right: env(safe-area-inset-right);
+
+  --topbar-h: 44px;
+  --panel-h: 204px;
+  --actions-h: 52px;
+  --dock-h: 64px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--ground);
+  color: var(--ink);
+  font: 400 15px/1.3 var(--font);
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, label, textarea { font: inherit; color: inherit; }
+button {
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:disabled { cursor: default; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.icon {
+  width: 24px;
+  height: 24px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.visually-hidden {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+[hidden] { display: none !important; }
+
+/* ------------------------------------------------------------------ frame */
+
+.app {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: calc(var(--topbar-h) + var(--safe-top)) minmax(0, 1fr) var(--panel-h) var(--actions-h) calc(var(--dock-h) + var(--safe-bottom));
+  grid-template-areas: "top" "stage" "panel" "actions" "dock";
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+.topbar {
+  grid-area: top;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: var(--safe-top) 12px 0;
+}
+.topbar__new {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.topbar__new .icon { width: 22px; height: 22px; }
+.topbar__status {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+/* ------------------------------------------------------------------ stage */
+
+.stage {
+  grid-area: stage;
+  position: relative;
+  overflow: hidden;
+  background: var(--ground);
+  touch-action: none;
+}
+.stage__layer { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#overlay { pointer-events: none; }
+/* An opaque GL canvas with nothing drawn is black, not the ground. */
+.app[data-state="start"] #gl { visibility: hidden; }
+
+.stage__empty {
+  position: absolute;
+  inset: 12px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.stage__ground {
+  position: absolute;
+  inset: 8% 10%;
+  border-radius: 6px;
+  /* gesso: a primed, faintly brushed ground */
+  background:
+    repeating-linear-gradient(103deg, rgba(243, 238, 230, 0.035) 0 2px, transparent 2px 9px),
+    repeating-linear-gradient(97deg, rgba(243, 238, 230, 0.025) 0 1px, transparent 1px 13px),
+    linear-gradient(160deg, #1f1c19, #171513);
+  box-shadow: inset 0 0 0 1px rgba(243, 238, 230, 0.06);
+}
+.stage__empty p { position: relative; margin: 0; color: var(--ink-2); font-size: 15px; letter-spacing: 0.01em; }
+.app:not([data-state="start"]) .stage__empty { display: none; }
+
+.badge, .wipe-badges span {
+  position: absolute;
+  top: 10px;
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--scrim);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+.badge { left: 50%; transform: translateX(-50%); }
+.wipe-badges { margin: 0; }
+.wipe-badges span:first-child { left: 10px; }
+.wipe-badges span:last-child { right: 10px; }
+
+.bubble {
+  position: absolute;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  transform: translate(-50%, -100%);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  margin: 0;
+  max-width: calc(100% - 32px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(34, 31, 29, 0.92);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  opacity: 0;
+  transform: translate(-50%, 8px);
+  transition: opacity 0.2s var(--ease), transform 0.2s var(--ease);
+  pointer-events: none;
+}
+.toast.is-on { opacity: 1; transform: translate(-50%, 0); }
+
+.zoom {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.navigator {
+  position: relative;
+  width: 88px;
+  height: 66px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--raised);
+  box-shadow: 0 0 0 1px var(--line), 0 4px 14px rgba(0, 0, 0, 0.4);
+  touch-action: none;
+}
+.navigator canvas { width: 100%; height: 100%; display: block; }
+.navigator__frame {
+  position: absolute;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  box-shadow: 0 0 0 999px rgba(13, 12, 11, 0.45);
+  pointer-events: none;
+}
+.zoom__pill {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: var(--scrim);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.shimmer {
+  position: absolute;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 50%;
+}
+.shimmer::after {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, 0.35) 50%, transparent 65%);
+  animation: sweep 0.8s var(--ease) infinite;
+}
+@keyframes sweep { from { transform: translateX(-60%); } to { transform: translateX(60%); } }
+
+.busy {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.busy span {
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--scrim);
+  font-size: 14px;
+}
+
+/* ------------------------------------------------------------------ panel */
+
+.panel {
+  grid-area: panel;
+  display: grid;
+  grid-template-rows: 48px 156px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  overflow: hidden;
+  contain: layout paint;
+  container-type: inline-size;
+}
+.panel__header {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) 72px;
+  align-items: center;
+  padding: 0 4px;
+}
+.panel__cancel, .panel__done {
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 16px;
+}
+.panel__cancel { justify-self: start; color: var(--ink-2); }
+.panel__done { justify-self: end; color: var(--accent); font-weight: 600; }
+.panel__titles { grid-column: 2; text-align: center; min-width: 0; }
+/* Home has no tool name and no Cancel or Done: its hint gets the whole header. */
+.panel__titles:has(.panel__name:empty) { grid-column: 1 / -1; padding: 0 12px; }
+.panel__name {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.panel__name:empty { display: none; }
+.panel__hint {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.25;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.2s;
+}
+/* The hint with the header to itself (Home), and an earned tip, which takes both
+   lines, may wrap: cut off on a 402pt or landscape panel they would teach nothing. */
+.panel__titles:has(.panel__hint.is-tip) .panel__name { display: none; }
+.panel__name:empty + .panel__hint,
+.panel__hint.is-tip { white-space: normal; max-height: 2.5em; }
+.panel__hint.is-tip { color: var(--ink); }
+.panel__hint.is-tip::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: 2px;
+}
+
+.panel__body {
+  position: relative;
+  display: grid;
+  grid-template-rows: 60px 48px 48px;
+  transition: opacity 0.18s var(--ease);
+}
+.panel.is-faded .panel__header,
+.panel.is-faded .panel__quick,
+.panel.is-faded .panel__dials { opacity: 0.15; transition: opacity 0.12s; }
+.panel.is-faded .panel__slot { opacity: 1; }
+
+.panel__quick, .panel__dials {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+.panel__dials { padding: 2px 10px; }
+.panel__slot { position: relative; padding: 0 10px 4px; min-width: 0; }
+
+.chip {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 6px;
+  border-radius: 12px;
+  background: var(--raised);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: box-shadow 0.15s, background 0.15s;
+}
+.chip .icon { width: 18px; height: 18px; }
+.chip[aria-pressed="true"], .chip.is-selected { box-shadow: inset 0 0 0 2px var(--accent); }
+.chip:disabled { color: var(--ink-3); }
+.chip[data-quick="discard"] { color: var(--danger); } /* New photo's "Discard edit" */
+.chip--wide { flex: 1 1 100%; min-height: 52px; font-size: 16px; gap: 8px; }
+.chip--wide .icon { width: 22px; height: 22px; }
+.chip--thumb {
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 2px 2px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.chip--thumb canvas {
+  width: 100%;
+  max-width: 44px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--raised-2);
+  object-fit: cover;
+}
+.chip--note { background: none; color: var(--ink-2); font-weight: 500; }
+/* Auto beside look thumbnails takes their shape (icon over word), so in a narrow
+   landscape column it fits its share of the row instead of cutting "Auto". */
+.panel__quick:has(.chip--thumb) .chip:not(.chip--thumb) {
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 2px 2px;
+  font-size: 11px;
+}
+.panel__quick:has(.chip--thumb) .chip:not(.chip--thumb) .icon { width: 26px; height: 26px; }
+
+.dial {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 44px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0 4px;
+  border-radius: 10px;
+  color: var(--ink-2);
+}
+.dial__name { font-size: 11px; font-weight: 500; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.dial__value { font-size: 14px; font-weight: 600; line-height: 1.2; color: var(--ink); font-variant-numeric: tabular-nums; }
+.dial--action .dial__value { font-size: 13px; }
+/* One-tap actions in the dial row (Home's change chips, Rotate, Flip, Add, Delete)
+   wear a chip's surface, so they read as buttons, not read-outs. */
+.panel__dials .dial--action:not(:disabled) { background: var(--raised); }
+.dial.is-selected { background: var(--raised-2); color: var(--ink); }
+.dial.is-selected::after {
+  content: "";
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  bottom: 3px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+/* On the chip, not after the name: a name cut short by a narrow column would take
+   the dot with it. */
+.dial.is-changed::before {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.dial:disabled { opacity: 0.4; }
+.dial--danger, .dial--danger .dial__value { color: var(--danger); }
+
+.message {
+  margin: 0;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-2);
+  font-size: 14px;
+  text-align: center;
+}
+.message--action { color: var(--ink); font-weight: 600; }
+.message--action::after { content: " ›"; color: var(--accent); }
+
+.segment {
+  display: flex;
+  height: 44px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--raised);
+}
+.segment button {
+  flex: 1;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+.segment button[aria-pressed="true"] { background: var(--raised-2); color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--accent); }
+
+.swatches { display: flex; gap: 6px; height: 44px; align-items: center; justify-content: space-between; }
+.swatch {
+  flex: 1 1 0;
+  max-width: 40px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+.swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); }
+
+/* Ruler: ticks slide under a fixed needle. */
+.ruler {
+  position: relative;
+  height: 44px;
+  border-radius: 12px;
+  overflow: hidden;
+  touch-action: none;
+  background: linear-gradient(90deg, var(--panel), transparent 18%, transparent 82%, var(--panel)), var(--raised);
+}
+/* Reset sits outside the slider but over it: a drag that starts on it slides the ruler. */
+.ruler-wrap { position: relative; touch-action: none; }
+.ruler canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.ruler__needle {
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+  transition: transform 0.12s;
+}
+.ruler.is-ticked .ruler__needle { transform: scaleY(1.35); box-shadow: 0 0 10px var(--accent); }
+.ruler__reset {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  bottom: 4px;
+  padding: 0 10px;
+  border-radius: 9px;
+  background: var(--raised-2);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* Start state: one big way in. The dock and actions stay visible but quiet,
+   so the map is learned before a photo is loaded. */
+.start {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 16px 8px;
+}
+.app[data-state="start"] .start { display: flex; }
+.app[data-state="start"] .panel__quick,
+.app[data-state="start"] .panel__dials,
+.app[data-state="start"] .panel__slot { visibility: hidden; }
+.choose {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 64px;
+  border-radius: 16px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.choose .icon { width: 26px; height: 26px; stroke-width: 2; }
+.choose:active { filter: brightness(0.92); }
+.start__install { margin: 0; text-align: center; font-size: 13px; color: var(--ink-2); }
+.link { color: var(--ink); font-weight: 600; text-decoration: underline; text-underline-offset: 2px; padding: 6px; }
+
+/* ------------------------------------------------------------------ actions + dock */
+
+.actions {
+  grid-area: actions;
+  display: grid;
+  /* minmax(0, …): the row never grows past the screen (Safari page zoom narrows it) */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
+  container-type: inline-size;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  background: var(--panel);
+}
+.action {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 6px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.action .icon { width: 20px; height: 20px; }
+.action span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container (max-width: 330px) {
+  .action:not(.action--save) .icon { display: none; }
+}
+.action:disabled { color: var(--ink-3); }
+.action--save {
+  justify-self: end;
+  width: min(104px, 100%);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.action--save .icon { stroke-width: 2; }
+.action--save:disabled { background: var(--raised); color: var(--ink-3); }
+.action--before[aria-pressed="true"] { background: var(--raised-2); }
+
+.dock {
+  grid-area: dock;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  align-items: start;
+  padding: 2px 6px var(--safe-bottom);
+  background: var(--panel);
+}
+.dock__tool {
+  min-height: 56px;
+  margin: 2px 2px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-radius: 14px;
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  transition: color 0.15s, background 0.15s;
+}
+.dock__tool[aria-pressed="true"] { color: var(--accent); background: var(--raised); }
+
+/* The dock's words stay readable (they open the picker and teach the map); only
+   its icons and the disabled actions are dimmed, over the panel's own colour. */
+.app[data-state="start"] .action,
+.app[data-state="start"] .dock .icon { opacity: 0.35; }
+
+/* ------------------------------------------------------------------ text edit bar */
+
+.editbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  height: 52px;
+  padding: 6px max(10px, var(--safe-right)) 6px max(10px, var(--safe-left));
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+.editbar__input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--ink);
+  font-size: 17px; /* ≥16px: iOS won't zoom the page on focus */
+  line-height: 22px;
+  resize: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.editbar__done { min-height: 44px; padding: 0 12px; color: var(--accent); font-size: 16px; font-weight: 600; }
+
+/* ------------------------------------------------------------------ save sheet */
+
+.sheet { position: fixed; inset: 0; z-index: 30; }
+.sheet__scrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); animation: fade 0.2s var(--ease); }
+.sheet__card {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 88%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 16px calc(16px + var(--safe-bottom));
+  border-radius: 22px 22px 0 0;
+  background: var(--panel);
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.5);
+  animation: rise 0.28s var(--ease);
+}
+.sheet__grabber { align-self: center; width: 40px; height: 5px; margin: 2px 0 2px; border-radius: 3px; background: var(--line); touch-action: none; }
+.sheet__title { margin: 0; font-size: 17px; font-weight: 700; text-align: center; }
+.sheet__preview { display: grid; place-items: center; min-height: 0; }
+.sheet__preview canvas { max-width: 100%; max-height: 280px; border-radius: 8px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); }
+.sheet__primary {
+  position: relative;
+  width: 100%;
+  min-height: 56px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 17px;
+  font-weight: 700;
+}
+.sheet__primary:disabled { background: var(--raised-2); color: var(--ink-2); }
+.sheet__progress { position: absolute; inset: 0 auto 0 0; width: 0; background: rgba(255, 122, 47, 0.28); transition: width 0.2s; }
+.sheet__primary > span:last-child { position: relative; }
+.sheet__coach { margin: 0; text-align: center; font-size: 15px; color: var(--ink); }
+.sheet__foot { margin: 0; text-align: center; font-size: 13px; color: var(--ink-2); }
+.sheet__secondary { width: 100%; min-height: 48px; border-radius: 14px; background: var(--raised); font-size: 16px; font-weight: 600; }
+#sheet-main { display: flex; flex-direction: column; gap: 8px; }
+.sheet__done { display: flex; flex-direction: column; gap: 10px; }
+.sheet__success { margin: 0; text-align: center; font-size: 16px; font-weight: 600; }
+
+.fallback {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: calc(var(--safe-top) + 12px) 16px calc(16px + var(--safe-bottom));
+  background: #000;
+  text-align: center;
+}
+.fallback img {
+  max-width: 100%;
+  max-height: 70%;
+  -webkit-touch-callout: default;
+  user-select: auto;
+  -webkit-user-select: auto;
+}
+.fallback p { margin: 0; font-size: 16px; }
+.fallback .sheet__secondary { max-width: 320px; }
+
+.noscript { position: fixed; inset: auto 0 40% 0; text-align: center; color: var(--ink-2); }
+
+/* `translate`, not `transform`: the landscape card is centred with transform: translateX(-50%). */
+@keyframes rise { from { translate: 0 100%; } }
+@keyframes fade { from { opacity: 0; } }
+
+/* ------------------------------------------------------------------ landscape: a side column */
+
+@media (orientation: landscape) and (max-height: 500px) {
+  .app {
+    grid-template-columns: minmax(0, 1fr) 384px;
+    grid-template-rows: var(--topbar-h) var(--panel-h) var(--actions-h) var(--dock-h) minmax(0, 1fr);
+    grid-template-areas:
+      "stage top"
+      "stage panel"
+      "stage actions"
+      "stage dock"
+      "stage rest";
+    padding-bottom: var(--safe-bottom);
+  }
+  .topbar { padding-top: 0; align-items: center; background: var(--panel); }
+  .dock { padding-bottom: 0; }
+  .sheet__card { left: 50%; right: auto; width: min(520px, 100%); transform: translateX(-50%); max-height: 96%; }
+  .sheet__preview canvas { max-height: 150px; }
+}
+
+@container (max-width: 390px) {
+  .chip { font-size: 12px; padding: 0 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
