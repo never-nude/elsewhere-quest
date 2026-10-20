@@ -31,6 +31,7 @@ const SHELL = [
   './lib/inpaint.js',
   './lib/lasso.js',
   './lib/level.js',
+  './lib/magnifier.js',
   './lib/navpan.js',
   './lib/patches.js',
   './lib/remove-plan.js',
