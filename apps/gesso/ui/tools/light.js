@@ -187,7 +187,7 @@ function paintGesture(ed, g) {
   if (g.type === 'drag-cancel' && stroke) {
     stroke = null;
     ring = null;
-    ed.resync(); // replay without the half stroke
+    ed.replayPaint(); // replay without the half stroke
     return true;
   }
   return false;

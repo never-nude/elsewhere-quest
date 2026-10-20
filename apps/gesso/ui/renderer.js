@@ -238,7 +238,8 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
   const api = {
     ok,
     maxTextureSize,
-    get lost() { return lost; },
+    // True from the moment the context goes, before its event arrives a task later.
+    get lost() { return lost || !!gl?.isContextLost?.(); },
     get size() { return size; },
     get hasBase() { return base !== null; },
 
@@ -462,7 +463,9 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
     // ---- drawing --------------------------------------------------------------
     // Draw the photo on the stage. `before` draws pristine with identity tone;
     // `wipeX` (device px) draws After, then Before to the left of it.
-    draw({ quads, uniforms, before = false, wipeX = null, background = [0.051, 0.047, 0.043] }) {
+    // loupe: { quads, rect: [x, y, w, h] } (device px, GL's bottom-left origin):
+    // the same pass drawn again, magnified, into that square.
+    draw({ quads, uniforms, before = false, wipeX = null, loupe = null, background = [0.051, 0.047, 0.043] }) {
       if (!ok || lost) return;
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, canvas.width, canvas.height);
@@ -472,10 +475,10 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
       gl.clear(gl.COLOR_BUFFER_BIT);
       if (!pristine) return;
       const grainScale = quads.grainScale ?? [canvas.width, canvas.height];
-      const pass = (u, tex, paint) => {
+      const pass = (u, tex, paint, list = quads) => {
         bindDevelop(u, { texture: tex, grainScale, paint });
         gl.bindVertexArray(vao);
-        for (const quad of quads) {
+        for (const quad of list) {
           writeQuad(quad, canvas.width, canvas.height, true);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         }
@@ -490,6 +493,13 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
         gl.enable(gl.SCISSOR_TEST);
         gl.scissor(0, 0, Math.max(0, Math.round(wipeX)), canvas.height);
         pass(IDENTITY, pristine, false);
+        gl.disable(gl.SCISSOR_TEST);
+      }
+      if (loupe) {
+        gl.enable(gl.SCISSOR_TEST);
+        gl.scissor(...loupe.rect.map(Math.round));
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        pass(uniforms, base ?? pristine, true, loupe.quads);
         gl.disable(gl.SCISSOR_TEST);
       }
     },

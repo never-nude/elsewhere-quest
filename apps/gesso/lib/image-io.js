@@ -66,9 +66,13 @@ export function sniffImageType(bytes) {
     if (brand === 'avif' || brand === 'avis') return 'avif';
     return 'unknown';
   }
-  // TIFF-based: DNG / ProRAW and most camera RAW.
+  // Safari opens these too (WebKit's supported image types).
+  if (b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d) return 'bmp';
+  if ((b.length >= 2 && b[0] === 0xff && b[1] === 0x0a) || (b.length >= 12 && ascii(4, 8) === 'JXL ')) return 'jxl';
+  // TIFF: a scan or an export opens; DNG / ProRAW and most camera RAW are
+  // TIFF-based too and don't, which the importer reports when the decode fails.
   if (b.length >= 4 && ((b[0] === 0x49 && b[1] === 0x49 && b[2] === 0x2a && b[3] === 0) ||
-                        (b[0] === 0x4d && b[1] === 0x4d && b[2] === 0 && b[3] === 0x2a))) return 'raw';
+                        (b[0] === 0x4d && b[1] === 0x4d && b[2] === 0 && b[3] === 0x2a))) return 'tiff';
   return 'unknown';
 }
 

@@ -14,7 +14,7 @@ export async function decodeForEditing(file, { maxPixels } = {}) {
   const head = new Uint8Array(await file.slice(0, HEADER_BYTES).arrayBuffer());
   const type = sniffImageType(head);
   const problem = importProblem(type);
-  if (problem) throw new ImportError(problem);
+  if (problem) throw Object.assign(new ImportError(problem), { unsupported: true }); // at any size
 
   const info = readImageInfo?.(head) ?? null;
   let bitmap;
@@ -41,7 +41,8 @@ export async function decodeForEditing(file, { maxPixels } = {}) {
     return { bitmap, type, natW, natH, downscaled: true };
   } catch (err) {
     if (err instanceof ImportError) throw err;
-    throw new ImportError("This photo couldn't be opened.");
+    // Safari opens a plain TIFF; one it can't open is DNG (ProRAW) or camera RAW.
+    throw new ImportError(type === 'tiff' ? importProblem('raw') : "This photo couldn't be opened.");
   }
 }
 

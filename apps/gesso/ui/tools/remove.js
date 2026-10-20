@@ -24,7 +24,7 @@ import {
   PRESETS, DEFAULT_SIZE, DILATE_PX, FILTER_BLEED, brushRadius, solveFactor, discBox, clipRect, grow,
   findRegion, fullOffsets, rubWindow, mapPoints, extendBounds, boundsRect, readPadded, shrink, shrinkMask,
   stackSide, stackPair, correctionField, upsampleCorrection, cutTile, upsampleFill, discRing, refineOffset, subBlock,
-  rankSources, addCorrection, SEAM_PX, recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill, silhouetteSvg,
+  rankSources, addCorrection, SEAM_PX, recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill, silhouetteSvg, copyByMatches,
 } from '../../lib/remove-plan.js';
 import { createHealClient } from '../heal-client.js';
 
@@ -35,6 +35,7 @@ const SHADOW = 'rgba(0, 0, 0, 0.45)';
 const SHIMMER_MIN_MS = 400; // SPEC F10: a tap's fill lands with a 0.4 s shimmer
 const RING_HIT_PT = 22; // the Source ring is grabbable within at least a 44pt circle
 const CAP_TIP = 'Big area. Do it in smaller pieces.';
+const MATCH_MAX_PX = 8_000_000; // a rub's window read back at full size (32 MB) to copy its matches
 
 let size = DEFAULT_SIZE; // brush diameter, pt on screen
 let dial = 'size'; // 'size' | 'source'
@@ -45,7 +46,7 @@ let sizing = false; // the size ruler is being dragged: preview the brush
 const jobs = []; // asked-for fills not landed yet, drawn as rings / coral
 let chain = Promise.resolve();
 let generation = 0; // bumped by Cancel: anything in flight is dropped
-let running = null; // { under } of the fill being computed
+let running = null; // { under, job } of the fill being computed
 let docId = null; // the photo the fills below belong to
 const fills = new Map(); // patch id -> how it was made, for Try another and Source
 let heal = null;
@@ -77,7 +78,7 @@ export default {
   },
 
   close(ed, { cancel } = {}) {
-    if (cancel) dropPending();
+    if (cancel) dropSession(ed.session);
     stroke = null;
     ringDrag = null;
     sizing = false;
@@ -152,6 +153,11 @@ export default {
     return 'free';
   },
 
+  // SPEC F10: the rub under the finger shows in a 2x loupe (stage px of the finger).
+  loupe() {
+    return stroke ? { x: stroke.x, y: stroke.y } : null;
+  },
+
   // Captions are dimmed and ignore touches here; only the Source ring is a target.
   hitTarget(ed, x, y) {
     const ring = sourceRing(ed);
@@ -194,6 +200,25 @@ export default {
     if (stroke) {
       coral(ctx, map, stroke.pts, stroke.rr * k);
       ring(ctx, stroke.x, stroke.y, size / 2);
+      const L = ed.loupe;
+      if (L) {
+        // The same coral and brush, twice the size, inside the loupe the renderer drew.
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(L.cx - L.r, L.cy - L.r, 2 * L.r, 2 * L.r);
+        ctx.clip();
+        ctx.translate(L.cx - 2 * L.x, L.cy - 2 * L.y);
+        ctx.scale(2, 2);
+        coral(ctx, map, stroke.pts, stroke.rr * k);
+        ring(ctx, stroke.x, stroke.y, size / 2);
+        ctx.restore();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = SHADOW;
+        ctx.strokeRect(L.cx - L.r, L.cy - L.r, 2 * L.r, 2 * L.r);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = INK;
+        ctx.strokeRect(L.cx - L.r, L.cy - L.r, 2 * L.r, 2 * L.r);
+      }
     }
     for (const j of jobs) if (j.kind === 'tap') ring(ctx, ...map(j.cx, j.cy), j.rr * k);
     const src = sourceRing(ed);
@@ -296,7 +321,7 @@ function endRing(ed) {
     return true;
   }
   movedRing = { cx: rec.cx, cy: rec.cy, x: rec.cx + D.dx, y: rec.cy + D.dy, r: rec.rr };
-  const job = { kind: 'tap', cx: rec.cx, cy: rec.cy, rr: rec.rr };
+  const job = jobFor(rec);
   enqueue(ed, job, async (gen) => {
     try {
       const under = ed.committed.remove;
@@ -339,6 +364,15 @@ function tryAnother(ed) {
       const tile = await healTile(ed, rec, D, rec.f);
       await land(ed, tile, { ...rec, index, D: tile?.D, moved: false }, { under, gen, replace: true });
     } else {
+      // PatchMatch can bend a straight line it fills across (a horizon behind
+      // someone). The alternative is a tap's copy from one place, over the rubbed
+      // shape: lines carry straight on, and it has a Source to drag.
+      const found = await rubOffsets(ed, rec);
+      if (found) {
+        const tile = await healTile(ed, found, found.offsets[0], found.f);
+        await land(ed, tile, { ...found, index: 0, D: tile?.D, moved: false }, { under, gen, replace: true });
+        return;
+      }
       const next = { ...rec, seed: rec.seed + 1, attempt: rec.attempt + 1 };
       const tile = await rubTile(ed, next);
       await land(ed, tile, next, { under, gen, replace: true });
@@ -347,7 +381,27 @@ function tryAnother(ed) {
 }
 
 function jobFor(rec) {
-  return rec.kind === 'tap' ? { kind: 'tap', cx: rec.cx, cy: rec.cy, rr: rec.rr } : { kind: 'rub', pts: rec.pts, rr: rec.rr };
+  return rec.kind === 'tap' && !rec.pts ? { kind: 'tap', cx: rec.cx, cy: rec.cy, rr: rec.rr } : { kind: 'rub', pts: rec.pts, rr: rec.rr };
+}
+
+// Where a rubbed shape could be copied from in one piece, searched like a tap
+// (healSpot) with the shape's long side as its size; null when nowhere fits.
+async function rubOffsets(ed, rec) {
+  const { width: W, height: H } = ed.renderer.size;
+  const box = clipRect(strokeBounds(rec.pts, rec.rr), W, H);
+  if (!box) return null;
+  const half = Math.max(box.w, box.h) / 2;
+  const f = solveFactor(half);
+  const region = findRegion(box.x + box.w / 2, box.y + box.h / 2, half, W, H);
+  const small = f === 1
+    ? { width: region.w, height: region.h, data: ed.renderer.readRect(region) }
+    : pick(ed.renderer.readSource({ rect: region, scale: 1 / f }));
+  const size = { width: small.width, height: small.height }; // the worker takes `small`
+  const kx = small.width / region.w, ky = small.height / region.h;
+  const mask = strokeMaskFast(mapPoints(rec.pts, region, kx, ky), rec.rr * Math.max(kx, ky) + (f > 1 ? FILTER_BLEED : 0), small.width, small.height);
+  const offsets = fullOffsets(await client().find(small, mask, { maxResults: 4 }), region, size);
+  if (!offsets.length) return null;
+  return { kind: 'tap', pts: rec.pts, cx: box.x + box.w / 2, cy: box.y + box.h / 2, rr: rec.rr, f, offsets };
 }
 
 // Heal a tapped spot: find where to copy from, then copy with a seam correction.
@@ -385,10 +439,12 @@ async function healSpot(ed, job, gen) {
 // here at full size.
 async function healTile(ed, spot, D, f) {
   const { width: W, height: H } = ed.renderer.size;
-  const box = discBox(spot.cx, spot.cy, spot.rr, W, H);
+  const box = spot.pts ? clipRect(strokeBounds(spot.pts, spot.rr), W, H) : discBox(spot.cx, spot.cy, spot.rr, W, H);
   if (!box) return null;
   const T = grow(box, 3 * f, W, H); // ≥ 2 shrunk px of known surroundings
-  const holeMask = diskMask(spot.cx - T.x, spot.cy - T.y, spot.rr, T.w, T.h);
+  const holeMask = spot.pts
+    ? strokeMaskFast(mapPoints(spot.pts, T), spot.rr, T.w, T.h)
+    : diskMask(spot.cx - T.x, spot.cy - T.y, spot.rr, T.w, T.h);
   const hole = maskBounds(holeMask, T.w, T.h);
   if (!hole) return null;
   const side = stackSide(hole, T.w, T.h);
@@ -399,7 +455,8 @@ async function healTile(ed, spot, D, f) {
   const wide = readPadded(read, { x: T.x + D.dx - m, y: T.y + D.dy - m, w: T.w + 2 * m, h: T.h + 2 * m }, W, H);
   if (!wide) return null;
   // Only the band right at the seam decides whether lines carry on across it.
-  const ring = discRing(spot.cx - T.x, spot.cy - T.y, spot.rr, Math.max(3, Math.min(16, Math.round(0.25 * spot.rr))), T.w, T.h);
+  const ringW = Math.max(3, Math.min(16, Math.round(0.25 * spot.rr)));
+  const ring = spot.pts ? shapeRing(holeMask, strokeMaskFast(mapPoints(spot.pts, T), spot.rr + ringW, T.w, T.h)) : discRing(spot.cx - T.x, spot.cy - T.y, spot.rr, ringW, T.w, T.h);
   const nudge = refineOffset(target, wide, T.w, T.h, m, ring);
   const used = { dx: D.dx + nudge.dx, dy: D.dy + nudge.dy };
   const source = subBlock(wide, T.w + 2 * m, m + nudge.dx, m + nudge.dy, T.w, T.h);
@@ -417,6 +474,14 @@ async function healTile(ed, spot, D, f) {
     rgba: cutTile(out.data, full.width, hole, full.tx, full.ty, holeMask, T.w),
     D: used,
   };
+}
+
+// The band just outside a rubbed shape: set in `outer` (the shape grown by the
+// band's width), not in `hole`.
+function shapeRing(hole, outer) {
+  const out = [];
+  for (let i = 0; i < hole.length; i++) if (outer[i] && !hole[i]) out.push(i);
+  return Int32Array.from(out);
 }
 
 async function fillArea(ed, job, gen) {
@@ -447,6 +512,10 @@ async function rubTile(ed, rec) {
     const mask = strokeMaskFast(mapPoints(rec.pts, win, kx, ky), rec.rr * Math.max(kx, ky) + FILTER_BLEED, small.width, small.height);
     const filled = await client().inpaint(small, mask, { seed: rec.seed });
     rgba = upsampleFill(filled, win, box, boxMask);
+    if (filled.from && win.w * win.h <= MATCH_MAX_PX) {
+      const winMask = strokeMaskFast(mapPoints(rec.pts, win), rec.rr, win.w, win.h);
+      copyByMatches(rgba, filled, ed.renderer.readRect(win), win, box, boxMask, winMask);
+    }
     await matchSeam(ed, rec, filled, win, box, boxMask, rgba);
   }
   return { rect: box, rgba };
@@ -475,7 +544,7 @@ async function matchSeam(ed, rec, filled, win, box, boxMask, rgba) {
 // changed while it was being computed (Undo, Cancel, a new photo), in which case
 // it is dropped: it was made for pixels that are no longer there.
 async function land(ed, tile, rec, { under, gen, replace = false, label } = {}) {
-  const fresh = () => gen === generation && ed.committed?.remove === under;
+  const fresh = () => gen === generation && !running?.job.dropped && ed.committed?.remove === under;
   if (!tile || !fresh()) return false;
   const id = newId();
   const meta = { ...tile.rect, how: recipeRecord(rec) };
@@ -494,22 +563,24 @@ async function land(ed, tile, rec, { under, gen, replace = false, label } = {}) 
     return false;
   }
   fills.set(id, rec);
-  const keep = replace ? under.slice(0, -1) : under;
-  // A fill that lands after Done is still Remove's step, whatever tool is open.
-  ed.commit({ ...ed.committed, remove: [...keep, id] }, label, { tool: 'remove' });
+  const remove = [...(replace ? under.slice(0, -1) : under), id];
+  // A fill that lands after Done is still Remove's step, whatever tool is open, and
+  // goes in under that tool's session so its Cancel keeps it.
+  ed.commitBelow((s) => (s.remove === under ? { ...s, remove } : s), label, { tool: 'remove', session: running?.job.session });
   return true;
 }
 
 // Fills run one after another, each on the photo the last one left.
 function enqueue(ed, job, work) {
   const gen = generation;
+  job.session = ed.session;
   jobs.push(job);
   if (jobs.length === 1) placeShimmer(ed, toStage(ed));
   showShimmer();
   ed.requestRender();
   chain = chain.then(async () => {
-    if (gen !== generation) return;
-    running = { under: ed.committed?.remove };
+    if (gen !== generation || job.dropped) return;
+    running = { under: ed.committed?.remove, job };
     try {
       await work(gen);
     } catch (err) {
@@ -528,7 +599,20 @@ function enqueue(ed, job, work) {
   });
 }
 
-// Cancel, or another photo: drop every fill asked for and not landed yet.
+// Cancel: drop the fills this session asked for. One still computing from an
+// earlier Remove session (left with Done) is that session's step, and lands.
+function dropSession(session) {
+  for (let i = jobs.length - 1; i >= 0; i--) {
+    if (jobs[i].session !== session) continue;
+    jobs[i].dropped = true;
+    jobs.splice(i, 1);
+  }
+  movedRing = null;
+  if (running?.job.dropped) heal?.cancel();
+  if (!jobs.length) hideShimmer(true);
+}
+
+// Another photo: drop every fill asked for and not landed yet.
 function dropPending() {
   generation++;
   jobs.length = 0;

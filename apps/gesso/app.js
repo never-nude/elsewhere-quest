@@ -66,8 +66,11 @@ async function main() {
     onRestored: async () => {
       clearTimeout(restoring);
       try {
-        if (currentFile) {
-          const { bitmap } = await decodeForEditing(currentFile, { maxPixels: autosave.maxPixels ?? workCap() });
+        const file = currentFile;
+        if (file) {
+          const { bitmap } = await decodeForEditing(file, { maxPixels: autosave.maxPixels ?? workCap() });
+          // A photo picked meanwhile uploads itself; this one must not land under it.
+          if (file !== currentFile || importing) { bitmap.close(); return; }
           renderer.loadSource(bitmap);
           bitmap.close();
           editor.resync();
@@ -141,8 +144,10 @@ async function main() {
         renderer.loadSource(decoded.bitmap);
       } catch (err) {
         decoded?.bitmap?.close?.();
-        // A lost context is not a memory problem: it says nothing about the size.
-        if (err instanceof ImportError || renderer.lost) throw err;
+        // A lost context is not a memory problem: it says nothing about the size. A
+        // failed decode can be (WebKit rejects createImageBitmap when it can't
+        // allocate the bitmap); a file no size can open, or a cap already down, not.
+        if (err?.unsupported || renderer.lost || workCap() <= WORK_FALLBACK_PIXELS) throw err;
         // Out of memory or GPU trouble at full size: step down for good, once the
         // smaller size has worked.
         decoded = await decodeForEditing(file, { maxPixels: WORK_FALLBACK_PIXELS });
@@ -197,7 +202,8 @@ async function main() {
     }),
     onQuick(ed, id) {
       ed.closeTool({ cancel: true });
-      if (id === 'save') openSaveSheet(ed, { captions });
+      // The Save button's own path: a fill still computing lands in the copy first.
+      if (id === 'save') $('#save').click();
       else if (id === 'discard') { autosave.discard?.(); fileInput.click(); }
     },
   };

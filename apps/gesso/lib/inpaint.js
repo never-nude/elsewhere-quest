@@ -174,13 +174,14 @@ export function inpaint(image, mask, options = {}) {
   }
 
   const base = levels[0];
+  let from = null; // hole pixel -> the pixel it copied (-1: none), so a caller can redo the copy at a larger size
   if (nnf && opts.finalVote !== 'mean') {
     // Averaging overlapping patches blurs fine texture. Refresh the matches against
     // the converged estimate, then copy real source pixels instead of averaging.
     const sources = validSources(base, r);
     patchMatchSweep(base, nnf.targets, sources, nnf, r, rand, false);
     if (opts.finalVote === 'best') bestVote(base, nnf.targets, nnf, r);
-    else centerCopy(base, nnf.targets, nnf, r);
+    else centerCopy(base, nnf.targets, nnf, r, (from = new Int32Array(width * height).fill(-1)));
   }
 
   const out = new Uint8ClampedArray(image.data);
@@ -191,7 +192,7 @@ export function inpaint(image, mask, options = {}) {
     out[i * 4 + 2] = base.rgb[i * 3 + 2];
     out[i * 4 + 3] = 255;
   }
-  return { width, height, data: out };
+  return from ? { width, height, data: out, from } : { width, height, data: out };
 }
 
 // ------------------------------------------------------------------ internals
@@ -518,7 +519,7 @@ function vote(L, targets, nnf, r, knownOnly, shiftIters = 0, bandwidth = 24) {
 // Each hole pixel copies the matching pixel of the patch centred on it (or, near
 // the border, on its clamped centre). Neighbouring matches are shift-coherent after
 // PatchMatch, so this reproduces source texture at full sharpness.
-function centerCopy(L, targets, nnf, r) {
+function centerCopy(L, targets, nnf, r, from) {
   const { width: w, height: h, rgb, hole } = L;
   const index = new Int32Array(w * h).fill(-1);
   for (let k = 0; k < targets.length; k++) index[targets[k]] = k;
@@ -530,6 +531,7 @@ function centerCopy(L, targets, nnf, r) {
       const k = index[cy * w + cx];
       if (k < 0) continue;
       const q = nnf.match[k] + (y - cy) * w + (x - cx);
+      from[p] = q;
       rgb[p * 3] = rgb[q * 3]; rgb[p * 3 + 1] = rgb[q * 3 + 1]; rgb[p * 3 + 2] = rgb[q * 3 + 2];
     }
   }

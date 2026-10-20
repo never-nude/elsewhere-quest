@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_CAP, ORIGINAL, createHistory, push, undo, redo, jumpTo, canUndo, canRedo, current,
-  undoLabel, redoLabel, labels, setMark, clearMark, revertToMark, serialize, revive, referencedIds,
+  undoLabel, redoLabel, labels, setMark, clearMark, revertToMark, insertBelowMark, serialize, revive, referencedIds,
 } from '../lib/history.js';
 import { createDoc, setIn, describeChange } from '../lib/doc.js';
 import { setAngle } from '../lib/geometry.js';
@@ -173,20 +173,38 @@ test('Cancel reverts to the mark, removes the session and clears redo', () => {
   assert.equal(revertToMark(D), D);
 });
 
-test('undo past the mark moves the mark down; redo does not move it back up', () => {
+test('undo, redo and the tape leave the mark: Cancel goes back to where the tool opened', () => {
+  // Regression: undo below the mark used to pull the mark down, so Undo x2, Redo x2
+  // (or a tape round trip), then Cancel deleted steps made before the tool opened.
+  let H = setMark(build(4)); // mark 4
+  H = push(H, s(5), 'in tool');
+  H = undo(undo(H)); // index 3, below the mark
+  assert.equal(H.mark, 4);
+  H = redo(redo(H));
+  assert.equal(H.mark, 4);
+  let C = revertToMark(H);
+  assert.equal(current(C).n, 4);
+  assert.deepEqual(states(C), [0, 1, 2, 3, 4]);
+  // peeking back with Undo, then Cancel: the steps before the tool are back
+  C = revertToMark(undo(undo(setMark(build(4)))));
+  assert.deepEqual(states(C), [0, 1, 2, 3, 4]);
+  assert.equal(current(C).n, 4);
+  assert.equal(canRedo(C), false);
+  // the tape to the Original and back
+  const J = jumpTo(setMark(build(4)), 0);
+  assert.equal(J.mark, 4);
+  assert.equal(current(revertToMark(jumpTo(J, 4))).n, 4);
+});
+
+test('a new step below the mark cuts it away: Cancel goes back to where that step started', () => {
   let H = setMark(build(4)); // mark 4
   H = undo(undo(H)); // index 2
+  H = push(H, s(9), 'branch');
+  assert.deepEqual(states(H), [0, 1, 2, 9]);
   assert.equal(H.mark, 2);
-  H = redo(H);
-  assert.equal(H.mark, 2);
-  assert.equal(current(revertToMark(H)).n, 2);
-  const J = jumpTo(setMark(build(4)), 1);
-  assert.equal(J.mark, 1);
-  // undo that stays at or above the mark leaves it alone
-  let K = setMark(build(2));
-  K = push(K, s(3), 'a');
-  K = undo(K);
-  assert.equal(K.mark, 2);
+  const C = revertToMark(H);
+  assert.deepEqual(states(C), [0, 1, 2]);
+  assert.equal(current(C).n, 2);
 });
 
 test('the invariants hold under random operation sequences', () => {
@@ -207,7 +225,8 @@ test('the invariants hold under random operation sequences', () => {
       else if (r < 0.86) { H = clearMark(H); markState = null; }
       else if (r < 0.92) {
         H = revertToMark(H);
-        // Cancel lands on the state the tool opened with (or the lowered mark's).
+        // Cancel lands on the state the tool opened with (or, after a new step
+        // made below it, the state that step started from).
         if (markState) {
           assert.equal(current(H), markState, 'Cancel lands on the mark state');
           assert.equal(canRedo(H), false, 'Cancel clears redo');
@@ -216,11 +235,11 @@ test('the invariants hold under random operation sequences', () => {
         H = push(H, rng() < 0.5 ? current(H) : { ...current(H) }, 'same');
         assert.equal(H, before, 'pushing the state on screen is a no-op');
       }
-      // a lowered mark follows the undo
+      // a new step below the mark moves it down to where that step started
       if (H.mark !== null && before.mark !== null && H.mark < before.mark) markState = H.entries[H.mark].state;
       assert.ok(H.entries.length <= cap, 'within the cap');
       assert.ok(Number.isInteger(H.index) && H.index >= 0 && H.index < H.entries.length);
-      assert.ok(H.mark === null || (H.mark >= 0 && H.mark <= H.index), 'mark <= index');
+      assert.ok(H.mark === null || (H.mark >= 0 && H.mark < H.entries.length), 'mark is an entry');
       if (H.mark !== null && markState) assert.equal(H.entries[H.mark].state, markState, 'mark state survives');
       assert.equal(H.entries[0].state.n, 0, 'Original kept');
       assert.equal(H.entries[0].label, ORIGINAL);
@@ -238,6 +257,22 @@ test('histories are frozen and never mutated by operations', () => {
   assert.throws(() => { H.index = 0; }, TypeError);
   assert.throws(() => { H.entries.push(1); }, TypeError);
   assert.throws(() => { H.entries[0].label = 'x'; }, TypeError);
+});
+
+test('a step from before the session goes in under the mark, so Cancel keeps it', () => {
+  let H = setMark(build(2)); // a tool opened on state 2
+  H = push(H, s(3), 'in tool');
+  const add = (st) => ({ ...st, fill: true });
+  const I = insertBelowMark(H, add, 'Removed spot', 'remove');
+  assert.deepEqual(labels(I).map((l) => l.label), ['Original', 'step 1', 'step 2', 'Removed spot', 'in tool']);
+  assert.equal(I.mark, 3);
+  assert.equal(I.index, 4);
+  assert.deepEqual(current(I), { n: 3, fill: true }, 'the session step is replayed on top');
+  const C = revertToMark(I);
+  assert.deepEqual(labels(C).map((l) => l.label), ['Original', 'step 1', 'step 2', 'Removed spot']);
+  assert.deepEqual(current(C), { n: 2, fill: true });
+  assert.equal(insertBelowMark(build(2), add, 'x'), null, 'no session open');
+  assert.equal(insertBelowMark(setMark(build(2)), (st) => st, 'x'), null, 'nothing to add');
 });
 
 // ------------------------------------------------------------------ persistence
@@ -297,7 +332,7 @@ test('revive repairs scalars and rejects unusable records', () => {
   assert.equal(revive({ ...good, index: -4 }).index, 0);
   assert.equal(revive({ ...good, mark: 99 }).mark, null);
   assert.equal(revive({ ...good, mark: 1.5 }).mark, null);
-  assert.equal(revive({ ...good, index: 1, mark: 3 }).mark, null, 'a mark above the index is corrupt');
+  assert.equal(revive({ ...good, index: 1, mark: 3 }).mark, 3, 'a mark above the index (undone inside a tool) is kept');
   assert.equal(revive({ ...good, cap: 'big' }).cap, DEFAULT_CAP);
   const relabelled = revive({ ...good, entries: good.entries.map((e, i) => ({ ...e, label: i === 0 ? 'Hacked' : 7, tool: {} })) });
   assert.deepEqual(labels(relabelled).slice(0, 2), [{ label: 'Original', tool: null }, { label: 'Edit', tool: null }]);

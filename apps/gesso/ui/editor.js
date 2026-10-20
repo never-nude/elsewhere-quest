@@ -16,7 +16,7 @@ import { createDoc, describeChange, developInput } from '../lib/doc.js';
 import { resolve, uniforms as developUniforms } from '../lib/develop.js';
 import { outputSize, outputToSource, apply as applyMatrix, multiply } from '../lib/geometry.js';
 import { fitView, viewMatrix, zoomAt, panBy, clampView, stageToContent, outputQuad, frameQuad, frameBounds, isZoomed, navigatorFrame } from '../lib/view.js';
-import { initialGestures, reduceGesture } from '../lib/gestures.js';
+import { initialGestures, reduceGesture, SLOP } from '../lib/gestures.js';
 import { planReconcile, repaintPlan } from '../lib/patches.js';
 import { dabs } from '../lib/stroke.js';
 import { createPanel } from './panel.js';
@@ -24,6 +24,8 @@ import { blurLuminance } from './renderer.js';
 
 const STAGE_MARGIN = 12;
 const BEFORE_TAP_MS = 1200;
+const LOUPE_R = 48; // SPEC F10: a 2x loupe above-left of the finger
+const LOUPE_OFF = 70;
 
 export function createEditor({ root, renderer, tools, hints, store, onSave, onNewPhoto }) {
   const $ = (s) => root.querySelector(s);
@@ -52,6 +54,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
   let toolId = 'home';
   let tool = tools.home;
   let toolMark = null; // history mark when the tool opened
+  let session = 0; // counts tool sessions, so late work knows whether it is still in its own
   let view = null;
   let viewKey = '';
   let keptView = null; // the photo's view while Crop shows its own frame: { key, view }
@@ -65,6 +68,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
   let revision = 0;
   let sourceInfo = null;
   let pinch = null;
+  let loupe = null; // { x, y (finger), cx, cy, r, view } while a tool asks for one
 
   const panel = createPanel(root, {
     onCancel: () => closeTool({ cancel: true }),
@@ -124,6 +128,25 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     }
     pools = { ...pools, patches };
     store?.forgetTiles?.(gone);
+  }
+
+  // A step asked for in an earlier tool session (a Remove fill still computing when
+  // its tool was left) goes in under the open session, so that tool's Cancel keeps
+  // it. `fn` applies the step to a state.
+  function commitBelow(fn, label, { tool: t = toolId, session: asked = session } = {}) {
+    if (asked !== session && hist.mark !== null) {
+      const base = hist.entries[hist.mark].state;
+      const next = H.insertBelowMark(hist, fn, label ?? describeChange(base, fn(base)), t);
+      if (next) {
+        hist = next;
+        if (liveState) liveState = fn(liveState);
+        revision++;
+        syncGpu(shown());
+        afterChange();
+        return true;
+      }
+    }
+    return commit(fn(current()), label, { tool: t });
   }
 
   function afterChange() {
@@ -212,6 +235,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     tool = tools[id];
     toolMark = hist;
     hist = H.setMark(hist);
+    session++;
     app.dataset.tool = id;
     for (const b of dockButtons) b.setAttribute('aria-pressed', b.dataset.tool === id ? 'true' : 'false');
     tool.open?.(ed, opts);
@@ -369,17 +393,32 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     quads.grainScale = [o.width, o.height];
     const { adjust, look } = developInput(st);
     const u = developUniforms(resolve(adjust, look));
+    const at = compare.mode === 'off' && c.mode === 'output' ? tool.loupe?.(ed) : null;
+    loupe = at ? placeLoupe(at.x, at.y, s) : null;
+    let lq = null;
+    if (loupe) {
+      lq = [outputQuad(st.crop, W, Hh, o.width, o.height, multiply([dpr, 0, 0, dpr, 0, 0], viewMatrix(loupe.view)))];
+      lq.grainScale = quads.grainScale;
+    }
     renderer.draw({
       quads,
       uniforms: u,
       before: compare.mode === 'before',
       wipeX: compare.mode === 'wipe' ? compare.x * dpr : null,
+      loupe: loupe && { quads: lq, rect: [(loupe.cx - LOUPE_R) * dpr, (s.height - loupe.cy - LOUPE_R) * dpr, 2 * LOUPE_R * dpr, 2 * LOUPE_R * dpr] },
     });
     stage.dataset.compare = compare.mode;
     badge.hidden = compare.mode !== 'before';
     wipeBadges.hidden = compare.mode !== 'wipe';
     drawOverlay(dpr);
     updateZoomUi();
+  }
+
+  // Above-left of the finger, or on the other side where that would leave the stage.
+  function placeLoupe(x, y, s) {
+    const side = (v, max) => Math.max(LOUPE_R, Math.min(max - LOUPE_R, v - LOUPE_OFF - LOUPE_R >= 0 ? v - LOUPE_OFF : v + LOUPE_OFF));
+    const cx = side(x, s.width), cy = side(y, s.height);
+    return { x, y, cx, cy, r: LOUPE_R, view: { ...view, scale: 2 * view.scale, x: cx - 2 * (x - view.x), y: cy - 2 * (y - view.y) } };
   }
 
   function sizeOverlay(s, dpr) {
@@ -515,12 +554,14 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       return;
     }
     if (g.type === 'hold-start' && !tool.claimsHold) {
-      compare = { mode: 'before', x: g.x };
+      compare = { mode: 'before', x: g.x, from: [g.x, g.y] };
       ed.hint('hold-photo', { tool: toolId });
       requestRender();
       return;
     }
     if (g.type === 'hold-move' && compare.mode !== 'off') {
+      // A resting finger drifts a point or two: only a real slide starts the wipe.
+      if (compare.from && Math.hypot(g.x - compare.from[0], g.y - compare.from[1]) <= SLOP) return;
       compare = { mode: 'wipe', x: g.x };
       requestRender();
       return;
@@ -649,6 +690,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     get doc() { return shown(); },
     get committed() { return current(); },
     get toolId() { return toolId; },
+    get session() { return session; },
     get history() { return hist; },
     get pools() { return pools; },
     set pools(p) { pools = p; },
@@ -656,6 +698,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     renderer,
     panel,
     get view() { return view; },
+    get loupe() { return loupe; },
     get sourceInfo() { return sourceInfo; },
     get revision() { return revision; },
     markSaved() {
@@ -670,6 +713,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     toast,
     openTool,
     closeTool,
+    commitBelow,
     requestRender,
     stageSize: stageRect,
     stageToDoc,
@@ -759,6 +803,13 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       applied = null;
       syncGpu(shown());
       rebuildBlur();
+      requestRender();
+    },
+
+    // Put the paint mask back to the strokes of the state on screen (a stroke cut
+    // short leaves dabs behind). Fills and the blur map are untouched.
+    replayPaint() {
+      if (applied) replayPaint(applied.paint);
       requestRender();
     },
 

@@ -85,21 +85,44 @@ self.addEventListener('activate', (event) => {
 
 // Network-first with no-cache, so a deploy never mixes fresh and 10-minute-stale
 // modules from the HTTP cache; the shell cache keeps it working offline.
+// A network that takes requests but never answers (one bar, a dead captive
+// portal) must not hold the app until the OS gives up: after NETWORK_WAIT_MS the
+// cached copy answers, and for SLOW_MS after that the cache answers at once (the
+// module graph is several requests deep). A late network answer still refreshes
+// the cache.
+const NETWORK_WAIT_MS = 2500;
+const SLOW_MS = 30000;
+let slowUntil = 0;
+
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
-  event.respondWith(
-    fetch(event.request, { cache: 'no-cache' })
-      .then((response) => {
-        if (response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-        }
-        return response;
-      })
-      .catch(() => caches.match(event.request, { ignoreSearch: true })
-        .then((cached) => cached || caches.match('./'))
-        .then((cached) => cached || caches.match('./index.html'))),
-  );
+  const navigate = event.request.mode === 'navigate';
+  const cached = () => caches.match(event.request, { ignoreSearch: true })
+    .then((hit) => hit || (navigate ? caches.match('./') : undefined))
+    .then((hit) => hit || (navigate ? caches.match('./index.html') : undefined));
+  const network = fetch(event.request, { cache: 'no-cache' }).then((response) => {
+    slowUntil = 0;
+    if (response.ok) {
+      const copy = response.clone();
+      const put = caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+      try { event.waitUntil(put); } catch { /* already answered from the cache */ }
+    }
+    return response;
+  });
+  event.respondWith(new Promise((resolve, reject) => {
+    let done = false;
+    const answer = (response) => {
+      if (done || !response) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(response);
+    };
+    const timer = setTimeout(() => {
+      slowUntil = Date.now() + SLOW_MS;
+      cached().then(answer);
+    }, Date.now() < slowUntil ? 0 : NETWORK_WAIT_MS);
+    network.then(answer, (err) => cached().then((hit) => (hit ? answer(hit) : !done && reject(err))));
+  }));
 });

@@ -76,6 +76,11 @@ export function createCaptions(ed) {
     const device = Math.hypot(t.a, t.b) || 1; // device px per stage px
     ctx.save();
     ctx.globalAlpha = alpha;
+    // The saved photo ends at its edges, so the words do too (the selection box
+    // and its handle, drawn below, stay grabbable outside them).
+    ctx.beginPath();
+    ctx.rect(v.x, v.y, W * v.scale, H * v.scale);
+    ctx.clip();
     for (const cap of doc.text) {
       const lay = layoutOf(cap, W, H);
       const m = captionMatrix(cap, lay, W, H);
@@ -219,6 +224,7 @@ function paintCaption(ctx, cap, lay, scale) {
   }
   if (lay.empty) return;
   ctx.font = lay.font;
+  ctx.direction = textDirection(cap.text); // Hebrew or Arabic words end on the left
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = p.ink;
@@ -232,6 +238,14 @@ function paintCaption(ctx, cap, lay, scale) {
     if (lay.lines[i]) ctx.fillText(lay.lines[i], lay.boxW / 2, lay.pad + (i + 0.5) * lay.lineHeight);
   }
   if (p.shadow) ctx.shadowColor = 'transparent';
+}
+
+// The base direction a paragraph takes from its first strong letter, as the
+// edit field's dir="auto" does.
+const RTL = /[\p{Script=Hebrew}\p{Script=Arabic}\p{Script=Syriac}\p{Script=Thaana}\p{Script=Nko}\p{Script=Adlam}]/u;
+function textDirection(text) {
+  const m = typeof text === 'string' ? text.match(/\p{L}/u) : null;
+  return m && RTL.test(m[0]) ? 'rtl' : 'ltr';
 }
 
 function roundRect(ctx, x, y, w, h, r) {

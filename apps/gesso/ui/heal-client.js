@@ -3,7 +3,7 @@
 //   const heal = createHealClient();
 //   heal.find(img, mask, { maxResults })          -> Promise<[{ dx, dy, score }]>
 //   heal.correct(img, mask, dx, dy, { iters, featherPx }) -> Promise<{ width, height, data }>
-//   heal.inpaint(img, mask, { scale, seed })      -> Promise<{ width, height, data }>
+//   heal.inpaint(img, mask, { scale, seed })      -> Promise<{ width, height, data, from }>
 //   heal.warm()      start the worker early (Remove opening), so the first tap is quick
 //   heal.cancel()    drop every job in flight (they reject with code 'cancelled'); the
 //                    busy worker is stopped and a fresh one starts with the next job
@@ -125,7 +125,7 @@ export function createHealClient({ timeoutMs = 20000, url = new URL('../workers/
       const msg = { type: 'inpaint', img, mask, scale };
       if (seed != null) msg.seed = seed;
       const res = await run(msg, [img.data.buffer, mask.buffer]);
-      return asImage(res.tile);
+      return { ...asImage(res.tile), from: res.tile.from ?? null }; // from: what each hole pixel copied
     },
     // Start the worker and load lib/heal.js ahead of the first tap.
     warm() {

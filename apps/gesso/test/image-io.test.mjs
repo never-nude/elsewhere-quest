@@ -141,8 +141,11 @@ test('sniffImageType identifies formats by magic bytes', () => {
   assert.equal(sniffImageType(bytes([0, 0, 0, 0x18], 'ftypavif')), 'avif');
   assert.equal(sniffImageType(bytes('RIFF', [1, 2, 3, 4], 'WEBP')), 'webp');
   assert.equal(sniffImageType(bytes('GIF89a')), 'gif');
-  assert.equal(sniffImageType(bytes([0x49, 0x49, 0x2a, 0x00, 8, 0, 0, 0])), 'raw');
-  assert.equal(sniffImageType(bytes([0x4d, 0x4d, 0x00, 0x2a])), 'raw');
+  assert.equal(sniffImageType(bytes([0x49, 0x49, 0x2a, 0x00, 8, 0, 0, 0])), 'tiff');
+  assert.equal(sniffImageType(bytes([0x4d, 0x4d, 0x00, 0x2a])), 'tiff');
+  assert.equal(sniffImageType(bytes('BM', [0x36, 0, 0, 0])), 'bmp');
+  assert.equal(sniffImageType(bytes([0xff, 0x0a, 0xfa, 0x7f])), 'jxl');
+  assert.equal(sniffImageType(bytes([0, 0, 0, 0x0c], 'JXL ', [0x0d, 0x0a, 0x87, 0x0a])), 'jxl');
   assert.equal(sniffImageType(bytes('hello world!')), 'unknown');
   assert.equal(sniffImageType(new Uint8Array(0)), 'unknown');
 });
@@ -150,7 +153,7 @@ test('sniffImageType identifies formats by magic bytes', () => {
 test('importProblem explains RAW and unknown files, and passes good ones', () => {
   assert.match(importProblem('raw'), /RAW/);
   assert.match(importProblem('unknown'), /JPEG, HEIC or PNG/);
-  for (const ok of ['jpeg', 'png', 'heic', 'avif', 'webp', 'gif']) assert.equal(importProblem(ok), null);
+  for (const ok of ['jpeg', 'png', 'heic', 'avif', 'webp', 'gif', 'tiff', 'bmp', 'jxl']) assert.equal(importProblem(ok), null);
 });
 
 // ------------------------------------------------------------------ fixtures

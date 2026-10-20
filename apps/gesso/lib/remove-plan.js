@@ -469,7 +469,8 @@ export function addCorrection(rgba, box, mask, c, cw, ch, f, ox, oy) {
 // along in the fill's pool entry (pools.patches[id].how), so it survives autosave
 // and a relaunch. Numbers are kept exactly (doubles survive JSON and structured
 // clone), so a retry after a relaunch covers exactly the pixels the fill did.
-//   tap: { kind: 'tap', cx, cy, rr, f, offsets: [{ dx, dy }], index, D: { dx, dy }, moved }
+//   tap: { kind: 'tap', cx, cy, rr, f, offsets: [{ dx, dy }], index, D: { dx, dy }, moved, pts? }
+//        (pts: a rub healed from one place, Try another's alternative to PatchMatch)
 //   rub: { kind: 'rub', pts: [x, y, ...], rr, seed, attempt }
 export function recipeRecord(rec) {
   if (rec?.kind === 'tap') {
@@ -478,6 +479,7 @@ export function recipeRecord(rec) {
       kind: 'tap', cx: rec.cx, cy: rec.cy, rr: rec.rr, f: rec.f,
       offsets: rec.offsets.map(({ dx, dy }) => ({ dx, dy })), index: rec.index,
       D: { dx: rec.D.dx, dy: rec.D.dy }, moved: !!rec.moved,
+      ...(rec.pts ? { pts: Array.from(rec.pts) } : {}),
     };
   }
   if (rec?.kind === 'rub') {
@@ -497,7 +499,12 @@ export function reviveRecipe(how) {
     if (!fin(cx, cy, rr) || !(rr > 0) || !Number.isInteger(f) || f < 1) return null;
     if (!Array.isArray(offsets) || !offsets.length || offsets.length > 16 || !offsets.every(isOffset)) return null;
     if (!Number.isInteger(index) || index < 0 || index >= offsets.length || !isOffset(D)) return null;
-    return { kind: 'tap', cx, cy, rr, f, offsets: offsets.map(({ dx, dy }) => ({ dx, dy })), index, D: { dx: D.dx, dy: D.dy }, moved: how.moved === true };
+    const pts = how.pts;
+    if (pts !== undefined && (!Array.isArray(pts) || pts.length < 2 || pts.length % 2 || !pts.every((v) => Number.isFinite(v)))) return null;
+    return {
+      kind: 'tap', cx, cy, rr, f, offsets: offsets.map(({ dx, dy }) => ({ dx, dy })), index, D: { dx: D.dx, dy: D.dy }, moved: how.moved === true,
+      ...(pts ? { pts: pts.slice() } : {}),
+    };
   }
   if (how.kind === 'rub') {
     const { pts, rr, seed, attempt } = how;
@@ -556,6 +563,33 @@ export function upsampleFill(small, win, box, mask) {
     }
   }
   return out;
+}
+
+// PatchMatch on `small` (a shrunk copy of `win`) says which small pixel each hole
+// pixel copied (`small.from`, -1 for none). Bring the fill up by those matches, not
+// only by its colours: each hole pixel of `box` takes the exact pixel of `full`
+// (win's pixels at full size) at the same offset, scaled up, so the photo's fine
+// texture survives. A match that lands outside win or in its hole (`winMask`)
+// keeps the colour upsampleFill gave it.
+export function copyByMatches(rgba, small, full, win, box, boxMask, winMask) {
+  const sw = small.width, sh = small.height, from = small.from;
+  const kx = sw / win.w, ky = sh / win.h;
+  for (let y = 0; y < box.h; y++) {
+    const Y = box.y + y - win.y;
+    const v = Math.min(sh - 1, Math.floor((Y + 0.5) * ky));
+    for (let x = 0; x < box.w; x++) {
+      const i = y * box.w + x;
+      if (!boxMask[i]) continue;
+      const X = box.x + x - win.x;
+      const u = Math.min(sw - 1, Math.floor((X + 0.5) * kx));
+      const q = from[v * sw + u];
+      if (q < 0) continue;
+      const sx = X + Math.round(((q % sw) - u) / kx), sy = Y + Math.round((Math.floor(q / sw) - v) / ky);
+      if (sx < 0 || sy < 0 || sx >= win.w || sy >= win.h || winMask[sy * win.w + sx]) continue;
+      const s = (sy * win.w + sx) * 4;
+      rgba[i * 4] = full[s]; rgba[i * 4 + 1] = full[s + 1]; rgba[i * 4 + 2] = full[s + 2];
+    }
+  }
 }
 
 // The same fill seen shrunk by f over the rect T: what shrink(upsampleFill(...)

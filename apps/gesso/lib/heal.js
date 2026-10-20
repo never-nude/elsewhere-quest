@@ -664,7 +664,7 @@ export function handleHealMessage(msg) {
         if (!(scale > 0) || !Number.isFinite(scale)) throw new RangeError(`bad scale ${scale}`);
         const opts = msg.seed != null ? { seed: msg.seed } : {};
         const tile = inpaintScaled(img, mask, scale, opts);
-        return { message: { type: 'inpainted', job, tile }, transfer: [tile.data.buffer] };
+        return { message: { type: 'inpainted', job, tile }, transfer: tile.from ? [tile.data.buffer, tile.from.buffer] : [tile.data.buffer] };
       }
       default:
         throw new TypeError(`unknown heal message type ${msg.type}`);

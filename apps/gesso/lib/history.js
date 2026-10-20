@@ -7,7 +7,9 @@
 //               undo and the rewind tape can always get back to it.
 //   index       the entry on screen.
 //   mark        where the open tool's session started (setMark), or null. Cancel
-//               (revertToMark) goes back there. Invariant: mark <= index.
+//               (revertToMark) goes back there. Undo, Redo and the tape never move
+//               it, so it can sit above the index; a new step made below it cuts it
+//               away and takes its place. Invariant: mark < entries.length.
 //   cap         maximum number of entries.
 //
 // Snapshots are cheap because DocStates share structure and refer to stroke and
@@ -57,7 +59,10 @@ export function push(H, state, label, tool = null) {
   if (state === now || deepEqual(state, now)) return H;
   const entries = H.entries.slice(0, H.index + 1);
   entries.push(entry(state, cleanLabel(label), cleanTool(tool)));
-  return withCap(entries, entries.length - 1, H.mark, H.cap);
+  // A step made after undoing below the mark discards the state the tool opened
+  // with: Cancel then goes back to where this step started.
+  const mark = H.mark !== null && H.mark > H.index ? H.index : H.mark;
+  return withCap(entries, entries.length - 1, mark, H.cap);
 }
 
 // Over the cap, drop the oldest step — but never the Original (the tape must reach
@@ -77,11 +82,10 @@ function withCap(entries, index, mark, cap) {
   return make(entries, index, mark, cap);
 }
 
-// Moving below the mark means the tool session now began earlier: the mark
-// follows, so Cancel never jumps forward past what the user has undone.
+// Undo, Redo and the tape leave the mark where the tool opened, so Cancel always
+// goes back to that state, whatever was undone or redone in between.
 function moveTo(H, i) {
-  const mark = H.mark !== null && H.mark > i ? i : H.mark;
-  return make(H.entries, i, mark, H.cap);
+  return make(H.entries, i, H.mark, H.cap);
 }
 
 export function undo(H) {
@@ -146,6 +150,23 @@ export function revertToMark(H) {
   return make(H.entries.slice(0, m + 1), m, m, H.cap);
 }
 
+// A step that belongs before the open tool's session (a Remove fill asked for
+// earlier, landing while another tool is open). It goes in just above the mark,
+// the session's steps are replayed on top of it through `fn`, and the mark moves
+// up onto it, so Cancel keeps it and Undo still walks through it. Null when no
+// session is open, or the user has undone below where it started.
+export function insertBelowMark(H, fn, label, tool = null) {
+  const m = H.mark;
+  if (m === null || H.index < m) return null;
+  const base = H.entries[m].state;
+  const next = fn(base);
+  if (next === base) return null;
+  const entries = H.entries.slice(0, m + 1);
+  entries.push(entry(next, cleanLabel(label), cleanTool(tool)));
+  for (const e of H.entries.slice(m + 1)) entries.push(entry(fn(e.state), e.label, e.tool));
+  return withCap(entries, H.index + 1, m + 1, H.cap);
+}
+
 // ------------------------------------------------------------------ persistence
 
 export function serialize(H) {
@@ -190,7 +211,7 @@ export function revive(json, { reviveState = reviveDoc } = {}) {
 
   const last = entries.length - 1;
   const index = Number.isInteger(raw.index) ? Math.max(0, Math.min(last, raw.index)) : last;
-  const mark = Number.isInteger(raw.mark) && raw.mark >= 0 && raw.mark <= index ? raw.mark : null;
+  const mark = Number.isInteger(raw.mark) && raw.mark >= 0 && raw.mark <= last ? raw.mark : null;
   return withCap(entries, index, mark, cap);
 }
 
