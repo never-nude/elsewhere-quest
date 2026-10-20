@@ -689,7 +689,7 @@ async function scenarioLayout(vp, { gestures }) {
     const selectors = gestures ? [...new Set(gestures.flatMap((g) => (g.sel ? g.sel.split(',').map((x) => x.trim()) : [])))] : [];
     const exists = {};
     let home = null;
-    for (const st of STATES) {
+    for (const st of t2 || t3 || t4 || t13 || gestures ? STATES : []) {
       try {
         if (st.tool) await openTool(s, st.tool);
         for (const sel of st.then ?? []) await tap(s, sel);
