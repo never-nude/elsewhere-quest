@@ -62,14 +62,13 @@ export function changedParams(adjust) {
 // is never a black box: it is the same dials, pushed.
 
 export const LOOKS = [
-  { id: 'none', label: 'Original' },
-  { id: 'vivid', label: 'Vivid', params: { contrast: 18, vibrance: 35, saturation: 8, shadows: 10 } },
-  { id: 'warm', label: 'Golden', params: { warmth: 32, vibrance: 12, highlights: -10 }, split: { shadow: [0.05, 0.0, -0.04], highlight: [0.05, 0.03, -0.03] } },
-  { id: 'cool', label: 'Cool', params: { warmth: -28, tint: -4, contrast: 6 }, split: { shadow: [-0.02, 0.0, 0.05], highlight: [0.0, 0.01, 0.03] } },
-  { id: 'film', label: 'Film', params: { contrast: -12, saturation: -12, warmth: 8, grain: 22 }, fade: 0.08, split: { shadow: [0.0, 0.02, 0.04], highlight: [0.04, 0.02, -0.02] } },
-  { id: 'matte', label: 'Matte', params: { contrast: -22, saturation: -18, shadows: 12 }, fade: 0.14 },
-  { id: 'mono', label: 'Mono', params: { contrast: 14 }, mono: true },
-  { id: 'noir', label: 'Noir', params: { contrast: 48, blacks: -18, vignette: 30, grain: 14 }, mono: true },
+  { id: 'none', label: 'None' },
+  { id: 'vivid', label: 'Vivid', params: { saturation: 15, contrast: 12, vibrance: 15 } },
+  { id: 'warm', label: 'Warm', params: { warmth: 18, saturation: 5 }, split: { shadow: [0.02, 0.0, -0.02], highlight: [0.08, 0.04, -0.02] } },
+  { id: 'cool', label: 'Cool', params: { warmth: -15, contrast: 4 }, split: { shadow: [-0.03, 0.02, 0.05], highlight: [-0.01, 0.0, 0.04] } },
+  { id: 'film', label: 'Film', params: { saturation: -12, contrast: -8, highlights: -12, vignette: 25, grain: 18 }, fade: 0.05, split: { shadow: [-0.02, 0.03, 0.06], highlight: [0.07, 0.035, -0.03] } },
+  // Red-weighted mix, like a red filter on black-and-white film: kind to skin, dramatic skies.
+  { id: 'mono', label: 'Mono', params: { contrast: 18, vignette: 15 }, mono: true, monoMix: [0.4, 0.45, 0.15] },
 ];
 
 export function lookById(id) {
@@ -87,6 +86,7 @@ export function resolve(adjust, look = { id: 'none', amount: 100 }) {
     params: p,
     fade: (L.fade ?? 0) * t,
     mono: L.mono ? t : 0,
+    monoMix: L.monoMix ?? [0.2126, 0.7152, 0.0722],
     splitShadow: split.shadow.map((v) => v * t),
     splitHighlight: split.highlight.map((v) => v * t),
   };
@@ -123,6 +123,7 @@ export function uniforms(state) {
     grain: p.grain / 100,
     fade: state.fade,
     mono: state.mono,
+    monoMix: state.monoMix ?? [0.2126, 0.7152, 0.0722],
     splitShadow: state.splitShadow,
     splitHighlight: state.splitHighlight,
   };
@@ -156,12 +157,14 @@ function contrastCurve(x, c) {
 
 // One pixel through the pipeline. rgb in 0..1 sRGB; blur is the blurred
 // luminance (0..1, linear) around this pixel; (u, v) its position in the output
-// (0..1) for the vignette; noise a value in [-0.5, 0.5) for grain.
-export function developPixel(r, g, b, U, blur = null, u = 0.5, v = 0.5, noise = 0) {
-  // to linear, white balance, exposure
-  let lr = srgbToLinear(r) * U.wb[0] * U.exposure;
-  let lg = srgbToLinear(g) * U.wb[1] * U.exposure;
-  let lb = srgbToLinear(b) * U.wb[2] * U.exposure;
+// (0..1) for the vignette; noise a value in [-0.5, 0.5) for grain; paintEV the
+// painted-light exposure (stops, ±1.5) at this pixel.
+export function developPixel(r, g, b, U, blur = null, u = 0.5, v = 0.5, noise = 0, paintEV = 0) {
+  // to linear, white balance, exposure, painted light
+  const k = U.exposure * (paintEV ? Math.pow(2, paintEV) : 1);
+  let lr = srgbToLinear(r) * U.wb[0] * k;
+  let lg = srgbToLinear(g) * U.wb[1] * k;
+  let lb = srgbToLinear(b) * U.wb[2] * k;
 
   // local shadows / highlights: an exposure-style gain chosen from the
   // neighbourhood's brightness, so detail within the shadows survives.
@@ -205,7 +208,7 @@ export function developPixel(r, g, b, U, blur = null, u = 0.5, v = 0.5, noise = 
   cg += U.splitShadow[1] * sw + U.splitHighlight[1] * hw;
   cb += U.splitShadow[2] * sw + U.splitHighlight[2] * hw;
   if (U.mono > 0) {
-    const m = luma(cr, cg, cb);
+    const m = cr * U.monoMix[0] + cg * U.monoMix[1] + cb * U.monoMix[2];
     cr = mix(cr, m, U.mono); cg = mix(cg, m, U.mono); cb = mix(cb, m, U.mono);
   }
   if (U.fade > 0) {
@@ -232,8 +235,9 @@ export function developPixel(r, g, b, U, blur = null, u = 0.5, v = 0.5, noise = 
 }
 
 // Develop a whole RGBA buffer on the CPU. Used by tests, Auto previews and the
-// WebGL-less fallback. `blurLum` is optional (Float32Array w*h, linear).
-export function developImage(image, state, blurLum = null) {
+// WebGL-less fallback. `blurLum` (linear luminance) and `paintEV` (stops) are
+// optional Float32Arrays of w*h. Output is dithered like the shader's.
+export function developImage(image, state, blurLum = null, paintEV = null) {
   const U = uniforms(state);
   const { width, height, data } = image;
   const out = new Uint8ClampedArray(data.length);
@@ -242,11 +246,21 @@ export function developImage(image, state, blurLum = null) {
       const i = (y * width + x) * 4;
       const n = U.grain > 0 ? hashNoise(x, y) : 0;
       const [r, g, b] = developPixel(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255, U,
-        blurLum ? blurLum[y * width + x] : null, (x + 0.5) / width, (y + 0.5) / height, n);
-      out[i] = Math.round(r * 255); out[i + 1] = Math.round(g * 255); out[i + 2] = Math.round(b * 255); out[i + 3] = data[i + 3];
+        blurLum ? blurLum[y * width + x] : null, (x + 0.5) / width, (y + 0.5) / height, n,
+        paintEV ? paintEV[y * width + x] : 0);
+      const d = ditherNoise(x, y) / 255;
+      out[i] = Math.round((r + d) * 255); out[i + 1] = Math.round((g + d) * 255); out[i + 2] = Math.round((b + d) * 255);
+      out[i + 3] = data[i + 3];
     }
   }
   return { width, height, data: out };
+}
+
+// ±0.5 LSB of noise before 8-bit quantisation, so smooth skies don't band. A
+// different hash from grain's so the two never correlate.
+export function ditherNoise(x, y) {
+  const s = Math.sin((x + 17.31) * 39.346 + (y + 41.17) * 11.135) * 15718.6243;
+  return s - Math.floor(s) - 0.5;
 }
 
 // Same hash as the shader's: fract(sin(dot(p, k)) * 43758.5453) - 0.5.
@@ -267,13 +281,13 @@ out vec4 outColor;
 uniform sampler2D uImage;
 uniform sampler2D uBlur;
 uniform bool uHasBlur;
+uniform sampler2D uPaint;  // RG8 in source UV: r = brighten, g = darken (1.0 = 1.5 EV)
+uniform bool uHasPaint;
 uniform vec3 uWb;
 uniform float uExposure, uShadows, uHighlights, uGamma, uContrast, uBlacks, uWhites;
 uniform float uSaturation, uVibrance, uVignette, uGrain, uFade, uMono, uRolloff;
-uniform vec3 uSplitShadow, uSplitHighlight;
-uniform vec2 uGrainScale;  // output px per unit vOut, so grain is per output pixel
-uniform float uMix;        // 0 = show original (Before), 1 = full edit
-uniform float uWipe;       // <0 off; else x position (0..1) of a before/after wipe
+uniform vec3 uSplitShadow, uSplitHighlight, uMonoMix;
+uniform vec2 uGrainScale;  // output size in px, so grain and dither are per output pixel
 
 float toLin(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
 float toSrgb(float c) { return c <= 0.0 ? 0.0 : (c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055); }
@@ -290,9 +304,11 @@ float tone(float x) {
   return clamp(y, 0.0, 1.0);
 }
 float hashNoise(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453) - 0.5; }
+float ditherNoise(vec2 p) { return fract(sin((p.x + 17.31) * 39.346 + (p.y + 41.17) * 11.135) * 15718.6243) - 0.5; }
 
 vec3 develop(vec3 c) {
   vec3 l = vec3(toLin(c.r), toLin(c.g), toLin(c.b)) * uWb * uExposure;
+  if (uHasPaint) { vec2 m = texture(uPaint, vUv).rg; l *= exp2(1.5 * (m.r - m.g)); }
   if (uShadows != 0.0 || uHighlights != 0.0) {
     float L = uHasBlur ? texture(uBlur, vUv).r : luma(l);
     float ws = pow(1.0 - smoothstep(0.0, 0.45, L), 2.0);
@@ -309,7 +325,7 @@ vec3 develop(vec3 c) {
   Y = luma(clamp(s, 0.0, 1.0));
   float sw = 1.0 - smoothstep(0.0, 0.55, Y), hw = smoothstep(0.45, 1.0, Y);
   s += uSplitShadow * sw + uSplitHighlight * hw;
-  if (uMono > 0.0) s = mix(s, vec3(luma(s)), uMono);
+  if (uMono > 0.0) s = mix(s, vec3(dot(s, uMonoMix)), uMono);
   if (uFade > 0.0) s = vec3(uFade) + s * (1.0 - uFade * 1.2);
   if (uVignette != 0.0) {
     float d = length((vOut - 0.5) * 2.0) * 0.70710678;
@@ -324,10 +340,8 @@ vec3 develop(vec3 c) {
 }
 
 void main() {
-  vec4 src = texture(uImage, vUv);
-  vec3 edited = develop(src.rgb);
-  float k = uMix;
-  if (uWipe >= 0.0) k = vOut.x < uWipe ? 0.0 : 1.0;
-  outColor = vec4(mix(src.rgb, edited, k), 1.0);
+  vec3 edited = develop(texture(uImage, vUv).rgb);
+  edited += ditherNoise(floor(vOut * uGrainScale)) / 255.0;
+  outColor = vec4(clamp(edited, 0.0, 1.0), 1.0);
 }
 `;

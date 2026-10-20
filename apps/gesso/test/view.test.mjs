@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MAX_ZOOM, fitView, viewMatrix, stageToContent, zoomAt, panBy, clampView, isZoomed,
-  outputQuad, frameQuad, frameBounds,
+  outputQuad, frameQuad, frameBounds, navigatorFrame,
 } from '../lib/view.js';
 import { initialCrop, setAngle, setAspect, rotateQuarter, outputSize } from '../lib/geometry.js';
 
@@ -83,4 +83,14 @@ test('frameBounds grows with the straighten angle and swaps on a quarter turn', 
   assert.ok(tilted.width > 400 && tilted.height > 300);
   const turned = frameBounds(rotateQuarter(c0, 400, 300), 400, 300);
   assert.ok(near(turned.width, 300) && near(turned.height, 400));
+});
+
+test('navigatorFrame shows the visible window inside the thumbnail', () => {
+  const v = fitView(4000, 3000, 400, 600);
+  const full = navigatorFrame(v, 400, 600, 4000, 3000, 88, 66);
+  assert.ok(near(full.width, 88, 1e-6) && near(full.height, 66, 1e-6), 'fitted: the whole thumbnail');
+  const z = clampView(zoomAt(v, 4, 200, 300), 4000, 3000, 400, 600);
+  const part = navigatorFrame(z, 400, 600, 4000, 3000, 88, 66);
+  assert.ok(part.width < 88 && part.height <= 66);
+  assert.ok(part.x >= 0 && part.x + part.width <= 88 + 1e-9);
 });

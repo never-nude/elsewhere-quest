@@ -130,17 +130,32 @@ export function setAngle(crop, width, height, angle) {
   return { ...crop, angle: a, rect };
 }
 
-// Quarter turn clockwise, as seen on screen. The crop rect and straighten angle
-// turn with the image (2D rotations commute, so the angle is unchanged).
-export function rotateQuarter(crop, width, height) {
+// Quarter turn as seen on screen — clockwise, or counter-clockwise with { ccw }
+// (the Rotate button, like iOS Photos). The crop rect and straighten angle turn
+// with the image (2D rotations commute, so the angle is unchanged).
+export function rotateQuarter(crop, width, height, { ccw = false } = {}) {
   const r = crop.rect;
-  // Rotating the frame 90° clockwise (y down) maps (x, y) -> (-y, x); the rect's
-  // corners (x, y)..(x+w, y+h) become (-(y+h), x)..(-y, x+w).
-  const rect = { x: -(r.y + r.height), y: r.x, width: r.height, height: r.width };
+  // 90° clockwise (y down) maps (x, y) -> (-y, x); counter-clockwise (x, y) -> (y, -x).
+  const rect = ccw
+    ? { x: r.y, y: -(r.x + r.width), width: r.height, height: r.width }
+    : { x: -(r.y + r.height), y: r.x, width: r.height, height: r.width };
   // A mirror reverses the sense of rotation in source space: F·R(90) = R(-90)·F.
-  const quarter = crop.flip ? (crop.quarter + 3) % 4 : (crop.quarter + 1) % 4;
+  const step = (ccw ? 3 : 1) * (crop.flip ? 3 : 1);
+  const quarter = (crop.quarter + step) % 4;
   const next = { ...crop, quarter, aspect: flipAspectKey(crop.aspect), rect };
   return { ...next, ...fixFit(next, width, height) };
+}
+
+// Tall/Wide: turn a fixed-ratio frame on its side (4:5 <-> 5:4, 16:9 <-> 9:16),
+// refitting the largest frame of the new shape. Free and square are unchanged.
+export function toggleTall(crop, width, height) {
+  const key = flipAspectKey(crop.aspect);
+  if (key === crop.aspect) return crop;
+  return setAspect(crop, width, height, key);
+}
+
+export function isTall(crop) {
+  return crop.rect.height > crop.rect.width;
 }
 
 function fixFit(crop, width, height) {

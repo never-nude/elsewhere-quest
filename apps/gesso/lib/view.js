@@ -91,3 +91,14 @@ export function frameBounds(crop, srcW, srcH) {
   const w = o.width * c + o.height * s, h = o.width * s + o.height * c;
   return { x: -w / 2, y: -h / 2, width: w, height: h };
 }
+
+// Where the visible part of the content sits inside a navigator thumbnail of
+// navW x navH (the content fitted inside it), for the zoom navigator.
+export function navigatorFrame(v, stageW, stageH, contentW, contentH, navW, navH) {
+  const k = Math.min(navW / contentW, navH / contentH);
+  const ox = (navW - contentW * k) / 2, oy = (navH - contentH * k) / 2;
+  const [x0, y0] = stageToContent(v, 0, 0);
+  const [x1, y1] = stageToContent(v, stageW, stageH);
+  const cx0 = Math.max(0, x0), cy0 = Math.max(0, y0), cx1 = Math.min(contentW, x1), cy1 = Math.min(contentH, y1);
+  return { x: ox + cx0 * k, y: oy + cy0 * k, width: Math.max(0, cx1 - cx0) * k, height: Math.max(0, cy1 - cy0) * k, scale: k, offsetX: ox, offsetY: oy };
+}

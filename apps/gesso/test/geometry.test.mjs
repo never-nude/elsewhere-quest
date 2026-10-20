@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   orientedSize, rectFits, maxCenteredRect, aspectValue, initialCrop, isIdentityCrop,
-  setAspect, setAngle, rotateQuarter, flipHorizontal, moveRect, dragHandle, MIN_CROP,
+  setAspect, setAngle, rotateQuarter, toggleTall, isTall, flipHorizontal, moveRect, dragHandle, MIN_CROP,
   multiply, invert, apply, sourceToOriented, outputToSource, sourceToOutput, outputSize,
 } from '../lib/geometry.js';
 
@@ -180,4 +180,38 @@ test('outputToSource lands every output corner inside the source image', () => {
   // and sourceToOutput is its inverse
   const back = apply(sourceToOutput(c, W, H), ...apply(m, 123, 456));
   assertPt(back, [123, 456], 1e-6);
+});
+
+test('counter-clockwise rotation undoes clockwise, flipped or not', () => {
+  for (const flip of [false, true]) {
+    let c = setAspect({ ...initialCrop(W, H), flip }, W, H, '4:5');
+    c = setAngle(c, W, H, 6);
+    const start = structuredClone(c);
+    const back = rotateQuarter(rotateQuarter(c, W, H), W, H, { ccw: true });
+    assert.equal(back.quarter, start.quarter);
+    assert.equal(back.aspect, start.aspect);
+    for (const k of ['x', 'y', 'width', 'height']) assert.ok(near(back.rect[k], start.rect[k], 1e-6));
+  }
+});
+
+test('rotate counter-clockwise moves the top-right of the view to the top-left', () => {
+  const base = initialCrop(W, H);
+  const size0 = outputSize(base);
+  const topRightSrc = apply(outputToSource(base, W, H), size0.width - 1, 1);
+  const turned = rotateQuarter(base, W, H, { ccw: true });
+  const out = apply(sourceToOutput(turned, W, H), ...topRightSrc);
+  assert.ok(near(out[0], 1, 1e-6) && near(out[1], 1, 1e-6), `got ${out}`);
+});
+
+test('toggleTall turns 4:5 into 5:4 and back, and leaves free/square alone', () => {
+  const tall = setAspect(initialCrop(W, H), W, H, '4:5');
+  assert.ok(isTall(tall));
+  const wide = toggleTall(tall, W, H);
+  assert.equal(wide.aspect, '5:4');
+  assert.ok(!isTall(wide));
+  assert.ok(fitsCrop(wide));
+  assert.equal(toggleTall(wide, W, H).aspect, '4:5');
+  const sq = setAspect(initialCrop(W, H), W, H, 'square');
+  assert.equal(toggleTall(sq, W, H), sq);
+  assert.equal(toggleTall(initialCrop(W, H), W, H).aspect, 'free');
 });

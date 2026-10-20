@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   PARAMS, PARAM_KEYS, paramInfo, defaultAdjust, clampParam, reviveAdjust, changedParams,
   LOOKS, lookById, resolve, uniforms, developPixel, developImage, srgbToLinear, linearToSrgb,
-  luma, hashNoise, shoulder, DEVELOP_GLSL,
+  luma, hashNoise, ditherNoise, shoulder, DEVELOP_GLSL,
 } from '../lib/develop.js';
 
 const U = (params = {}, look) => uniforms(resolve({ ...defaultAdjust(), ...params }, look));
@@ -134,12 +134,12 @@ test('looks are the same dials pushed, scaled by amount', () => {
   assert.deepEqual(resolve(base, { id: 'none', amount: 100 }).params, base);
   assert.deepEqual(resolve(base, { id: 'vivid', amount: 0 }).params, base);
   const vivid = resolve(base, { id: 'vivid', amount: 50 });
-  assert.equal(vivid.params.contrast, 10 + 9);
-  assert.equal(vivid.params.vibrance, 18);
+  assert.equal(vivid.params.contrast, 10 + 6);
+  assert.equal(vivid.params.vibrance, 8);
   const mono = developPixel(0.8, 0.3, 0.2, uniforms(resolve(defaultAdjust(), { id: 'mono', amount: 100 })), null);
   assert.ok(close(mono[0], mono[1], 1e-9) && close(mono[1], mono[2], 1e-9));
   assert.equal(lookById('bogus').id, 'none');
-  assert.ok(LOOKS.length <= 8, 'looks must fit one row without scrolling');
+  assert.deepEqual(LOOKS.map((l) => l.id), ['none', 'vivid', 'warm', 'cool', 'film', 'mono']);
 });
 
 test('the shader declares a uniform for every value uniforms() produces', () => {
@@ -163,4 +163,31 @@ test('every slider extreme keeps a grey ramp in order (no tone inversions or ban
       }
     }
   }
+});
+
+test('painted light brightens or darkens by stops at that pixel', () => {
+  const u = U();
+  const flat = developPixel(0.4, 0.4, 0.4, u, null, 0.5, 0.5, 0, 0)[0];
+  const up = developPixel(0.4, 0.4, 0.4, u, null, 0.5, 0.5, 0, 1)[0];
+  const down = developPixel(0.4, 0.4, 0.4, u, null, 0.5, 0.5, 0, -1)[0];
+  assert.ok(close(flat, 0.4, 1e-9));
+  assert.ok(up > 0.5 && down < 0.32, `${up} ${down}`);
+});
+
+test('mono uses the look\'s red-weighted mix', () => {
+  const u = uniforms(resolve(defaultAdjust(), { id: 'mono', amount: 100 }));
+  assert.deepEqual(u.monoMix, [0.4, 0.45, 0.15]);
+  const red = developPixel(0.9, 0.1, 0.1, u)[0], blue = developPixel(0.1, 0.1, 0.9, u)[0];
+  assert.ok(red > blue, 'reds render lighter than blues, like a red filter');
+});
+
+test('dither is tiny, deterministic and centred', () => {
+  let sum = 0;
+  for (let i = 0; i < 5000; i++) {
+    const d = ditherNoise(i % 83, Math.floor(i / 83));
+    assert.ok(d >= -0.5 && d < 0.5);
+    sum += d;
+  }
+  assert.ok(Math.abs(sum / 5000) < 0.03);
+  assert.equal(ditherNoise(3, 4), ditherNoise(3, 4));
 });
