@@ -21,6 +21,7 @@ import { planReconcile, repaintPlan } from '../lib/patches.js';
 import { dabs } from '../lib/stroke.js';
 import { createPanel } from './panel.js';
 import { blurLuminance } from './renderer.js';
+import { TAPED } from './tape.js';
 
 const STAGE_MARGIN = 12;
 const BEFORE_TAP_MS = 1200;
@@ -31,6 +32,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
   const $ = (s) => root.querySelector(s);
   const app = $('#app');
   const stage = $('#stage');
+  const panelEl = $('#panel');
   const overlay = $('#overlay');
   const toastEl = $('#toast');
   const badge = $('#badge');
@@ -51,9 +53,11 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
   const tiles = new Map(); // patchId -> Uint8ClampedArray (RGBA of its bbox)
   let liveState = null;
   let applied = null; // the state the GPU currently reflects (remove/paint)
+  let maskStroke = null; // a stroke Light painted straight into the mask, ahead of its step
   let toolId = 'home';
   let tool = tools.home;
   let toolMark = null; // history mark when the tool opened
+  let lastClosed = null; // the tool Done or Cancel just closed
   let session = 0; // counts tool sessions, so late work knows whether it is still in its own
   let view = null;
   let viewKey = '';
@@ -78,6 +82,8 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     onSegment: (id) => { tool.onSegment?.(ed, id); refresh(); },
     onSwatch: (hex) => { tool.onSwatch?.(ed, hex); refresh(); },
     onMessage: (a) => { tool.onMessage?.(ed, a); refresh(); },
+    // Focus was on Done or Cancel, which Home hides: hand it to the tool's dock button.
+    onFocusLost: () => dockButtons.find((b) => b.dataset.tool === lastClosed)?.focus({ preventScroll: true }),
     onRuler: (phase, value) => {
       if (phase === 'start') ed.hint('ruler-drag', { tool: toolId });
       tool.onRuler?.(ed, phase, value);
@@ -198,11 +204,20 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       }
       if (plan.revert.length || plan.apply.length) scheduleBlur();
     }
-    if (!prev || prev.paint !== state.paint) replayPaint(state.paint);
+    if (!prev || prev.paint !== state.paint) {
+      // The stroke just painted live is in the mask already: when it is the one
+      // new stroke, there is nothing to replay.
+      const n = prev ? prev.paint.length : -1;
+      const ahead = maskStroke !== null && state.paint.length === n + 1 && state.paint[n] === maskStroke
+        && prev.paint.every((id, i) => state.paint[i] === id);
+      maskStroke = null;
+      if (!ahead) replayPaint(state.paint);
+    }
     applied = state;
   }
 
   function replayPaint(ids) {
+    maskStroke = null; // the mask now holds the steps' strokes only
     if (!ids.length) {
       if (renderer.hasPaint()) renderer.dropPaint();
       return;
@@ -257,6 +272,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       dropDeadFills(before);
     }
     tool.close?.(ed, { cancel });
+    lastClosed = toolId;
     hist = H.clearMark(hist);
     toolMark = null;
     toolId = 'home';
@@ -282,7 +298,8 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
 
   function refresh() {
     if (!current()) return;
-    panel.render(tool.panel(ed));
+    // Under the rewind tape the panel can't be seen: it is built once, on landing.
+    if (!panelEl.classList.contains(TAPED)) panel.render(tool.panel(ed));
     undoBtn.disabled = !H.canUndo(hist);
     redoBtn.disabled = !H.canRedo(hist);
   }
@@ -391,6 +408,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     }
     const quads = [quad];
     quads.grainScale = [o.width, o.height];
+    quads.outPerPx = 1 / (view.scale * dpr); // output px per device px, for the grain
     const { adjust, look } = developInput(st);
     const u = developUniforms(resolve(adjust, look));
     const at = compare.mode === 'off' && c.mode === 'output' ? tool.loupe?.(ed) : null;
@@ -734,7 +752,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       const w = Math.max(1, Math.round(r.w * s)), h = Math.max(1, Math.round(r.h * s));
       const quad = outputQuad(st.crop, st.source.w, st.source.h, o.width, o.height, [s, 0, 0, s, -r.x * s, -r.y * s]);
       const { adjust, look } = developInput(st);
-      const data = renderer.renderPixels({ width: w, height: h, quad, uniforms: developUniforms(resolve(adjust, look)), grainScale: [o.width, o.height], tone, before });
+      const data = renderer.renderPixels({ width: w, height: h, quad, uniforms: developUniforms(resolve(adjust, look)), grainScale: [o.width, o.height], outPerPx: 1 / s, tone, before });
       return { width: w, height: h, data };
     },
     resetView() { viewKey = ''; requestRender(); },
@@ -751,6 +769,8 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     // Persist a Remove fill tile before the history step that references it.
     saveTile(id, rgba, meta) { return store?.saveTile?.(id, rgba, meta); },
     rebuildBlur,
+    // Light › Paint is drawing stroke `id` into the mask as the finger moves.
+    paintingLive(id) { maskStroke = id; },
 
     // Start editing a freshly imported photo.
     begin({ id, info, now }) {

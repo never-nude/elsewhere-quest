@@ -161,7 +161,9 @@ export function attachTape(ed, undoButton) {
   function close() {
     scrub = null;
     if (tape) tape.hidden = true;
+    if (!panel.classList.contains(TAPED)) return;
     panel.classList.remove(TAPED);
+    ed.refresh?.(); // the editor left the panel alone while the tape covered it
   }
 
   function build() {

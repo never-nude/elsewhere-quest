@@ -151,7 +151,7 @@ button:disabled { cursor: default; }
     linear-gradient(160deg, #1f1c19, #171513);
   box-shadow: inset 0 0 0 1px rgba(243, 238, 230, 0.06);
 }
-.stage__empty p { position: relative; margin: 0; color: var(--ink-3); font-size: 15px; letter-spacing: 0.01em; }
+.stage__empty p { position: relative; margin: 0; color: var(--ink-2); font-size: 15px; letter-spacing: 0.01em; }
 .app:not([data-state="start"]) .stage__empty { display: none; }
 
 .badge, .wipe-badges span {
@@ -503,6 +503,8 @@ button:disabled { cursor: default; }
   touch-action: none;
   background: linear-gradient(90deg, var(--panel), transparent 18%, transparent 82%, var(--panel)), var(--raised);
 }
+/* Reset sits outside the slider but over it: a drag that starts on it slides the ruler. */
+.ruler-wrap { position: relative; touch-action: none; }
 .ruler canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 .ruler__needle {
   position: absolute;
@@ -569,7 +571,9 @@ button:disabled { cursor: default; }
 .actions {
   grid-area: actions;
   display: grid;
-  grid-template-columns: 1fr 1fr 1.1fr 1.2fr;
+  /* minmax(0, …): the row never grows past the screen (Safari page zoom narrows it) */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.1fr) minmax(0, 1.2fr);
+  container-type: inline-size;
   align-items: center;
   gap: 4px;
   padding: 0 8px;
@@ -588,6 +592,10 @@ button:disabled { cursor: default; }
   color: var(--ink);
 }
 .action .icon { width: 20px; height: 20px; }
+.action span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container (max-width: 330px) {
+  .action:not(.action--save) .icon { display: none; }
+}
 .action:disabled { color: var(--ink-3); }
 .action--save {
   justify-self: end;
@@ -624,8 +632,10 @@ button:disabled { cursor: default; }
 }
 .dock__tool[aria-pressed="true"] { color: var(--accent); background: var(--raised); }
 
-.app[data-state="start"] .actions,
-.app[data-state="start"] .dock { opacity: 0.35; }
+/* The dock's words stay readable (they open the picker and teach the map); only
+   its icons and the disabled actions are dimmed, over the panel's own colour. */
+.app[data-state="start"] .action,
+.app[data-state="start"] .dock .icon { opacity: 0.35; }
 
 /* ------------------------------------------------------------------ text edit bar */
 

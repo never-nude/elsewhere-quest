@@ -77,7 +77,7 @@
         <div id="dials" class="panel__dials" role="group" aria-label="Dials"></div>
         <div id="slot" class="panel__slot"></div>
         <div id="start" class="start">
-          <label id="choose" class="choose" for="file">
+          <label id="choose" class="choose" for="file" role="button" tabindex="0">
             <svg class="icon" aria-hidden="true"><use href="#i-photo"/></svg><span>Choose a photo</span>
           </label>
           <p id="install" class="start__install" hidden>To use offline: Share → Add to Home Screen <button id="install-hide" type="button" class="link">Hide</button></p>
@@ -109,6 +109,8 @@
     </nav>
 
     <input id="file" class="visually-hidden" type="file" accept="image/*" tabindex="-1" aria-hidden="true" />
+    <!-- Tips are spoken from here: the hint line itself changes with every tool. -->
+    <p id="announce" class="visually-hidden" role="status" aria-live="polite"></p>
   </div>
 
   <!-- Text edit bar: pinned above the keyboard while a caption is being typed. -->
@@ -138,7 +140,7 @@
   </div>
 
   <!-- When the share sheet isn't available: long-press to save -->
-  <div id="fallback" class="fallback" hidden>
+  <div id="fallback" class="fallback" role="dialog" aria-modal="true" aria-label="Save the picture" hidden>
     <img id="fallback-img" alt="Your edited photo" />
     <p>Touch and hold the picture, then tap <b>Save to Photos</b>.</p>
     <button id="fallback-close" type="button" class="sheet__secondary">Close</button>

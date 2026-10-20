@@ -3,7 +3,7 @@
 // means more, and it sticks briefly at the default with a needle flash instead of
 // a haptic tick. Double-tap or "Reset" returns to the default.
 
-import { stepValue, formatValue, valueText } from '../lib/ruler.js';
+import { stepValue, formatValue, valueText, nudge } from '../lib/ruler.js';
 
 const DOUBLE_TAP_MS = 320;
 const TAP_SLOP = 6;
@@ -22,8 +22,13 @@ export function createRulerView(container, { onStart, onChange, onEnd, onReset, 
   reset.className = 'ruler__reset';
   reset.textContent = 'Reset';
   reset.hidden = true;
-  el.append(canvas, needle, reset);
-  container.append(el);
+  el.append(canvas, needle);
+  // Reset sits over the ruler's right end but outside role=slider, whose children are
+  // presentational: inside it, VoiceOver could never reach the button.
+  const wrap = document.createElement('div');
+  wrap.className = 'ruler-wrap';
+  wrap.append(el, reset);
+  container.append(wrap);
 
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
@@ -57,7 +62,7 @@ export function createRulerView(container, { onStart, onChange, onEnd, onReset, 
     if (e.detail === 0) onReset?.();
   });
 
-  el.addEventListener('pointerdown', (e) => {
+  wrap.addEventListener('pointerdown', (e) => { // the ruler and its Reset
     if (!spec || drag) return;
     stopAnim();
     el.setPointerCapture(e.pointerId);
@@ -113,18 +118,20 @@ export function createRulerView(container, { onStart, onChange, onEnd, onReset, 
   el.addEventListener('pointerup', finish);
   el.addEventListener('pointercancel', finish);
 
-  // Keyboard and VoiceOver adjust (swipe up/down maps to arrow keys).
+  // Keyboard and VoiceOver adjust (swipe up/down maps to arrow keys): one notch of
+  // the spec's own nudge, at the spec's own precision.
   el.addEventListener('keydown', (e) => {
     if (!spec) return;
-    const step = (spec.max - spec.min) / 100;
-    let next = null;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next = value + step;
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next = value - step;
-    if (next === null) return;
+    let dir = 0;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') dir = 1;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') dir = -1;
+    if (!dir) return;
     e.preventDefault();
     stopAnim();
+    const next = nudge(spec, value, dir);
+    if (next === value) return; // already at the end
     onStart?.();
-    value = Math.max(spec.min, Math.min(spec.max, Math.round(next * 10) / 10));
+    value = next;
     draw();
     onChange?.(value);
     onEnd?.(value);
@@ -241,7 +248,7 @@ export function createRulerView(container, { onStart, onChange, onEnd, onReset, 
     destroy() {
       ro.disconnect();
       bubble.remove();
-      el.remove();
+      wrap.remove();
       cancelAnimationFrame(raf);
       cancelAnimationFrame(anim);
     },

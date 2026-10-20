@@ -17,6 +17,7 @@ export function createPanel(root, handlers) {
     panel: root.querySelector('#panel'),
     name: root.querySelector('#tool-name'),
     hint: root.querySelector('#hint'),
+    announce: root.querySelector('#announce'),
     cancel: root.querySelector('#cancel'),
     done: root.querySelector('#done'),
     quick: root.querySelector('#quick'),
@@ -55,10 +56,21 @@ export function createPanel(root, handlers) {
     return id ? `<svg class="icon" aria-hidden="true"><use href="#i-${id}"/></svg>` : '';
   }
 
+  // A row is rebuilt whenever its spec changes. The button that had keyboard (or
+  // VoiceOver) focus comes back focused, rather than dropping it on the page.
+  function focusedId(box, key) {
+    const a = document.activeElement;
+    return a && box.contains(a) ? a.dataset[key] ?? null : null;
+  }
+  function refocus(box, attr, id) {
+    if (id != null) box.querySelector(`[data-${attr}="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+  }
+
   function renderQuick(items) {
     const key = JSON.stringify(items.map(({ thumb, ...rest }) => rest));
     if (key === lastQuick) return;
     lastQuick = key;
+    const keep = focusedId(els.quick, 'quick');
     els.quick.textContent = '';
     for (const q of items) {
       const b = document.createElement('button');
@@ -81,12 +93,14 @@ export function createPanel(root, handlers) {
       }
       els.quick.append(b);
     }
+    refocus(els.quick, 'quick', keep);
   }
 
   function renderDials(items) {
     const key = JSON.stringify(items);
     if (key === lastDials) return;
     lastDials = key;
+    const keep = focusedId(els.dials, 'dial');
     els.dials.textContent = '';
     for (const d of items) {
       const b = document.createElement('button');
@@ -101,9 +115,13 @@ export function createPanel(root, handlers) {
       const v = document.createElement('span');
       v.className = 'dial__value';
       v.textContent = d.value ?? '';
+      // A value that is only a symbol (+, ×, ◎, –) is decoration: keep it out of the
+      // button's name. Words and numbers ('Tall', '+18', '90°') stay.
+      if (!/[\p{L}\p{N}]/u.test(v.textContent)) v.setAttribute('aria-hidden', 'true');
       b.append(n, v);
       els.dials.append(b);
     }
+    refocus(els.dials, 'dial', keep);
   }
 
   function renderSlot(slot) {
@@ -188,11 +206,15 @@ export function createPanel(root, handlers) {
       els.name.textContent = spec.title ?? '';
       baseHint = spec.hint ?? '';
       if (!tipShowing) els.hint.textContent = baseHint;
+      // Done or Cancel used from the keyboard hides itself on the way back to Home.
+      const a = document.activeElement;
+      const lost = (a === els.cancel && !spec.cancel) || (a === els.done && !spec.done);
       els.cancel.hidden = !spec.cancel;
       els.done.hidden = !spec.done;
       renderQuick(spec.quick ?? []);
       renderDials(spec.dials ?? []);
       renderSlot(spec.slot ?? null);
+      if (lost) handlers.onFocusLost?.();
     },
     // A one-time tip takes the hint line for a few seconds, then hands it back.
     showTip(text, ms = 4000) {
@@ -201,6 +223,11 @@ export function createPanel(root, handlers) {
       els.hint.textContent = text;
       els.hint.classList.add('is-tip');
       hintTimer = setTimeout(endTip, ms);
+      // Cleared first, so the same tip twice in a row is read twice.
+      if (els.announce) {
+        els.announce.textContent = '';
+        requestAnimationFrame(() => { els.announce.textContent = text; });
+      }
     },
     get tipShowing() { return tipShowing; },
     fade(on) { els.panel.classList.toggle('is-faded', !!on); },

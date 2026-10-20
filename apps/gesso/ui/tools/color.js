@@ -11,6 +11,7 @@ const DIALS = ['warmth', 'tint', 'vividness', 'strength'];
 let selected = 'warmth';
 let picking = false;
 let thumbsFor = '';
+const thumbs = new Map(); // look id -> { deps, image }: the last thumbnail rendered and what it shows
 let loupe = null; // { x, y, img } stage px; img is the 2× view while pressing
 const scrub = createPhotoScrub();
 const LOUPE_R = 48; // pt
@@ -249,17 +250,25 @@ function queueThumbs(ed) {
       const css = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
       const w = Math.max(1, Math.round(css.width * dpr)), h = Math.max(1, Math.round(css.height * dpr));
-      let state = setIn(st, ['color', 'look'], l.id);
-      state = setIn(state, ['color', 'strength'], 100);
-      // a centre crop that fills the chip
-      const img = ed.readOutput({ maxSide: Math.max(w, h) * 2, tone: true, state });
+      // Each thumbnail is its own look at full strength: tapping a look or moving
+      // Strength changes none of them, so they are only re-rendered when this does.
+      const deps = [st.id, st.crop, st.light, st.paint, st.remove, st.color.warmth, st.color.tint, st.color.vividness, w, h];
+      const had = thumbs.get(l.id);
+      let tmp = had && deps.every((d, i) => d === had.deps[i]) ? had.image : null;
+      if (!tmp) {
+        let state = setIn(st, ['color', 'look'], l.id);
+        state = setIn(state, ['color', 'strength'], 100);
+        // a centre crop that fills the chip
+        const img = ed.readOutput({ maxSide: Math.max(w, h) * 2, tone: true, state });
+        tmp = new OffscreenCanvas(img.width, img.height);
+        tmp.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+        thumbs.set(l.id, { deps, image: tmp });
+      }
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext('2d');
-      const tmp = new OffscreenCanvas(img.width, img.height);
-      tmp.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
-      const s = Math.max(w / img.width, h / img.height);
-      ctx.drawImage(tmp, (w - img.width * s) / 2, (h - img.height * s) / 2, img.width * s, img.height * s);
+      const s = Math.max(w / tmp.width, h / tmp.height);
+      ctx.drawImage(tmp, (w - tmp.width * s) / 2, (h - tmp.height * s) / 2, tmp.width * s, tmp.height * s);
     }
   });
 }

@@ -101,8 +101,9 @@ test('exposure doubles light per stop and rolls off instead of clipping', () => 
   assert.ok(up[0] > 0.38);
   const a = px([0.8, 0.8, 0.8], { exposure: 100 })[0], b = px([0.95, 0.95, 0.95], { exposure: 100 })[0];
   assert.ok(a < 1 && b <= 1 && b >= a, 'bright tones stay ordered under the shoulder');
-  assert.equal(shoulder(0.5), 0.5);
-  assert.ok(shoulder(3) < 1.0000001);
+  assert.equal(shoulder(0.5, 4), 0.5);
+  assert.equal(shoulder(0.95, 1), 0.95, 'no push, no roll-off');
+  assert.ok(Math.abs(shoulder(linearToSrgb(4), 4) - 1) < 1e-9, 'white times the gain lands on white');
 });
 
 test('blacks and whites move the end points', () => {
@@ -172,6 +173,22 @@ test('painted light brightens or darkens by stops at that pixel', () => {
   const down = developPixel(0.4, 0.4, 0.4, u, null, 0.5, 0.5, 0, -1)[0];
   assert.ok(close(flat, 0.4, 1e-9));
   assert.ok(up > 0.5 && down < 0.32, `${up} ${down}`);
+});
+
+test('cool shadow tints keep deep skin warm (Monk 7-10 stay brown, not grey or teal)', () => {
+  const hue = ([r, g, b]) => Math.atan2(Math.sqrt(3) * (g - b), 2 * r - g - b) * 180 / Math.PI;
+  for (const id of ['film', 'cool']) {
+    const u = uniforms(resolve(defaultAdjust(), { id, amount: 100 }));
+    for (const hex of ['825c43', '604134', '3a312a', '292420']) {
+      const c = [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+      const out = developPixel(...c, u, null);
+      assert.ok(out[0] > out[1] && out[1] > out[2], `${id} ${hex}: ${out.map((v) => Math.round(v * 255))}`);
+      assert.ok(Math.abs(hue(out) - hue(c)) < 20, `${id} ${hex} hue ${hue(c).toFixed(0)} -> ${hue(out).toFixed(0)}`);
+    }
+  }
+  // neutral shadows still take the look's tint
+  const grey = developPixel(0.1, 0.1, 0.1, uniforms(resolve(defaultAdjust(), { id: 'film', amount: 100 })), null);
+  assert.ok(grey[2] > grey[0] + 0.05, 'film still tints neutral shadows teal');
 });
 
 test('mono uses the look\'s red-weighted mix', () => {

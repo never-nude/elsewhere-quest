@@ -163,6 +163,7 @@ function paintGesture(ed, g) {
     const [sx, sy] = ed.stageToSource(g.x, g.y);
     stroke = { id: newId(), mode: paintMode, r, pts: [half(sx), half(sy)], painted: 0 };
     ring = { x: g.x, y: g.y };
+    ed.paintingLive?.(stroke.id);
     paintNew();
     ed.requestRender();
     return true;

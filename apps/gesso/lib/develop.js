@@ -108,9 +108,6 @@ export function uniforms(state) {
   return {
     wb: [gr, gg, gb],
     exposure: Math.pow(2, n('exposure') * 2), // ±2 stops
-    // Highlight roll-off engages only while something is pushing light up, so a
-    // neutral edit is an exact identity.
-    rolloff: Math.min(1, Math.max(0, n('exposure') * 2 + Math.max(0, n('shadows')) * 0.5 + Math.max(0, n('highlights')) + Math.max(0, n('whites')) * 0.5)),
     shadows: n('shadows'),
     highlights: n('highlights'),
     gamma: Math.pow(2, -n('brightness') * 0.85), // brightness: midtone gamma, keeps black & white
@@ -143,7 +140,17 @@ const smoothstep = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t
 const mix = (a, b, t) => a + (b - a) * t;
 export const luma = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
-export const shoulder = (x) => (x <= 0.8 ? x : 0.8 + 0.2 * (1 - Math.exp(-(x - 0.8) / 0.2)));
+// Highlight roll-off for one channel whose light was multiplied by `gain`: tones
+// above 0.8 ease in so that white times the gain lands exactly on 1.0 instead of
+// clipping flat. It engages only where something pushed this pixel's channel up
+// (gain > 1), so a neutral edit is an exact identity and a white nothing
+// brightened stays white.
+export function shoulder(s, gain) {
+  if (!(gain > 1) || s <= 0.8) return s;
+  const a = (linearToSrgb(gain) - 1) / 0.2;
+  const t = Math.min(1, (s - 0.8) / (0.2 * (1 + a)));
+  return 0.8 + (0.2 * t * (1 + a)) / (1 + a * t);
+}
 
 // Contrast as a blend toward a smooth S-curve (more) or toward mid-grey (less),
 // pivoting at 0.5 so it never drifts the overall exposure.
@@ -161,7 +168,7 @@ function contrastCurve(x, c) {
 // painted-light exposure (stops, ±1.5) at this pixel.
 export function developPixel(r, g, b, U, blur = null, u = 0.5, v = 0.5, noise = 0, paintEV = 0) {
   // to linear, white balance, exposure, painted light
-  const k = U.exposure * (paintEV ? Math.pow(2, paintEV) : 1);
+  let k = U.exposure * (paintEV ? Math.pow(2, paintEV) : 1);
   let lr = srgbToLinear(r) * U.wb[0] * k;
   let lg = srgbToLinear(g) * U.wb[1] * k;
   let lb = srgbToLinear(b) * U.wb[2] * k;
@@ -178,11 +185,13 @@ export function developPixel(r, g, b, U, blur = null, u = 0.5, v = 0.5, noise = 
     const stops = U.shadows * 1.6 * ws + U.highlights * 0.95 * wh;
     const gain = Math.pow(2, stops);
     lr *= gain; lg *= gain; lb *= gain;
+    k *= gain;
   }
 
-  let cr = linearToSrgb(lr), cg = linearToSrgb(lg), cb = linearToSrgb(lb);
   // soft shoulder: compress light pushed past white instead of clipping hard
-  if (U.rolloff > 0) { cr = mix(cr, shoulder(cr), U.rolloff); cg = mix(cg, shoulder(cg), U.rolloff); cb = mix(cb, shoulder(cb), U.rolloff); }
+  let cr = shoulder(linearToSrgb(lr), U.wb[0] * k);
+  let cg = shoulder(linearToSrgb(lg), U.wb[1] * k);
+  let cb = shoulder(linearToSrgb(lb), U.wb[2] * k);
 
   // brightness (midtone gamma), contrast, black & white points — per channel
   const tone = (x) => {
@@ -203,7 +212,12 @@ export function developPixel(r, g, b, U, blur = null, u = 0.5, v = 0.5, noise = 
 
   // look: split tone, mono, fade
   Y = luma(clamp01(cr), clamp01(cg), clamp01(cb));
-  const sw = 1 - smoothstep(0.0, 0.55, Y), hw = smoothstep(0.45, 1.0, Y);
+  // A cool shadow tint spares colours that were warm to begin with (skin, wood):
+  // added to deep skin, which sits wholly in the shadow weight, it would turn it
+  // grey or teal.
+  const warm = clamp01((4 * (r - b)) / Math.max(r, 0.1)); // near-black hue is noise
+  const guard = U.splitShadow[2] > U.splitShadow[0] ? 1 - 0.85 * warm : 1;
+  const sw = (1 - smoothstep(0.0, 0.55, Y)) * guard, hw = smoothstep(0.45, 1.0, Y);
   cr += U.splitShadow[0] * sw + U.splitHighlight[0] * hw;
   cg += U.splitShadow[1] * sw + U.splitHighlight[1] * hw;
   cb += U.splitShadow[2] * sw + U.splitHighlight[2] * hw;
@@ -270,8 +284,9 @@ export function hashNoise(x, y) {
 }
 
 // ------------------------------------------------------------------ GLSL
-// Mirrors developPixel. `uBlur` is a small blurred-luminance texture sampled with
-// the same UV as the photo; `uOut` maps fragment coords to output 0..1.
+// Mirrors developPixel. `uBlur` is a small (a, b) map sampled with the same UV as
+// the photo, giving the neighbourhood luminance a·Y + b from the pixel's own linear
+// luminance Y; `uOut` maps fragment coords to output 0..1.
 
 export const DEVELOP_GLSL = `#version 300 es
 precision highp float;
@@ -285,14 +300,20 @@ uniform sampler2D uPaint;  // RG8 in source UV: r = brighten, g = darken (1.0 = 
 uniform bool uHasPaint;
 uniform vec3 uWb;
 uniform float uExposure, uShadows, uHighlights, uGamma, uContrast, uBlacks, uWhites;
-uniform float uSaturation, uVibrance, uVignette, uGrain, uFade, uMono, uRolloff;
+uniform float uSaturation, uVibrance, uVignette, uGrain, uFade, uMono;
 uniform vec3 uSplitShadow, uSplitHighlight, uMonoMix;
 uniform vec2 uGrainScale;  // output size in px, so grain and dither are per output pixel
+uniform float uOutPerPx;   // output px per target px: a smaller render shows grain averaged, as the saved photo looks at that size
 
 float toLin(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
 float toSrgb(float c) { return c <= 0.0 ? 0.0 : (c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055); }
 float luma(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
-float shoulder(float x) { return x <= 0.8 ? x : 0.8 + 0.2 * (1.0 - exp(-(x - 0.8) / 0.2)); }
+float shoulder(float s, float gain) {
+  if (gain <= 1.0 || s <= 0.8) return s;
+  float a = (toSrgb(gain) - 1.0) / 0.2;
+  float t = min(1.0, (s - 0.8) / (0.2 * (1.0 + a)));
+  return 0.8 + 0.2 * t * (1.0 + a) / (1.0 + a * t);
+}
 float contrastCurve(float x, float c) {
   if (c >= 0.0) { float s = x * x * (3.0 - 2.0 * x); return mix(x, s, c * 0.9); }
   return 0.5 + (x - 0.5) * (1.0 + c * 0.6);
@@ -307,23 +328,28 @@ float hashNoise(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 4375
 float ditherNoise(vec2 p) { return fract(sin((p.x + 17.31) * 39.346 + (p.y + 41.17) * 11.135) * 15718.6243) - 0.5; }
 
 vec3 develop(vec3 c) {
-  vec3 l = vec3(toLin(c.r), toLin(c.g), toLin(c.b)) * uWb * uExposure;
-  if (uHasPaint) { vec2 m = texture(uPaint, vUv).rg; l *= exp2(1.5 * (m.r - m.g)); }
+  float k = uExposure;
+  if (uHasPaint) { vec2 m = texture(uPaint, vUv).rg; k *= exp2(1.5 * (m.r - m.g)); }
+  vec3 l = vec3(toLin(c.r), toLin(c.g), toLin(c.b)) * uWb * k;
   if (uShadows != 0.0 || uHighlights != 0.0) {
-    float L = uHasBlur ? texture(uBlur, vUv).r : luma(l);
+    vec2 ab = texture(uBlur, vUv).rg; // L = a·Y + b, edge-aware (ui/renderer.js blurLuminance)
+    float L = uHasBlur ? ab.x * luma(vec3(toLin(c.r), toLin(c.g), toLin(c.b))) + ab.y : luma(l);
     float ws = pow(1.0 - smoothstep(0.0, 0.45, L), 2.0);
     float wh = pow(clamp(L, 0.0, 1.0), 1.4);
-    l *= exp2(uShadows * 1.6 * ws + uHighlights * 0.95 * wh);
+    float gain = exp2(uShadows * 1.6 * ws + uHighlights * 0.95 * wh);
+    l *= gain; k *= gain;
   }
-  vec3 s = vec3(toSrgb(l.r), toSrgb(l.g), toSrgb(l.b));
-  if (uRolloff > 0.0) s = mix(s, vec3(shoulder(s.r), shoulder(s.g), shoulder(s.b)), uRolloff);
+  vec3 g = uWb * k;
+  vec3 s = vec3(shoulder(toSrgb(l.r), g.r), shoulder(toSrgb(l.g), g.g), shoulder(toSrgb(l.b), g.b));
   s = vec3(tone(s.r), tone(s.g), tone(s.b));
   float Y = luma(s);
   float sat = max(s.r, max(s.g, s.b)) - min(s.r, min(s.g, s.b));
   float vib = 1.0 + uVibrance * (1.0 - sat) * (uVibrance > 0.0 ? 1.1 : 1.0);
   s = vec3(Y) + (s - vec3(Y)) * (uSaturation * vib);
   Y = luma(clamp(s, 0.0, 1.0));
-  float sw = 1.0 - smoothstep(0.0, 0.55, Y), hw = smoothstep(0.45, 1.0, Y);
+  float warm = clamp(4.0 * (c.r - c.b) / max(c.r, 0.1), 0.0, 1.0);
+  float guard = uSplitShadow.b > uSplitShadow.r ? 1.0 - 0.85 * warm : 1.0;
+  float sw = (1.0 - smoothstep(0.0, 0.55, Y)) * guard, hw = smoothstep(0.45, 1.0, Y);
   s += uSplitShadow * sw + uSplitHighlight * hw;
   if (uMono > 0.0) s = mix(s, vec3(dot(s, uMonoMix)), uMono);
   if (uFade > 0.0) s = vec3(uFade) + s * (1.0 - uFade * 1.2);
@@ -334,7 +360,7 @@ vec3 develop(vec3 c) {
   if (uGrain > 0.0) {
     float m = luma(clamp(s, 0.0, 1.0));
     vec2 px = floor(vOut * uGrainScale);
-    s += vec3(hashNoise(px) * uGrain * 0.16 * (0.35 + 4.0 * m * (1.0 - m)));
+    s += vec3(hashNoise(px) * uGrain * 0.16 * (0.35 + 4.0 * m * (1.0 - m)) / max(1.0, uOutPerPx));
   }
   return clamp(s, 0.0, 1.0);
 }

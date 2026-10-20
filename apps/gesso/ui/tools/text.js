@@ -408,12 +408,15 @@ function startEditing(ed, id) {
 function finishEditing(ed, { fromBar = false } = {}) {
   if (!editing) return;
   if (dropIfStale(ed)) return;
+  // Keyboard or VoiceOver on the bar's Done, which is about to hide: carry on in the panel.
+  const onDone = !!bar && document.activeElement === bar.done;
   const e = takeEdit();
   hideBar();
   settle(ed, e);
   if (fromBar && findCaption(ed.committed, e.id)) ed.hint('caption-done');
   ed.refresh();
   ed.requestRender();
+  if (onDone) document.querySelector('#dials [data-dial]:not(:disabled)')?.focus({ preventScroll: true });
 }
 
 // A new caption nobody has typed into is only an offer: tapping away from it (to

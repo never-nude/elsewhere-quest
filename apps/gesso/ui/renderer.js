@@ -5,7 +5,7 @@
 //             immutable, mipmapped. Before is drawn from it.
 //   base      pristine + Remove fills. Created lazily on the first fill, so most
 //             sessions hold one full-size copy, not two.
-//   blur      small blurred-luminance map (R8) for local shadows/highlights.
+//   blur      small edge-aware base-layer map (RG8) for local shadows/highlights.
 //   paint     RG8 dodge/burn mask at S/4 (r = brighten, g = darken; 1.0 = 1.5 EV).
 //
 // The GPU is never the only copy of the user's work: the original file and the
@@ -40,16 +40,18 @@ out vec4 outColor;
 uniform vec3 uChannel;  // (1,0,0) brighten, (0,1,0) darken, (0,0,1) erase
 uniform float uAmount;
 void main() {
-  float w = exp(-dot(vLocal, vLocal) * 3.0) * uAmount;
+  // A Gaussian lowered to reach 0 on the unit circle, so no dab ends in a step at
+  // its square's edge (a cut that strokes stack into hard lines and square ends).
+  float w = max(0.0, (exp(-dot(vLocal, vLocal) * 3.0) - 0.049787068) / 0.950212932) * uAmount;
   if (uChannel.b > 0.5) outColor = vec4(0.0, 0.0, 0.0, w);
   else outColor = vec4(uChannel.rg * w, 0.0, 0.0);
 }
 `;
 
 const UNIFORM_NAMES = [
-  'uImage', 'uBlur', 'uHasBlur', 'uPaint', 'uHasPaint', 'uWb', 'uExposure', 'uRolloff', 'uShadows',
+  'uImage', 'uBlur', 'uHasBlur', 'uPaint', 'uHasPaint', 'uWb', 'uExposure', 'uShadows',
   'uHighlights', 'uGamma', 'uContrast', 'uBlacks', 'uWhites', 'uSaturation', 'uVibrance', 'uVignette',
-  'uGrain', 'uFade', 'uMono', 'uMonoMix', 'uSplitShadow', 'uSplitHighlight', 'uGrainScale',
+  'uGrain', 'uFade', 'uMono', 'uMonoMix', 'uSplitShadow', 'uSplitHighlight', 'uGrainScale', 'uOutPerPx',
 ];
 
 const STRIP_ROWS = 512;
@@ -67,6 +69,7 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
   let dabVbo = null;
   let pristine = null;
   let base = null; // null = same as pristine
+  let baseMips = true; // false: base changed since its mip chain was built
   let blurTex = null;
   let paintTex = null;
   let paintFbo = null;
@@ -174,7 +177,14 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
     gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
   }
 
-  function bindDevelop(u, { texture, grainScale, paint }) {
+  function bindDevelop(u, { texture, grainScale, paint, outPerPx = 1 }) {
+    if (texture === base && !baseMips) {
+      // Fills land a tile at a time; the mip chain is rebuilt once, when base is
+      // next drawn from.
+      gl.bindTexture(gl.TEXTURE_2D, base);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      baseMips = true;
+    }
     gl.useProgram(program);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texture);
@@ -189,7 +199,6 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
     gl.uniform1i(loc.uHasPaint, paint && paintTex ? 1 : 0);
     gl.uniform3fv(loc.uWb, u.wb);
     gl.uniform1f(loc.uExposure, u.exposure);
-    gl.uniform1f(loc.uRolloff, u.rolloff);
     gl.uniform1f(loc.uShadows, u.shadows);
     gl.uniform1f(loc.uHighlights, u.highlights);
     gl.uniform1f(loc.uGamma, u.gamma);
@@ -206,6 +215,7 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
     gl.uniform3fv(loc.uSplitShadow, u.splitShadow);
     gl.uniform3fv(loc.uSplitHighlight, u.splitHighlight);
     gl.uniform2fv(loc.uGrainScale, grainScale);
+    gl.uniform1f(loc.uOutPerPx, outPerPx);
   }
 
   // Render into a temporary RGBA8 target and read it back in the same task.
@@ -308,8 +318,7 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
         gl.bindTexture(gl.TEXTURE_2D, base);
         gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, size.width, size.height);
       });
-      gl.bindTexture(gl.TEXTURE_2D, base);
-      gl.generateMipmap(gl.TEXTURE_2D);
+      baseMips = false;
     },
 
     // A fill tile: RGBA of `rect` (source px) holding exact final pixels where
@@ -338,7 +347,7 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
       gl.texSubImage2D(gl.TEXTURE_2D, 0, r.x, r.y, r.w, r.h, gl.RGBA, gl.UNSIGNED_BYTE, current);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-      gl.generateMipmap(gl.TEXTURE_2D);
+      baseMips = false;
     },
 
     // Undo a fill: copy the pristine pixels of `rect` back into base.
@@ -348,8 +357,7 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
         gl.bindTexture(gl.TEXTURE_2D, base);
         gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, rect.x, rect.y, rect.x, rect.y, rect.w, rect.h);
       });
-      gl.bindTexture(gl.TEXTURE_2D, base);
-      gl.generateMipmap(gl.TEXTURE_2D);
+      baseMips = false;
     },
 
     // Drop all fills (e.g. undo back past the first one).
@@ -389,7 +397,7 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
       if (!blurTex) blurTex = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, blurTex);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, width, height, 0, gl.RED, gl.UNSIGNED_BYTE, data);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RG8, width, height, 0, gl.RG, gl.UNSIGNED_BYTE, data);
       gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
       setSampling(gl, false);
     },
@@ -475,8 +483,9 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
       gl.clear(gl.COLOR_BUFFER_BIT);
       if (!pristine) return;
       const grainScale = quads.grainScale ?? [canvas.width, canvas.height];
+      const outPerPx = quads.outPerPx ?? 1;
       const pass = (u, tex, paint, list = quads) => {
-        bindDevelop(u, { texture: tex, grainScale, paint });
+        bindDevelop(u, { texture: tex, grainScale, paint, outPerPx });
         gl.bindVertexArray(vao);
         for (const quad of list) {
           writeQuad(quad, canvas.width, canvas.height, true);
@@ -509,7 +518,7 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
     // `before` = pristine, untouched; `tone: false` = the current pixels (fills
     // included) through the crop but with no tone, for analysis.
     // `into` (+ `offset`, in bytes): read the rows into that array and return it.
-    renderPixels({ width, height, quad, uniforms, grainScale = [width, height], before = false, tone = true, into = null, offset = 0 }) {
+    renderPixels({ width, height, quad, uniforms, grainScale = [width, height], outPerPx = 1, before = false, tone = true, into = null, offset = 0 }) {
       // !pristine: the context is back but the photo is not on it yet (it is being
       // decoded again). A render now would be opaque black, which nothing
       // downstream can tell from a dark photo.
@@ -518,6 +527,7 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
       return renderToBuffer(width, height, quad, plain ? IDENTITY : uniforms, {
         texture: before ? pristine : base ?? pristine,
         grainScale,
+        outPerPx,
         paint: !plain,
       }, into, offset);
     },
@@ -527,7 +537,7 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
 
 // Develop uniforms that leave the image untouched (Before, analysis, readbacks).
 export const IDENTITY = Object.freeze({
-  wb: [1, 1, 1], exposure: 1, rolloff: 0, shadows: 0, highlights: 0, gamma: 1, contrast: 0,
+  wb: [1, 1, 1], exposure: 1, shadows: 0, highlights: 0, gamma: 1, contrast: 0,
   blacks: 0, whites: 0, saturation: 1, vibrance: 0, vignette: 0, grain: 0, fade: 0, mono: 0,
   monoMix: [0.2126, 0.7152, 0.0722], splitShadow: [0, 0, 0], splitHighlight: [0, 0, 0],
 });
@@ -559,20 +569,43 @@ function link(gl, vsSource, fsSource) {
   return p;
 }
 
-// Blurred linear luminance (R8) from a small RGBA readback: three box blurs ≈ a
-// Gaussian of σ ≈ 8 px at 512 px.
+// The neighbourhood luminance for local shadows/highlights, from a small RGBA
+// readback, made edge-aware with a self-guided filter (He et al.) on linear
+// luminance Y: per texel it stores (a, b) of L = a·Y + b in RG8, and the shader
+// applies them to each pixel's own Y at full size. In flat or finely textured
+// areas a ≈ 0 and L is the plain blur (three box blurs ≈ a Gaussian of σ ≈ 8 px
+// at 512 px), so detail keeps its contrast; across a strong edge a ≈ 1 and L
+// follows the pixel, so a backlit subject gets no dark rim and the sky round it
+// no glow. With 0 ≤ a ≤ 1 and b ≥ 0, L never grows faster than Y, so the
+// monotonic tone transfer still holds.
+const GUIDE_EPS = 0.01; // edges with a luminance spread (std) above ~0.1 are kept
 export function blurLuminance({ width: w, height: h, data }) {
   const table = new Float32Array(256);
   for (let i = 0; i < 256; i++) {
     const c = i / 255;
     table[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
   }
-  let lum = new Float32Array(w * h);
-  for (let i = 0; i < w * h; i++) lum[i] = 0.2126 * table[data[i * 4]] + 0.7152 * table[data[i * 4 + 1]] + 0.0722 * table[data[i * 4 + 2]];
+  const n = w * h;
+  const lum = new Float32Array(n), sq = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    lum[i] = 0.2126 * table[data[i * 4]] + 0.7152 * table[data[i * 4 + 1]] + 0.0722 * table[data[i * 4 + 2]];
+    sq[i] = lum[i] * lum[i];
+  }
   const radius = Math.max(1, Math.round((Math.max(w, h) / 512) * 8));
-  for (let pass = 0; pass < 3; pass++) lum = boxBlur(lum, w, h, radius);
-  const out = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) out[i] = Math.round(Math.min(1, Math.max(0, lum[i])) * 255);
+  const blur = (src) => { let x = src; for (let pass = 0; pass < 3; pass++) x = boxBlur(x, w, h, radius); return x; };
+  const mean = blur(lum), meanSq = blur(sq);
+  const a = new Float32Array(n), b = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = Math.max(0, meanSq[i] - mean[i] * mean[i]);
+    a[i] = v / (v + GUIDE_EPS);
+    b[i] = mean[i] * (1 - a[i]);
+  }
+  const ma = blur(a), mb = blur(b);
+  const out = new Uint8Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    out[i * 2] = Math.round(Math.min(1, Math.max(0, ma[i])) * 255);
+    out[i * 2 + 1] = Math.round(Math.min(1, Math.max(0, mb[i])) * 255);
+  }
   return { width: w, height: h, data: out };
 }
 

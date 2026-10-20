@@ -128,7 +128,14 @@ export function autoLight(stats) {
     const g = Math.log(target) / Math.log(m); // m^g = target
     brightness = (-Math.log2(g) / BRIGHTNESS_STOPS) * 100;
   }
-  out.brightness = clampInt(brightness, -35, 50);
+  // Backlit: a bright median with a real share of the frame in the low tones is a
+  // subject against the light, not an overexposed photo. Bringing it down would
+  // bury the subject further, so how far it may come down fades out as that share
+  // grows, and the shadow lift below stops waiting for near-black shadows.
+  // Crushed pixels don't count: the midtone gamma leaves black where it is.
+  const shade = ramp(s.dark - s.clipLow, 0.06, 0.15);
+  const backlit = shade * ramp(m, 0.45, 0.6);
+  out.brightness = clampInt(brightness, -35 * (1 - shade), 50);
 
   // Contrast: stretch a flat, foggy histogram; never flatten a punchy one. Judge
   // the range as it will be after the brightness move, and hold back on a photo
@@ -144,7 +151,7 @@ export function autoLight(stats) {
   // narrow band rather than switching on: a hard "dark over 0.12 and p05 under
   // 0.08" gate made p05 0.0799 vs 0.0801 the difference between Shadows +30 and 0,
   // and the 256px suggestion readback and 512px Auto readback can land either side.
-  const buried = (s.dark - 0.08) * 160 * ramp(s.dark, 0.1, 0.12) * ramp(s.p05, 0.09, 0.07);
+  const buried = (s.dark - 0.08) * 160 * ramp(s.dark, 0.1, 0.12) * Math.max(ramp(s.p05, 0.09, 0.07), backlit);
   const crushed = s.clipLow * 1500 * ramp(s.clipLow, 0.01, 0.015); // over 1% crushed (SPEC §7)
   const lift = Math.max(buried, crushed) * (1 - 0.3 * Math.max(0, out.brightness) / 50);
   out.shadows = clampInt(lift, 0, 45);

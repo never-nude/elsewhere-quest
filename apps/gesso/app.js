@@ -96,6 +96,13 @@ async function main() {
   let earlyFile = null;
   const keepEarly = () => { earlyFile = fileInput.files?.[0] ?? earlyFile; fileInput.value = ''; };
   fileInput.addEventListener('change', keepEarly);
+  // The label needs no JS to open the picker from a tap; as a button (index.html) it
+  // also takes keyboard focus, and Enter or Space opens the picker.
+  $('#choose').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    fileInput.click();
+  });
 
   const store = await openStore();
   if (!store.available) $('#hint').textContent = "Edits won't be kept if you leave Gesso.";

@@ -166,6 +166,19 @@ test('a bright photo comes down, and blown highlights are pulled back', () => {
   assert.ok(autoLight(analyze(clip)).highlights < 0);
 });
 
+test('a backlit subject is opened up, never darkened to suit the bright sky', () => {
+  // bright sky over most of the frame, a textured subject at 0.10-0.16 below
+  const img = makeImage(64, 64, (u, v) => {
+    const y = v < 0.7 ? 0.86 - 0.05 * v : 0.13 + 0.03 * Math.sin(u * 31 + v * 17);
+    return [y, y, y];
+  });
+  const s = analyze(img);
+  const L = autoLight(s);
+  assert.ok(L.brightness >= 0 && L.shadows > 10, JSON.stringify(L));
+  const lum = (im) => { let t = 0, n = 0; for (let i = 0; i < im.data.length; i += 4) if (i / 4 >= 64 * 48) { t += im.data[i]; n++; } return t / n; };
+  assert.ok(lum(develop(img, withDials(DOC, L))) > lum(img), 'the subject comes up');
+});
+
 test('a flat, foggy photo gets contrast; a punchy one is never flattened', () => {
   const L = autoLight(analyze(scene(0.35, 0.33)));
   assert.ok(L.contrast > 5, JSON.stringify(L));
@@ -220,6 +233,10 @@ test('no rule switches on with a jump: a hair across any threshold moves a dial 
     ['meanSat', 0.38, { neutral: null }],
     ['meanSat', 0.4, { neutral: null }],
     ['meanSat', 0.42, { neutral: null }],
+    ['dark', 0.06, { p50: 0.8, p05: 0.12 }],
+    ['dark', 0.15, { p50: 0.8, p05: 0.12 }],
+    ['p50', 0.45, { dark: 0.2, p05: 0.12 }],
+    ['p50', 0.6, { dark: 0.2, p05: 0.12 }],
   ];
   const all = (s) => ({ ...autoLight(s), ...autoColor(s) });
   for (const [key, at, extra] of probes) {

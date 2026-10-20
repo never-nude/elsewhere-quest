@@ -57,6 +57,7 @@ export function openSaveSheet(ed, { captions = null } = {}) {
   clearTimeout(closeTimer); // a slide-out still finishing must not close this sheet
   if (!reopening) ui.returnFocus = document.activeElement;
   ui.sheet.hidden = false;
+  setBehindInert(true);
   resetCard();
   ui.main.hidden = false;
   ui.done.hidden = true;
@@ -201,12 +202,14 @@ function showFallback(blob) {
   ui.fallbackImg.style.setProperty('-webkit-touch-callout', 'default');
   ui.fallbackImg.src = fallbackUrl;
   ui.fallback.hidden = false;
+  ui.card.inert = true; // the fallback is the modal now
   ui.fallbackClose.focus({ preventScroll: true });
 }
 
 function hideFallback() {
   if (!ui) return;
   ui.fallback.hidden = true;
+  ui.card.inert = false;
   if (fallbackUrl) {
     ui.fallbackImg.removeAttribute('src');
     URL.revokeObjectURL(fallbackUrl);
@@ -231,6 +234,7 @@ function closeSheet() {
   cancelAnimationFrame(resizeFrame);
   session = null;
   sharing = false;
+  setBehindInert(false);
   const back = ui.returnFocus;
   ui.returnFocus = null;
   if (back && back.isConnected && typeof back.focus === 'function') back.focus({ preventScroll: true });
@@ -299,6 +303,13 @@ function onResize() {
       sizePreview();
     }
   });
+}
+
+// Modal: the editor behind the sheet takes no focus, taps or VoiceOver. Its parts are
+// made inert, not #app itself, which app.js makes inert on its own while a lost GPU
+// context recovers.
+function setBehindInert(on) {
+  for (const el of document.getElementById('app')?.children ?? []) el.inert = on;
 }
 
 function resetCard() {
