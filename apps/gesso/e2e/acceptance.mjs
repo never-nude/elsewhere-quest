@@ -15,13 +15,13 @@ import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
 import { FIXTURE, writeFixture } from './fixture.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const APP_DIR = resolve(HERE, '..');
-const DEFAULT_OUT = process.env.GESSO_E2E_OUT
-  || '/tmp/claude-0/-home-user-elsewhere-quest/4ce67d9c-b416-53ac-b16b-6e1e77e49bb3/scratchpad/wave2/harness/out';
+const DEFAULT_OUT = process.env.GESSO_E2E_OUT || join(tmpdir(), 'gesso-e2e');
 
 const CHECKS = {
   1: 'Map visible',
