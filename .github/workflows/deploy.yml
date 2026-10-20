@@ -30,6 +30,11 @@ jobs:
           mkdir -p dist/textlock
           cp -r apps/textlock/. dist/textlock/
           rm -rf dist/textlock/test dist/textlock/package.json
+      - name: Add Gesso app at /gesso/
+        run: |
+          mkdir -p dist/gesso
+          cp -r apps/gesso/. dist/gesso/
+          rm -rf dist/gesso/test dist/gesso/package.json
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
