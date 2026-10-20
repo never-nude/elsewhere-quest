@@ -197,6 +197,17 @@ async function check(s, no, where, fn) {
   await t.end();
 }
 
+// A scenario's setup broke: open trials fail with the cause, and checks that never
+// started get a row saying why.
+async function abort(s, nos, where, err) {
+  for (const t of s.trials) if (!t.done) await t.fail(firstLine(err));
+  for (const no of nos) {
+    if (wanted(no) && !s.trials.some((t) => t.no === no)) {
+      record(no, { status: 'FAIL', where, reasons: [`could not run: ${firstLine(err)}`], notes: [], shots: [] });
+    }
+  }
+}
+
 // ------------------------------------------------------------------ in-page helpers
 
 // Installed in every page before the app's own scripts. Self-contained: it is
@@ -715,6 +726,8 @@ async function scenarioLayout(vp, { gestures }) {
         t.note(`${gestures.length} gestures`);
       });
     }
+  } catch (err) {
+    await abort(s, gestures ? [1, 2, 3, 4, 5, 13, 12] : [1, 2, 3, 4, 5, 13], where, err);
   } finally {
     await s.close();
   }
@@ -950,6 +963,8 @@ async function scenarioDefaults() {
       if (t10) await t10.fail(`Text: ${firstLine(err)}`);
     }
     if (t10 && verified.length) t10.note(`verified: ${verified.join(', ')}`);
+  } catch (err) {
+    await abort(s, [7, 10], 'setup', err);
   } finally {
     for (const t of [t7, t10]) if (t) await t.end();
     await s.close();
@@ -958,92 +973,101 @@ async function scenarioDefaults() {
 
 // ------------------------------------------------------------------ scenario: one-minute flow (8), no network (15), resume (17)
 
+// Check 8 step by step: import, Auto-enhance, Crop, Auto, Save, Save to Photos.
+async function oneMinuteFlow(s, t8) {
+  let taps = 0;
+  const step = async (sel) => { taps++; await tap(s, sel); };
+  await importFixture(s);
+  taps++; // the "Choose a photo" tap that opens the picker
+  const t0 = await snap(s);
+  await step('[data-quick="auto"]');
+  const t1 = await snap(s);
+  if (t8 && t1.labels[t1.index] !== 'Auto-enhance') t8.note(`Auto-enhance step reads ${quote(t1.labels[t1.index])}`);
+  await step('#dock [data-tool="crop"]');
+  await step('#quick [data-default]');
+  const saveAt = Date.now();
+  await step('#save');
+  const sheetOpen = await s.page.waitForSelector('#sheet:not([hidden])', { state: 'visible', timeout: 2000 }).then(() => true, () => false);
+  let shared = null;
+  if (!sheetOpen) {
+    const toast = await s.page.locator('#toast').textContent().catch(() => '');
+    if (t8) await t8.fail(`Save did not open the Save sheet (#sheet stayed hidden; toast ${quote(toast)})`);
+  } else {
+    const left = Math.max(0, 4000 - (Date.now() - saveAt));
+    const ready = await s.page.waitForSelector('#share[data-ready]', { state: 'attached', timeout: left }).then(() => true, () => false);
+    if (!ready) {
+      const label = await s.page.locator('#share').innerText().catch(() => '');
+      if (t8) await t8.fail(`Save to Photos did not gain [data-ready] within 4 s of Save (it reads ${quote(label)})`);
+    }
+    const enabled = await s.page.evaluate(() => !document.querySelector('#share')?.disabled);
+    if (ready || enabled) {
+      await step('#share');
+      await sleep(800);
+      shared = await s.page.evaluate(async () => {
+        const calls = window.__shareCalls ?? [];
+        const out = {
+          count: calls.length,
+          calls: calls.map((c) => ({
+            eventType: c.eventType,
+            keys: c.data && typeof c.data === 'object' ? Object.keys(c.data) : [],
+            files: Array.isArray(c.data?.files) ? c.data.files.map((f) => ({ isFile: f instanceof File, type: f.type, size: f.size, name: f.name })) : null,
+          })),
+          outputSize: window.gesso.editor.outputSize(),
+        };
+        const f = calls[0]?.data?.files?.[0];
+        if (f instanceof Blob) {
+          try {
+            const b = await createImageBitmap(f);
+            out.decoded = { width: b.width, height: b.height };
+            b.close();
+          } catch (e) { out.decodeError = String(e); }
+        }
+        return out;
+      });
+    }
+  }
+  if (t8 && shared) {
+    const c = shared.calls[0];
+    if (shared.count !== 1) await t8.fail(`navigator.share was called ${shared.count} times (want exactly 1)`);
+    if (c) {
+      await t8.expect(c.eventType === 'click', `navigator.share ran ${c.eventType ? `inside a ${c.eventType} handler` : 'outside any event handler (after an await?)'}, not synchronously in the click handler`);
+      const extra = c.keys.filter((k) => k === 'title' || k === 'text');
+      await t8.expect(!extra.length, `the share data carries ${extra.join(' and ')} (want files only)`);
+      if (!c.files) await t8.fail(`the share data has no files array (keys: ${c.keys.join(', ') || 'none'})`);
+      else if (c.files.length !== 1 || !c.files[0].isFile) await t8.fail(`the share data has ${c.files.length} files (want [File])`);
+      else {
+        const f = c.files[0];
+        await t8.expect(f.type === 'image/jpeg', `the shared file type is ${quote(f.type)} (want image/jpeg)`);
+        await t8.expect(f.size > 0, 'the shared file is empty');
+        const o = shared.outputSize;
+        if (shared.decodeError) await t8.fail(`the shared file does not decode: ${shared.decodeError}`);
+        else if (shared.decoded) {
+          const W = Math.round(o.width), H = Math.round(o.height);
+          await t8.expect(shared.decoded.width === W && shared.decoded.height === H, `the JPEG decodes to ${shared.decoded.width}×${shared.decoded.height}, outputSize is ${W}×${H}`);
+        }
+        t8.note(`${f.name || 'unnamed'} ${(f.size / 1e6).toFixed(2)} MB`);
+      }
+    }
+  } else if (t8 && sheetOpen && !shared) {
+    await t8.fail('Save to Photos stayed disabled, so navigator.share was never reached');
+  }
+  if (t8) {
+    await t8.expect(taps <= 6, `the flow took ${taps} taps (want ≤ 6)`);
+    t8.note(`${taps} taps`);
+    if (t0.len === t1.len) t8.note('Auto-enhance added no step');
+  }
+}
+
 async function scenarioFlow() {
   const s = await openSession({ label: 'flow', init: [shareStub] });
   const t8 = begin(s, 8, 'Auto-enhance, Crop, Auto, Save');
   const t15 = begin(s, 15, 'requests during check 8');
   try {
     await gotoApp(s);
-    let taps = 0;
-    const step = async (sel) => { taps++; await tap(s, sel); };
-    await importFixture(s);
-    taps++; // the "Choose a photo" tap that opens the picker
-    const t0 = await snap(s);
-    await step('[data-quick="auto"]');
-    const t1 = await snap(s);
-    if (t8 && t1.labels[t1.index] !== 'Auto-enhance') t8.note(`Auto-enhance step reads ${quote(t1.labels[t1.index])}`);
-    await step('#dock [data-tool="crop"]');
-    await step('#quick [data-default]');
-    const saveAt = Date.now();
-    await step('#save');
-    const sheetOpen = await s.page.waitForSelector('#sheet:not([hidden])', { state: 'visible', timeout: 2000 }).then(() => true, () => false);
-    let shared = null;
-    if (!sheetOpen) {
-      const toast = await s.page.locator('#toast').textContent().catch(() => '');
-      if (t8) await t8.fail(`Save did not open the Save sheet (#sheet stayed hidden; toast ${quote(toast)})`);
-    } else {
-      const left = Math.max(0, 4000 - (Date.now() - saveAt));
-      const ready = await s.page.waitForSelector('#share[data-ready]', { state: 'attached', timeout: left }).then(() => true, () => false);
-      if (!ready) {
-        const label = await s.page.locator('#share').innerText().catch(() => '');
-        if (t8) await t8.fail(`Save to Photos did not gain [data-ready] within 4 s of Save (it reads ${quote(label)})`);
-      }
-      const enabled = await s.page.evaluate(() => !document.querySelector('#share')?.disabled);
-      if (ready || enabled) {
-        await step('#share');
-        await sleep(800);
-        shared = await s.page.evaluate(async () => {
-          const calls = window.__shareCalls ?? [];
-          const out = {
-            count: calls.length,
-            calls: calls.map((c) => ({
-              eventType: c.eventType,
-              keys: c.data && typeof c.data === 'object' ? Object.keys(c.data) : [],
-              files: Array.isArray(c.data?.files) ? c.data.files.map((f) => ({ isFile: f instanceof File, type: f.type, size: f.size, name: f.name })) : null,
-            })),
-            outputSize: window.gesso.editor.outputSize(),
-          };
-          const f = calls[0]?.data?.files?.[0];
-          if (f instanceof Blob) {
-            try {
-              const b = await createImageBitmap(f);
-              out.decoded = { width: b.width, height: b.height };
-              b.close();
-            } catch (e) { out.decodeError = String(e); }
-          }
-          return out;
-        });
-      }
-    }
-    if (t8 && shared) {
-      const c = shared.calls[0];
-      if (shared.count !== 1) await t8.fail(`navigator.share was called ${shared.count} times (want exactly 1)`);
-      if (c) {
-        await t8.expect(c.eventType === 'click', `navigator.share ran ${c.eventType ? `inside a ${c.eventType} handler` : 'outside any event handler (after an await?)'}, not synchronously in the click handler`);
-        const extra = c.keys.filter((k) => k === 'title' || k === 'text');
-        await t8.expect(!extra.length, `the share data carries ${extra.join(' and ')} (want files only)`);
-        if (!c.files) await t8.fail(`the share data has no files array (keys: ${c.keys.join(', ') || 'none'})`);
-        else if (c.files.length !== 1 || !c.files[0].isFile) await t8.fail(`the share data has ${c.files.length} files (want [File])`);
-        else {
-          const f = c.files[0];
-          await t8.expect(f.type === 'image/jpeg', `the shared file type is ${quote(f.type)} (want image/jpeg)`);
-          await t8.expect(f.size > 0, 'the shared file is empty');
-          const o = shared.outputSize;
-          if (shared.decodeError) await t8.fail(`the shared file does not decode: ${shared.decodeError}`);
-          else if (shared.decoded) {
-            const W = Math.round(o.width), H = Math.round(o.height);
-            await t8.expect(shared.decoded.width === W && shared.decoded.height === H, `the JPEG decodes to ${shared.decoded.width}×${shared.decoded.height}, outputSize is ${W}×${H}`);
-          }
-          t8.note(`${f.name || 'unnamed'} ${(f.size / 1e6).toFixed(2)} MB`);
-        }
-      }
-    } else if (t8 && sheetOpen && !shared) {
-      await t8.fail('Save to Photos stayed disabled, so navigator.share was never reached');
-    }
-    if (t8) {
-      await t8.expect(taps <= 6, `the flow took ${taps} taps (want ≤ 6)`);
-      t8.note(`${taps} taps`);
-      if (t0.len === t1.len) t8.note('Auto-enhance added no step');
+    try {
+      await oneMinuteFlow(s, t8);
+    } catch (err) {
+      if (t8) await t8.fail(firstLine(err));
     }
     if (t15) {
       const base = `${BASE.origin}${BASE.pathname}`;
@@ -1076,6 +1100,8 @@ async function scenarioFlow() {
         t.note(`${before.labels.length - 1} steps`);
       });
     }
+  } catch (err) {
+    await abort(s, [8, 15, 17], 'flow', err);
   } finally {
     await s.close();
   }
@@ -1165,7 +1191,6 @@ async function scenarioFallback() {
             try { sheets.push(await (await fetch(l.href)).text()); } catch { /* unreadable sheet */ }
           }
           for (const st of document.querySelectorAll('style')) sheets.push(st.textContent);
-          // eslint-disable-next-line no-new-func
           callout = new Function(`return (${resolver})`)()(img, sheets);
           callout.from = `stylesheet: ${callout.from}`;
         }
@@ -1245,6 +1270,8 @@ async function scenarioBefore() {
         if (id !== 'home') await goHome(s).catch(() => {});
       }
     });
+  } catch (err) {
+    await abort(s, [11], 'setup', err);
   } finally {
     await s.close();
   }
@@ -1395,8 +1422,16 @@ async function startProxy(base) {
 
 async function scenarioOffline() {
   await check(null, 14, 'sw.js SHELL and activate (node)', swStatic);
-  const proxy = await startProxy(opts.base);
-  const s = await openSession({ label: 'offline' });
+  let proxy = null;
+  let s = null;
+  try {
+    proxy = await startProxy(opts.base);
+    s = await openSession({ label: 'offline' });
+  } catch (err) {
+    record(14, { status: 'FAIL', where: 'offline reload (browser)', reasons: [`could not run: ${firstLine(err)}`], notes: [], shots: [] });
+    await proxy?.close();
+    return;
+  }
   try {
     await check(s, 14, 'offline reload (browser)', async (t) => {
       // Caches that belong to someone else on this origin, made before Gesso's
@@ -1505,6 +1540,8 @@ async function scenarioCancel() {
         }
       }
     });
+  } catch (err) {
+    await abort(s, [16], 'setup', err);
   } finally {
     await s.close();
   }

@@ -183,12 +183,16 @@ function idbStore(idb, first, persistent, timeoutMs) {
         try { tx.abort(); } catch { /* already finished */ }
         throw err;
       }
+      const done = finished(tx);
       try {
-        const [value] = await Promise.all([result, finished(tx)]);
+        const [value] = await Promise.all([result, done]);
         return value;
       } catch (err) {
-        if (attempt === 0 && lostConnection(err, d)) { drop(d); continue; }
-        throw err;
+        // A request in an aborted transaction only says AbortError; the
+        // transaction's own error says why.
+        const why = (await done.then(() => null, (e) => e)) ?? err;
+        if (attempt === 0 && (lostConnection(why, d) || lostConnection(err, d))) { drop(d); continue; }
+        throw why?.name === 'AbortError' ? err : why;
       }
     }
   }
