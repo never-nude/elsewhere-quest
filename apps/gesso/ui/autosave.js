@@ -147,9 +147,9 @@ export function createAutosave(store, getEditor, { debounceMs = 300, now = () =>
   }
 
   function capFor(info, first) {
-    let stored = null;
-    try { stored = Number(globalThis.localStorage?.getItem(WORK_CAP_KEY)) || null; } catch { /* no storage */ }
-    const candidates = [stored ?? WORK_MAX_PIXELS, WORK_MAX_PIXELS, WORK_FALLBACK_PIXELS];
+    let stepped = null;
+    try { stepped = Number(globalThis.localStorage?.getItem(WORK_CAP_KEY)) || null; } catch { /* no storage */ }
+    const candidates = [stepped ?? WORK_MAX_PIXELS, WORK_MAX_PIXELS, WORK_FALLBACK_PIXELS];
     if (!first?.source) return candidates[0];
     return workingCapFor(info?.natW ?? first.source.natW, info?.natH ?? first.source.natH, first.source.w, first.source.h, candidates);
   }

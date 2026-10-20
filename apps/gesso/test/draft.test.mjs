@@ -179,8 +179,11 @@ function fakeEditor(id = 'd1') {
 
 const photo = (name = 'IMG_1.JPG') => new File([new Uint8Array([0xff, 0xd8, 0xff, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])], name, { type: 'image/jpeg' });
 
+// Node has no IndexedDB: the in-memory store, told it lasts, stands in for it.
+const diskStore = async () => ({ ...(await openStore()), available: true });
+
 async function setup(id = 'd1') {
-  const store = await openStore();
+  const store = await diskStore();
   let ed = fakeEditor(id);
   const auto = createAutosave(store, () => ed, { debounceMs: 20 });
   return { store, auto, ed, swap(next) { ed = next; } };
@@ -231,7 +234,7 @@ test('a started draft with edits and a fill loads back the same', async () => {
 
 test('schedule debounces; flush writes at once and returns when stored', async () => {
   const writes = [];
-  const base = await openStore();
+  const base = await diskStore();
   const store = { ...base, putDoc: async (id, rec, opts) => { writes.push(rec.history.index); return base.putDoc(id, rec, opts); } };
   let ed = fakeEditor();
   const auto = createAutosave(store, () => ed, { debounceMs: 30 });
@@ -256,7 +259,7 @@ test('schedule debounces; flush writes at once and returns when stored', async (
 });
 
 test('a flush during a slow write is not lost, and the newest write wins', async () => {
-  const base = await openStore();
+  const base = await diskStore();
   const gates = [];
   const store = {
     ...base,
@@ -283,7 +286,7 @@ test('a flush during a slow write is not lost, and the newest write wins', async
 });
 
 test('a failed write is retried by the next flush', async () => {
-  const base = await openStore();
+  const base = await diskStore();
   let fail = false;
   const store = { ...base, putDoc: async (id, rec, opts) => { if (fail) throw new Error('disk hiccup'); return base.putDoc(id, rec, opts); } };
   const ed = fakeEditor();
@@ -395,7 +398,7 @@ test('Discard, then keep editing a photo with fills: its tiles are kept and it r
 });
 
 test('a fill whose tile failed to store is stored again before any record names it', async () => {
-  const base = await openStore();
+  const base = await diskStore();
   let failTiles = 1;
   const store = {
     ...base,
@@ -473,7 +476,7 @@ test('a photo opened while the last edit was still loading wins', async () => {
 });
 
 test("a new photo whose original can't be stored leaves nothing to restore, not the previous photo", async () => {
-  const base = await openStore();
+  const base = await diskStore();
   let failSource = false;
   const store = {
     ...base,
@@ -525,6 +528,23 @@ test('writes for a photo that has no draft yet wait for startDraft', async () =>
   await auto.startDraft('d1', photo());
   const d = await auto.loadDraft();
   assert.equal(H.current(d.history).light.brightness, 5);
+});
+
+test('memory only: tiles are not copied, and editing carries on', async () => {
+  const store = await openStore();
+  assert.equal(store.available, false);
+  const puts = [];
+  const spy = { ...store, putBlob: async (k, b) => { puts.push(k); return store.putBlob(k, b); } };
+  const ed = fakeEditor();
+  const auto = createAutosave(spy, () => ed, { debounceMs: 10 });
+  await auto.startDraft('d1', photo());
+  const p = patch();
+  ed.pools = { strokes: {}, patches: { p1: p } };
+  assert.equal(await auto.saveTile('p1', rgbaFor(p), p), true);
+  ed.commit({ ...ed.committed, remove: ['p1'] }, 'Removed spot', 'remove');
+  await auto.flush();
+  assert.deepEqual(puts, ['source:d1'], 'the original is only a reference; no tile copy');
+  assert.deepEqual(await store.docKeys(), ['d1']);
 });
 
 test('saveTile never throws, even for a tile that does not fit its rect', async () => {
