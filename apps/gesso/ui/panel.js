@@ -5,7 +5,7 @@
 // PanelSpec = {
 //   title, hint, cancel: bool, done: bool,
 //   quick: [{ id, label, kind: 'action'|'state'|'thumb'|'wide'|'note', selected, disabled, isDefault, icon, thumb }],
-//   dials: [{ id, label, value, changed, selected, disabled, kind: 'dial'|'action'|'mode' }],
+//   dials: [{ id, label, value, changed, selected, disabled, danger, kind: 'dial'|'action'|'mode' }],
 //   slot:  { kind: 'ruler', id, spec, value } | { kind: 'segment', id, options: [{ id, label }], selected }
 //        | { kind: 'swatches', colors, selected } | { kind: 'message', text, action } | null,
 // }
@@ -91,7 +91,7 @@ export function createPanel(root, handlers) {
     for (const d of items) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.className = `dial dial--${d.kind ?? 'dial'}` + (d.selected ? ' is-selected' : '') + (d.changed ? ' is-changed' : '');
+      b.className = `dial dial--${d.kind ?? 'dial'}` + (d.selected ? ' is-selected' : '') + (d.changed ? ' is-changed' : '') + (d.danger ? ' dial--danger' : '');
       b.dataset.dial = d.id;
       b.disabled = !!d.disabled;
       if (d.kind !== 'action') b.setAttribute('aria-pressed', d.selected ? 'true' : 'false');

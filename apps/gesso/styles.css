@@ -429,6 +429,7 @@ button:disabled { cursor: default; }
   vertical-align: 2px;
 }
 .dial:disabled { opacity: 0.4; }
+.dial--danger, .dial--danger .dial__value { color: var(--danger); }
 
 .message {
   margin: 0;

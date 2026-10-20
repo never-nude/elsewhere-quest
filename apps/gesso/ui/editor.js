@@ -8,7 +8,8 @@
 //     onQuick(ed, id), onDial(ed, id), onSegment(ed, id), onSwatch(ed, hex), onMessage(ed, action),
 //     onRuler(ed, phase, value), onGesture(ed, g) -> handled,
 //     hitTarget(ed, x, y) -> target | null, dragAxis(ed) -> 'free'|'x'|'none',
-//     drawOverlay(ed, ctx), wantsCaptions: bool }
+//     drawOverlay(ed, ctx), wantsCaptions: bool,
+//     settle() -> Promise | null   (work still landing as a step; Save waits for it) }
 
 import * as H from '../lib/history.js';
 import { createDoc, describeChange, developInput } from '../lib/doc.js';
@@ -219,6 +220,18 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     if (!quiet) afterChange();
   }
 
+  // A new photo or a restored draft replaces everything. New photo can be tapped
+  // with a tool open, so that tool lets go of its state first (words being typed,
+  // a heal still computing) and none of it reaches the new document.
+  function dropTool() {
+    if (toolId === 'home') return;
+    liveState = null;
+    tool.close?.(ed, { cancel: true });
+    toolMark = null;
+    app.dataset.tool = 'home';
+    for (const b of dockButtons) b.setAttribute('aria-pressed', 'false');
+  }
+
   function refresh() {
     if (!current()) return;
     panel.render(tool.panel(ed));
@@ -363,7 +376,18 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.beginPath(); // a path never carries over into the next frame
     overlayDrew = false;
-    if (compare.mode !== 'before' && tool.wantsCaptions !== false) ed.drawCaptions?.(ctx, toolId === 'text' ? 1 : toolId === 'remove' ? 0.3 : 1);
+    if (compare.mode !== 'before' && tool.wantsCaptions !== false) {
+      // Before has no captions: in a wipe they stay on the After side only.
+      ctx.save();
+      if (compare.mode === 'wipe') {
+        ctx.beginPath();
+        ctx.rect(compare.x, 0, stage.clientWidth - compare.x, stage.clientHeight);
+        ctx.clip();
+      }
+      ed.drawCaptions?.(ctx, toolId === 'text' ? 1 : toolId === 'remove' ? 0.3 : 1);
+      ctx.restore();
+      ctx.beginPath(); // the clip rect must not become the tool's path
+    }
     tool.drawOverlay?.(ed, ctx);
     if (compare.mode === 'wipe') {
       ctx.strokeStyle = '#f3eee6';
@@ -477,6 +501,11 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       requestRender();
       return;
     }
+    // SPEC F11: a caption tapped in any other tool opens Text with it selected.
+    if (g.type === 'tap' && toolId !== 'text' && typeof g.target === 'string' && g.target.startsWith('caption:')) {
+      if (!tool.onGesture?.(ed, g)) openTool('text', { select: g.target.slice(8) });
+      return;
+    }
     tool.onGesture?.(ed, g);
   }
 
@@ -561,9 +590,14 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     });
   }
 
-  saveBtn.addEventListener('click', () => {
+  saveBtn.addEventListener('click', async () => {
     if (!current()) return;
+    // A step still computing (a Remove fill, even one left running by Done) lands
+    // first, so the saved copy has it. Sharing needs its own tap on the sheet, so
+    // waiting here costs no user activation.
+    const pending = Object.values(tools).map((t) => t?.settle?.(ed)).filter(Boolean);
     if (toolId !== 'home') closeTool({ cancel: false });
+    if (pending.length) await Promise.all(pending);
     onSave?.(ed);
   });
 
@@ -636,6 +670,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
 
     // Start editing a freshly imported photo.
     begin({ id, info, now }) {
+      dropTool();
       sourceInfo = info;
       const doc = createDoc({ id, sourceType: info.type, natW: info.natW, natH: info.natH, w: renderer.size.width, h: renderer.size.height, now });
       hist = H.createHistory(doc);
@@ -658,6 +693,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
 
     // Resume a stored draft (history + pools + tiles already loaded).
     resume({ info, history, pools: p, tiles: t, savedRevision: sr }) {
+      dropTool();
       sourceInfo = info;
       hist = history;
       pools = p;
@@ -692,6 +728,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       hist = H.jumpTo(hist, i);
       revision++;
       syncGpu(current());
+      tool.onHistory?.(ed);
       afterChange();
     },
 

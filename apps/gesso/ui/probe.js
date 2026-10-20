@@ -87,10 +87,17 @@ export async function runProbe(root = document.body) {
       await navigator.clipboard.writeText(text);
       ok = true;
     } catch {
+      // No clipboard API (an http:// address is not a secure context). iOS will not
+      // select inside a read-only field, so it is writable just for the copy.
       fallback.hidden = false;
       fallback.value = text;
+      fallback.readOnly = false;
+      fallback.focus({ preventScroll: true });
       fallback.select();
+      fallback.setSelectionRange(0, text.length);
       try { ok = doc.execCommand('copy'); } catch { ok = false; }
+      fallback.readOnly = true;
+      fallback.blur(); // put the keyboard away; the text stays there to select by hand
     }
     note.textContent = ok ? 'Copied' : 'Select the text below and copy it';
   });

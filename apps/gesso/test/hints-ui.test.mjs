@@ -15,7 +15,7 @@ function fakeStorage(init = {}) {
   };
 }
 
-function rig({ storage = fakeStorage(), faded = false } = {}) {
+function rig({ storage = fakeStorage(), faded = false, covers = [] } = {}) {
   let t = 1000;
   const tips = [];
   const fade = { on: faded, cb: null };
@@ -28,6 +28,8 @@ function rig({ storage = fakeStorage(), faded = false } = {}) {
       fade.cb = cb;
       return () => { fade.cb = null; };
     },
+    covers: () => covers,
+    defer: (fn) => fn(),
   });
   return {
     hints, tips, storage, fade,
@@ -141,6 +143,8 @@ test('a hint earned under the rewind tape waits for the tape to go', () => {
     now: () => 1000,
     panelEl: () => ({ classList: { contains: (c) => classes.has(c) } }),
     watchFade: (el, cb) => { watcher = cb; return () => { watcher = null; }; },
+    covers: () => [],
+    defer: (fn) => fn(),
   });
   assert.equal(hints.event('undo'), null);
   assert.equal(hints.event('undo'), null);
@@ -152,6 +156,38 @@ test('a hint earned under the rewind tape waits for the tape to go', () => {
   classes.clear();
   watcher();
   assert.deepEqual(tips, [hintById('H5').text]);
+});
+
+test('a hint earned under the Save sheet or the keyboard is dropped, not marked', () => {
+  const sheet = { hidden: false };
+  const r = rig({ covers: [sheet, null] });
+  assert.equal(r.hints.event('heal'), null);
+  assert.equal(r.tips.length, 0);
+  assert.equal(r.storage.getItem(HINTS_KEY), null);
+  assert.equal(r.hints.pending, null);
+  sheet.hidden = true;
+  assert.equal(r.hints.event('heal'), 'H6'); // its next chance
+  assert.deepEqual(JSON.parse(r.storage.getItem(HINTS_KEY)), ['H6']);
+});
+
+test('the decision waits for the handler that earned it', async () => {
+  const tips = [];
+  const sheet = { hidden: true };
+  const storage = fakeStorage();
+  const hints = createHints(() => ({ panel: { showTip: (text) => tips.push(text) } }), {
+    storage, now: () => 1000, panelEl: () => null, covers: () => [sheet],
+  });
+  // Save closes Text with a caption on the photo (H11), then raises its sheet.
+  hints.event('home-with-caption');
+  sheet.hidden = false;
+  hints.event('auto-enhance'); // same handler: waits behind the first, not queued
+  await Promise.resolve();
+  assert.equal(tips.length, 0);
+  assert.equal(storage.getItem(HINTS_KEY), null);
+  sheet.hidden = true;
+  hints.event('home-with-caption');
+  await Promise.resolve();
+  assert.deepEqual(tips, [hintById('H11').text]);
 });
 
 test('unknown events and junk are ignored; broken storage still shows hints', () => {
@@ -174,7 +210,7 @@ test('stored junk is tolerated', () => {
 
 test('no editor yet: nothing shows and nothing is marked', () => {
   const storage = fakeStorage();
-  const hints = createHints(() => null, { storage, now: () => 0, panelEl: () => null });
+  const hints = createHints(() => null, { storage, now: () => 0, panelEl: () => null, covers: () => [], defer: (fn) => fn() });
   assert.equal(hints.event('auto-enhance'), null);
   assert.equal(storage.getItem(HINTS_KEY), null);
 });

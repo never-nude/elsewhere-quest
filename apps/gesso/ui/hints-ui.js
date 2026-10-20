@@ -7,7 +7,11 @@
 // marked, so it gets its next chance (lib/hints.js thresholds are "at least"). A
 // hint earned while the panel is faded under a ruler or photo drag, or covered by
 // the rewind tape, waits for the panel to come back, so it is read at full
-// strength for its whole time.
+// strength for its whole time. One earned under the Save sheet or the keyboard is
+// dropped instead (also unmarked): by the time those go, its moment has passed.
+//
+// The decision waits for the handler that earned the hint to finish (`defer`, a
+// microtask): Save asks for H11 as it closes the tool, then raises its sheet.
 //
 // Events reach here through ed.hint(name, data); names lib/hints.js does not know
 // ('pinch', 'first-ruler-drag') are counted as nothing.
@@ -25,6 +29,7 @@ export function createHints(getEditor, {
   // Surfaces that hide the whole panel: the Save sheet, its touch-and-hold
   // fallback, and the Text edit bar (the keyboard is up under it).
   covers = () => ['sheet', 'fallback', 'editbar'].map((id) => globalThis.document?.getElementById(id)),
+  defer = (fn) => queueMicrotask(fn),
 } = {}) {
   let counters = initialCounters();
   let shown = reviveShown(read(storage, HINTS_KEY));
@@ -52,34 +57,45 @@ export function createHints(getEditor, {
     return true;
   }
 
+  // Show `id` now, hold it for the panel, or drop it. `pending` is cleared here
+  // and set again only while it waits for a fade or the tape.
+  function offer(id) {
+    pending = null;
+    // A fill can land after Save was tapped or Text was opened: marked under the
+    // sheet or the keyboard, the hint would never be read.
+    if (covers().some((el) => el && !el.hidden)) return false;
+    if (isFaded()) {
+      unwatch = watchFade(panelEl(), release);
+      if (unwatch) {
+        pending = id;
+        return false;
+      }
+    }
+    return show(id);
+  }
+
   function release() {
     if (isFaded()) return;
     unwatch?.();
     unwatch = null;
-    const id = pending;
-    pending = null;
-    if (id) show(id);
+    if (pending) offer(pending);
   }
 
   return {
+    // Returns the id shown, when `defer` runs at once (tests); in the app the
+    // decision comes a microtask later and this returns null.
     event(name, data) {
       const e = data && typeof data === 'object' ? { ...data, name } : name;
       const r = observe(counters, e, shown);
       counters = r.counters;
       const id = r.hint;
       if (!id || pending || now() < upUntil) return null;
-      // A fill can land after Save was tapped or Text was opened. Under the sheet or
-      // the keyboard the hint would be marked but never read; dropped, it gets its
-      // next chance.
-      if (covers().some((el) => el && !el.hidden)) return null;
-      if (isFaded()) {
-        unwatch = watchFade(panelEl(), release);
-        if (unwatch) {
-          pending = id;
-          return null;
-        }
-      }
-      return show(id) ? id : null;
+      pending = id;
+      let result = null;
+      defer(() => {
+        if (pending === id && !unwatch) result = offer(id) ? id : null;
+      });
+      return result;
     },
     // For tests and the probe: what has been shown ever, and whether one is up now.
     get shown() { return [...shown]; },

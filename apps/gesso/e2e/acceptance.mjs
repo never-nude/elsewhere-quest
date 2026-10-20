@@ -60,7 +60,7 @@ const SCENARIO_MS = 240_000;
 // ------------------------------------------------------------------ arguments
 
 function parseArgs(argv) {
-  const o = { base: 'http://127.0.0.1:4174/gesso/', only: null, out: DEFAULT_OUT, timeScale: 1, help: false };
+  const o = { base: 'http://127.0.0.1:4174/gesso/', only: null, out: DEFAULT_OUT, timeScale: 1, viewport: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const eq = a.indexOf('=');
@@ -71,19 +71,37 @@ function parseArgs(argv) {
       return v;
     };
     if (key === '--base') o.base = val();
-    else if (key === '--only') o.only = new Set(val().split(',').map((s) => Number(s.trim())).filter((n) => CHECKS[n]));
-    else if (key === '--out') o.out = resolve(val());
-    else if (key === '--time-scale') o.timeScale = Math.max(1, Number(val()) || 1);
-    else if (key === '--help' || key === '-h') o.help = true;
+    else if (key === '--only') {
+      // A typo must not run nothing and exit 0, which reads as a pass.
+      const raw = val().split(',').map((s) => s.trim()).filter(Boolean);
+      const bad = raw.filter((s) => !/^\d+$/.test(s) || !CHECKS[Number(s)]);
+      if (!raw.length || bad.length) throw new Error(`--only takes check numbers 1–17, comma-separated (got ${JSON.stringify(bad.join(',') || '')})`);
+      o.only = new Set(raw.map(Number));
+    } else if (key === '--out') o.out = resolve(val());
+    else if (key === '--time-scale') {
+      const n = Number(val());
+      if (!(n >= 1)) throw new Error('--time-scale must be a number ≥ 1');
+      o.timeScale = n;
+    } else if (key === '--viewport') {
+      const m = /^(\d+)x(\d+)$/.exec(val());
+      if (!m) throw new Error('--viewport takes WIDTHxHEIGHT, e.g. 956x440');
+      o.viewport = { width: Number(m[1]), height: Number(m[2]) };
+    } else if (key === '--help' || key === '-h') o.help = true;
     else throw new Error(`unknown argument: ${a}`);
   }
   if (!o.base.endsWith('/')) o.base += '/';
   return o;
 }
 
-const opts = parseArgs(process.argv.slice(2));
+let opts;
+try {
+  opts = parseArgs(process.argv.slice(2));
+} catch (err) {
+  console.error(`${err.message}\nnode e2e/acceptance.mjs --help lists the options.`);
+  process.exit(2);
+}
 if (opts.help) {
-  console.log('node e2e/acceptance.mjs [--base URL] [--only 1,2,8] [--out DIR] [--time-scale 1]\n');
+  console.log('node e2e/acceptance.mjs [--base URL] [--only 1,2,8] [--out DIR] [--time-scale 1] [--viewport 440x956]\n');
   for (const [n, name] of Object.entries(CHECKS)) console.log(`${String(n).padStart(3)}  ${name}`);
   process.exit(0);
 }
@@ -92,6 +110,11 @@ const wanted = (n) => !opts.only || opts.only.has(n);
 // software-GL hosts; 1 is the spec.
 const budget = (ms) => Math.round(ms * opts.timeScale);
 const BASE = new URL(opts.base);
+// The behaviour checks (7–12's browser half, 14–17) run at one viewport: the
+// 17 Pro Max unless --viewport picks another (a landscape one, say).
+const BEHAVIOUR_VP = opts.viewport
+  ? { ...opts.viewport, label: `${opts.viewport.width}x${opts.viewport.height}` }
+  : PRIMARY;
 
 // ------------------------------------------------------------------ small helpers
 
@@ -186,6 +209,7 @@ class Trial {
     if (this.done) return;
     this.done = true;
     const errs = this.s ? this.s.errors.slice(this.errMark) : [];
+    for (const e of errs) e.claimed = true; // what no check claims fails at s.close()
     if (errs.length) await this.fail(`page error${errs.length > 1 ? 's' : ''}: ${list(errs.map((e) => e.message), 2)}`);
     const status = this.reasons.length ? 'FAIL' : this.skipped ? 'SKIP' : 'PASS';
     record(this.no, { status, where: this.where, reasons: this.reasons, notes: this.skipped ? [this.skipped, ...this.notes] : this.notes, shots: this.shots });
@@ -303,6 +327,35 @@ function pageHelpers() {
       });
     },
     compare: () => q('#stage')?.dataset.compare ?? null,
+    // The exact base pixels (fills included, before any tone) in a box twice the
+    // speck's size around it: a hash to compare states with, and the darkest luma
+    // inside the speck's own radius (0.06 while it is there, sky after a heal).
+    // Undo or Cancel can restore a deep-equal document and still leave a fill on
+    // the photo; only the pixels tell.
+    speckPixels(fx) {
+      const ed = window.gesso?.editor, r = window.gesso?.renderer;
+      if (!ed?.committed || !r?.readRect) return null;
+      const st = ed.committed;
+      const k = st.source.w / fx.width;
+      const half = Math.ceil(fx.speck.diameter * k);
+      const cx = fx.speck.x * k, cy = fx.speck.y * k;
+      const x = Math.max(0, Math.round(cx) - half), y = Math.max(0, Math.round(cy) - half);
+      const rect = { x, y, w: Math.min(st.source.w - x, 2 * half), h: Math.min(st.source.h - y, 2 * half) };
+      const px = r.readRect(rect);
+      let hash = 2166136261;
+      for (let i = 0; i < px.length; i++) hash = Math.imul(hash ^ px[i], 16777619);
+      // The disc is centred in the box, so row order (top- or bottom-first) does not matter.
+      const rad = (fx.speck.diameter / 2) * k - 1;
+      let dark = 1;
+      for (let j = 0; j < rect.h; j++) {
+        for (let i = 0; i < rect.w; i++) {
+          if (Math.hypot(rect.x + i + 0.5 - cx, rect.y + j + 0.5 - cy) > rad) continue;
+          const o = (j * rect.w + i) * 4;
+          dark = Math.min(dark, (0.2126 * px[o] + 0.7152 * px[o + 1] + 0.0722 * px[o + 2]) / 255);
+        }
+      }
+      return { hash: hash >>> 0, dark: Math.round(dark * 1000) / 1000 };
+    },
     insets() {
       const d = document.createElement('div');
       d.style.cssText = 'position:fixed;visibility:hidden;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)';
@@ -493,9 +546,27 @@ function shareStub() {
   };
   EventTarget.prototype.addEventListener = function (type, listener, options) { return add.call(this, type, wrap(listener), options); };
   EventTarget.prototype.removeEventListener = function (type, listener, options) { return remove.call(this, type, wrappers.get(listener) ?? listener, options); };
+  // `el.onclick = fn` handlers too, so a share from one is not misread as late.
+  const unwrapped = new WeakMap();
+  for (const proto of [HTMLElement.prototype, SVGElement.prototype, Document.prototype, Window.prototype]) {
+    const d = Object.getOwnPropertyDescriptor(proto, 'onclick');
+    if (!d?.set || !d.configurable) continue;
+    Object.defineProperty(proto, 'onclick', {
+      ...d,
+      get() { const v = d.get.call(this); return unwrapped.get(v) ?? v; },
+      set(fn) {
+        if (typeof fn !== 'function') { d.set.call(this, fn); return; }
+        const w = wrap(fn);
+        unwrapped.set(w, fn);
+        d.set.call(this, w);
+      },
+    });
+  }
   const share = function share(data) {
     const ev = window.event;
-    window.__shareCalls.push({ inClick: clickDepth > 0, eventType: ev ? ev.type : null, data });
+    // iOS needs transient activation; Chromium reports it, so record it too.
+    const active = navigator.userActivation ? navigator.userActivation.isActive : null;
+    window.__shareCalls.push({ inClick: clickDepth > 0, eventType: ev ? ev.type : null, active, data });
     return Promise.resolve();
   };
   const canShare = function canShare(data) { return !!data && Array.isArray(data.files) && data.files.length > 0; };
@@ -514,8 +585,16 @@ function noShare() {
 
 let browser = null;
 let fixture = null;
+// Sessions still open, so a scenario that runs out of time can be stopped: closing
+// its contexts makes whatever it is waiting on throw.
+const liveSessions = new Set();
+let halted = null; // why no new session may open (a scenario timed out)
 
-async function openSession({ viewport = PRIMARY, js = true, init = [], label }) {
+// `checks` are the check numbers this session serves: a page error that happens
+// outside every check's own window (during setup, between checks) fails the first
+// of them that was asked for, so no error is ever only a line in a log.
+async function openSession({ viewport = BEHAVIOUR_VP, js = true, init = [], label, checks = [] }) {
+  if (halted) throw new Error(halted);
   const context = await browser.newContext({
     viewport: { width: viewport.width, height: viewport.height },
     deviceScaleFactor: 3,
@@ -524,7 +603,8 @@ async function openSession({ viewport = PRIMARY, js = true, init = [], label }) 
     userAgent: UA,
     javaScriptEnabled: js,
   });
-  const s = { context, page: null, viewport, label, errors: [], logs: [], requests: [], trials: [], taps: 0, insetsEmulated: false };
+  const s = { context, page: null, viewport, label, checks, errors: [], logs: [], requests: [], trials: [], taps: 0, insetsEmulated: false };
+  liveSessions.add(s);
   context.on('request', (r) => s.requests.push(r.url()));
   if (js) {
     await context.addInitScript(pageHelpers);
@@ -539,8 +619,23 @@ async function openSession({ viewport = PRIMARY, js = true, init = [], label }) 
     await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: insetsFor(viewport) });
     s.insetsEmulated = true;
   } catch { /* older Chromium: env() stays 0 and checks measure against that */ }
+  let closed = false;
   s.close = async () => {
+    if (closed) return;
+    closed = true;
     for (const t of s.trials) if (!t.done) { await t.fail('not finished: the scenario stopped early'); await t.end(); }
+    const loose = s.errors.filter((e) => !e.claimed);
+    const owner = s.checks.find(wanted);
+    if (loose.length && owner) {
+      record(owner, {
+        status: 'FAIL',
+        where: `${label}, outside a check`,
+        reasons: [`page error${loose.length > 1 ? 's' : ''} during setup or between checks: ${list(loose.map((e) => e.message), 2)}`],
+        notes: [],
+        shots: [],
+      });
+    }
+    liveSessions.delete(s);
     try {
       await mkdir(join(opts.out, 'logs'), { recursive: true });
       const errs = s.errors.map((e) => `[pageerror] ${e.stack ?? e.message}`);
@@ -609,6 +704,10 @@ async function tap(s, sel, { timeout = 3000 } = {}) {
 }
 
 const snap = (s) => s.page.evaluate(() => window.__acc.snap());
+const speckPixels = (s) => s.page.evaluate((fx) => window.__acc.speckPixels(fx), FIXTURE);
+// The speck's core is 0.06; sky around it is about 0.5. Well above the core means
+// the heal covered it.
+const SPECK_GONE_LUMA = 0.25;
 const toolOf = (s) => s.page.evaluate(() => document.querySelector('#app')?.dataset.tool);
 
 async function openTool(s, id) {
@@ -694,7 +793,7 @@ const STATES = [
 // ------------------------------------------------------------------ scenario: layout (1, 2, 3, 4, 5, 13 and 12's gesture table)
 
 async function scenarioLayout(vp, { gestures }) {
-  const s = await openSession({ viewport: vp, label: `layout-${vp.label}` });
+  const s = await openSession({ viewport: vp, label: `layout-${vp.label}`, checks: [1, 2, 3, 4, 5, 13, ...(gestures ? [12] : [])] });
   const where = vp.label;
   try {
     await gotoApp(s);
@@ -848,7 +947,7 @@ async function judgeZoom(t, state, m) {
 // ------------------------------------------------------------------ scenario: static paint (6)
 
 async function scenarioStatic(vp) {
-  const s = await openSession({ viewport: vp, js: false, label: `static-${vp.label}` });
+  const s = await openSession({ viewport: vp, js: false, label: `static-${vp.label}`, checks: [6] });
   try {
     await check(s, 6, vp.label, async (t) => {
       await s.page.goto(opts.base, { waitUntil: 'load', timeout: 30_000 });
@@ -887,7 +986,7 @@ async function scenarioStatic(vp) {
 // ------------------------------------------------------------------ scenario: one-tap defaults (7) and undo integrity (10)
 
 async function scenarioDefaults() {
-  const s = await openSession({ label: 'defaults' });
+  const s = await openSession({ label: 'defaults', checks: [7, 10] });
   const t7 = begin(s, 7, 'one-tap defaults');
   const t10 = begin(s, 10, 'Undo after each check-7 action');
   const verified = [];
@@ -896,13 +995,17 @@ async function scenarioDefaults() {
     await importFixture(s);
 
     // Undo right after an action: the state from before it, and "Undid: …".
-    const undoAfter = async (what, before) => {
+    const undoAfter = async (what, before, pixels = null) => {
       await tap(s, '#undo'); // every action starts from the photo as opened
       if (!t10) return;
       const after = await snap(s);
       const toast = await s.page.evaluate(() => ({ text: document.querySelector('#toast')?.textContent ?? '', on: document.querySelector('#toast')?.classList.contains('is-on') }));
       let ok = true;
       if (after.state !== before.state) ok = await t10.fail(`${what}: after Undo the document differs from before (${diffKeys(before.state, after.state).join(', ')})`);
+      if (pixels) {
+        const now = await speckPixels(s);
+        if (now && now.hash !== pixels.hash) ok = await t10.fail(`${what}: after Undo the photo around the speck is not the photo from before (darkest luma ${now.dark}, was ${pixels.dark}): the fill was not taken back exactly`);
+      }
       if (!toast.text.startsWith('Undid:')) ok = await t10.fail(`${what}: Undo toast reads ${quote(toast.text)} (want it to begin "Undid:")`);
       else if (!toast.on) ok = await t10.fail(`${what}: the "Undid:" toast is not showing`);
       if (ok) verified.push(what);
@@ -977,6 +1080,7 @@ async function scenarioDefaults() {
       const sizes = await s.page.evaluate(() => ['small', 'medium', 'large'].map((id) => document.querySelector(`[data-quick="${id}"]`)?.getAttribute('aria-pressed') ?? null));
       if (t7) await t7.expect(sizes[1] === 'true' && sizes[0] !== 'true' && sizes[2] !== 'true', `Remove opened with Small/Medium/Large pressed = ${sizes.join('/')} (want Medium only)`);
       const before = await snap(s);
+      const px0 = await speckPixels(s);
       await pointerTap(s, await speckPoint(s));
       const got = await waitEntry(s, before, 5000);
       const upAt = await s.page.evaluate(() => window.__acc.lastStageUp);
@@ -988,7 +1092,15 @@ async function scenarioDefaults() {
         else t7.note(`Removed spot in ${ms} ms`);
       }
       await settle(s, 200);
-      if (got) await undoAfter('Remove tap', before);
+      const px1 = got ? await speckPixels(s) : null;
+      if (t7 && px0 && px1) {
+        // "Removed spot" is only the label; the default has done its job when the
+        // speck is gone from the pixels.
+        if (px1.hash === px0.hash) await t7.fail('Remove: "Removed spot" changed no pixels around the speck');
+        else if (px1.dark < SPECK_GONE_LUMA) await t7.fail(`Remove: the speck is still on the photo after "Removed spot" (darkest luma ${px1.dark} inside it, was ${px0.dark})`);
+        else t7.note(`speck luma ${px0.dark} → ${px1.dark}`);
+      }
+      if (got) await undoAfter('Remove tap', before, px0);
       else if (t10) await t10.fail('unverified: the Remove tap added no step (see check 7)');
       await goHome(s, 'done');
     } catch (err) {
@@ -1082,6 +1194,7 @@ async function oneMinuteFlow(s, t8) {
           calls: calls.map((c) => ({
             inClick: c.inClick,
             eventType: c.eventType,
+            active: c.active,
             keys: c.data && typeof c.data === 'object' ? Object.keys(c.data) : [],
             files: Array.isArray(c.data?.files) ? c.data.files.map((f) => ({ isFile: f instanceof File, type: f.type, size: f.size, name: f.name })) : null,
           })),
@@ -1104,6 +1217,7 @@ async function oneMinuteFlow(s, t8) {
     if (shared.count !== 1) await t8.fail(`navigator.share was called ${shared.count} times (want exactly 1)`);
     if (c) {
       if (!c.inClick) await t8.fail(`navigator.share ran ${c.eventType === 'click' ? 'after the click handler returned (a microtask or an await)' : c.eventType ? `in a ${c.eventType} handler` : 'outside any event handler'}, not synchronously in the click handler`);
+      else if (c.active === false) await t8.fail('navigator.share ran without transient user activation (iOS refuses such a share)');
       const extra = c.keys.filter((k) => k === 'title' || k === 'text');
       await t8.expect(!extra.length, `the share data carries ${extra.join(' and ')} (want files only)`);
       if (!c.files) await t8.fail(`the share data has no files array (keys: ${c.keys.join(', ') || 'none'})`);
@@ -1132,7 +1246,7 @@ async function oneMinuteFlow(s, t8) {
 }
 
 async function scenarioFlow() {
-  const s = await openSession({ label: 'flow', init: [shareStub] });
+  const s = await openSession({ label: 'flow', init: [shareStub], checks: [8, 15, 17] });
   const t8 = begin(s, 8, 'Auto-enhance, Crop, Auto, Save');
   const t15 = begin(s, 15, 'requests during check 8');
   try {
@@ -1222,7 +1336,7 @@ function calloutFromSources(el, sheets) {
 }
 
 async function scenarioFallback() {
-  const s = await openSession({ label: 'fallback', init: [noShare] });
+  const s = await openSession({ label: 'fallback', init: [noShare], checks: [9] });
   try {
     await check(s, 9, 'navigator.share deleted', async (t) => {
       await gotoApp(s);
@@ -1237,8 +1351,14 @@ async function scenarioFallback() {
         await t.fail(`Save did not open the Save sheet (toast ${quote(toast)}), so Save to Photos could not be tapped`);
         return;
       }
-      const left = Math.max(0, budget(4000) - (Date.now() - saveAt));
-      await s.page.waitForSelector('#share[data-ready]', { state: 'attached', timeout: left }).catch(() => {});
+      // Check 9 sets no time limit (check 8 times readiness), so a slow host must
+      // not turn this into a failure: wait as long as an export can take.
+      const ready = await s.page.waitForSelector('#share[data-ready]', { state: 'attached', timeout: budget(30_000) }).then(() => true, () => false);
+      if (!ready) {
+        const label = await s.page.locator('#share').innerText().catch(() => '');
+        await t.fail(`Save to Photos never became ready (it reads ${quote(label)} ${Math.round((Date.now() - saveAt) / 1000)} s after Save)`);
+        return;
+      }
       await tap(s, '#share', { timeout: 4000 });
       const shown = await s.page.waitForFunction(() => [...document.querySelectorAll('img')].some((i) => i.src.startsWith('blob:') && window.__acc.visible(i)), null, { timeout: 4000 }).then(() => true, () => false);
       if (!shown) {
@@ -1283,7 +1403,7 @@ async function scenarioFallback() {
 // ------------------------------------------------------------------ scenario: Before (11)
 
 async function scenarioBefore() {
-  const s = await openSession({ label: 'before' });
+  const s = await openSession({ label: 'before', checks: [11] });
   try {
     await gotoApp(s);
     await importFixture(s);
@@ -1353,7 +1473,7 @@ async function scenarioBefore() {
 // ------------------------------------------------------------------ scenario: hints in the browser (12)
 
 async function scenarioHints() {
-  const s = await openSession({ label: 'hints' });
+  const s = await openSession({ label: 'hints', checks: [12] });
   try {
     await check(s, 12, 'hints across a reload', async (t) => {
       await gotoApp(s);
@@ -1512,7 +1632,7 @@ async function scenarioOffline() {
   let s = null;
   try {
     proxy = await startProxy(opts.base);
-    s = await openSession({ label: 'offline' });
+    s = await openSession({ label: 'offline', checks: [14] });
   } catch (err) {
     record(14, { status: 'FAIL', where: 'offline reload (browser)', reasons: [`could not run: ${firstLine(err)}`], notes: [], shots: [] });
     await proxy?.close();
@@ -1588,7 +1708,7 @@ async function scenarioOffline() {
 // ------------------------------------------------------------------ scenario: Cancel (16)
 
 async function scenarioCancel() {
-  const s = await openSession({ label: 'cancel' });
+  const s = await openSession({ label: 'cancel', checks: [16] });
   try {
     await gotoApp(s);
     await importFixture(s);
@@ -1608,6 +1728,7 @@ async function scenarioCancel() {
         try {
           await openTool(s, tool);
           const s0 = await snap(s);
+          const px0 = tool === 'remove' ? await speckPixels(s) : null;
           await changes[tool](s0);
           await settle(s, 200);
           const s1 = await snap(s);
@@ -1624,6 +1745,10 @@ async function scenarioCancel() {
           if (s2.state !== s0.state) await t.fail(`${tool}: after Cancel the document differs from when the tool opened (${diffKeys(s0.state, s2.state).join(', ')})`);
           if (s2.shown !== s2.state) await t.fail(`${tool}: after Cancel a live preview is still showing (${diffKeys(s2.state, s2.shown).join(', ')})`);
           if (JSON.stringify(s2.labels) !== JSON.stringify(s0.labels)) await t.fail(`${tool}: history after Cancel is ${quote(s2.labels.join(' › '))} (want ${quote(s0.labels.join(' › '))})`);
+          if (px0) {
+            const px2 = await speckPixels(s);
+            if (px2 && px2.hash !== px0.hash) await t.fail(`${tool}: after Cancel the photo around the speck is not the photo from when the tool opened (darkest luma ${px2.dark}, was ${px0.dark})`);
+          }
         } catch (err) {
           await t.fail(`${tool}: ${firstLine(err)}`);
           await goHome(s).catch(() => {});
@@ -1656,7 +1781,7 @@ async function runLayout() {
   let gestures = null;
   if (wanted(12)) {
     // lib/hints.js as the app serves it, read in a throwaway page.
-    const s = await openSession({ label: 'gesture-table' });
+    const s = await openSession({ label: 'gesture-table', checks: [12] });
     try {
       await gotoApp(s);
       gestures = await s.page.evaluate(async () => {
@@ -1716,22 +1841,43 @@ async function main() {
     await page.close();
     console.log(`fixture ${fixture.width}×${fixture.height}, median luma ${fixture.median.toFixed(3)}, ${(fixture.bytes / 1e6).toFixed(2)} MB → ${fixture.path}`);
 
+    const limit = budget(SCENARIO_MS);
     for (const sc of SCENARIOS) {
       if (!sc.checks.some(wanted)) continue;
       const t0 = Date.now();
       process.stdout.write(`… ${sc.name}`);
       let timer = null;
-      try {
-        await Promise.race([
-          sc.run(),
-          new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`timed out after ${SCENARIO_MS / 1000} s`)), SCENARIO_MS); }),
-        ]);
-      } catch (err) {
+      const running = sc.run();
+      const outcome = await Promise.race([
+        running.then(() => null, (err) => err ?? new Error('failed')),
+        new Promise((r) => { timer = setTimeout(() => r('timeout'), limit); }),
+      ]);
+      clearTimeout(timer);
+      if (outcome === 'timeout') {
+        // Stop it for real (it would otherwise keep driving pages under the next
+        // scenario), and fail every check it serves: the runs it finished do not
+        // cover the viewports or steps it never reached.
+        halted = `the ${sc.name} scenario ran out of time`;
+        await Promise.all([...liveSessions].map((s) => s.context.close().catch(() => {})));
+        let grace = null;
+        await Promise.race([running.catch(() => {}), new Promise((r) => { grace = setTimeout(r, 30_000); })]);
+        clearTimeout(grace); // a pending timer would hold the process open
+        for (const s of [...liveSessions]) await s.close();
+        halted = null;
         for (const no of sc.checks.filter(wanted)) {
-          if (!results.has(no)) record(no, { status: 'FAIL', where: sc.name, reasons: [`scenario failed: ${firstLine(err)}`], notes: [], shots: [] });
+          const runs = (results.get(no) ?? []).filter((r) => r.status !== 'FAIL').map((r) => r.where);
+          record(no, {
+            status: 'FAIL',
+            where: sc.name,
+            reasons: [`the ${sc.name} scenario timed out after ${limit / 1000} s${runs.length ? `; only ${runs.join(', ')} finished` : ''} (try --time-scale 2 on a slow host)`],
+            notes: [],
+            shots: [],
+          });
         }
-      } finally {
-        clearTimeout(timer);
+      } else if (outcome) {
+        for (const no of sc.checks.filter(wanted)) {
+          if (!results.has(no)) record(no, { status: 'FAIL', where: sc.name, reasons: [`scenario failed: ${firstLine(outcome)}`], notes: [], shots: [] });
+        }
       }
       process.stdout.write(` ${((Date.now() - t0) / 1000).toFixed(1)} s\n`);
     }
