@@ -39,6 +39,7 @@ let sharing = false;
 let fallbackUrl = '';
 let fillTarget = '';
 let openedAt = 0;
+let downAt = 0; // timeStamp of the last pointerdown on the sheet
 let closeTimer = 0;
 let previewOut = null; // the output size the preview shows, to refit it on rotation
 let resizeFrame = 0;
@@ -50,6 +51,7 @@ export function openSaveSheet(ed, { captions = null } = {}) {
   session = { ed, captions: captions ?? ed.captions ?? null };
   sharing = false;
   openedAt = performance.now();
+  downAt = 0;
   clearTimeout(closeTimer); // a slide-out still finishing must not close this sheet
   if (!reopening) ui.returnFocus = document.activeElement;
   ui.sheet.hidden = false;
@@ -336,9 +338,15 @@ function install(root) {
   els.card.tabIndex = -1; // focus lands in the dialog, not behind it
 
   els.share.addEventListener('click', onShareClick);
+  // When the finger came down, not when the click was handled: the export holds
+  // the main thread band by band, so a tap made during the guard can be handled
+  // well after it.
+  els.sheet.addEventListener('pointerdown', (e) => { downAt = e.timeStamp; }, true);
   els.sheet.addEventListener('click', (e) => {
+    const at = downAt || e.timeStamp; // a keyboard click has no pointerdown
+    downAt = 0;
     if (!e.target.closest('[data-close]')) return;
-    if (performance.now() - openedAt < CLOSE_GUARD_MS) return;
+    if (at - openedAt < CLOSE_GUARD_MS) return;
     closeSheet();
   });
   window.addEventListener('resize', onResize);

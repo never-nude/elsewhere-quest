@@ -82,11 +82,13 @@ test('the shell is precached into a gesso- cache', async () => {
   assert.match(cache, /^gesso-/);
 });
 
-test('every module under lib/, ui/ and workers/ is in the shell', async () => {
+// SPEC check 14 says every file, not every module: ui/tape.css is fetched at run
+// time too. Dotfiles (editor droppings) are not part of the app.
+test('every file under lib/, ui/ and workers/ is in the shell', async () => {
   const shell = new Set((await installed()).shell.map(norm));
-  const modules = ['lib', 'ui', 'workers'].flatMap(walk).filter((f) => f.endsWith('.js'));
-  assert.ok(modules.length > 10, 'found the app modules');
-  const missing = modules.filter((f) => !shell.has(f));
+  const files = ['lib', 'ui', 'workers'].flatMap(walk).filter((f) => !f.split('/').some((part) => part.startsWith('.')));
+  assert.ok(files.filter((f) => f.endsWith('.js')).length > 10, 'found the app modules');
+  const missing = files.filter((f) => !shell.has(f));
   assert.deepEqual(missing, [], `add to SHELL in sw.js: ${missing.map((f) => `'./${f}'`).join(', ')}`);
 });
 

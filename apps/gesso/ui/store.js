@@ -4,7 +4,7 @@
 // openStore() -> Promise<Store>
 // Store = {
 //   available: boolean,          // false when IndexedDB is unavailable (Private Browsing, Lockdown): memory only
-//   persistent: boolean,         // result of navigator.storage.persist()
+//   persistent: boolean,         // result of navigator.storage.persist() (false until it answers)
 //   putBlob(key, blob), getBlob(key) -> Blob|null, deleteBlob(key),
 //   putDoc(id, record, { current = false }), getDoc(id) -> record|null, deleteDoc(id), docKeys() -> string[],
 //                                // current: also point meta 'current' at id, in the same transaction
@@ -38,7 +38,9 @@ const CONNECTION_ERRORS = new Set(['InvalidStateError', 'TransactionInactiveErro
 const LOST_CONNECTION = /connection|server|lost/i;
 
 export async function openStore({ idb = globalThis.indexedDB, timeoutMs = OPEN_TIMEOUT_MS } = {}) {
-  const persisting = requestPersist();
+  // The answer is recorded when it comes; restoring the last edit never waits on it.
+  const persist = { value: false };
+  requestPersist().then((v) => { persist.value = v; });
   let db = null;
   try {
     if (!idb || typeof idb.open !== 'function') throw new Error('IndexedDB is unavailable');
@@ -49,12 +51,10 @@ export async function openStore({ idb = globalThis.indexedDB, timeoutMs = OPEN_T
     try { db?.close(); } catch { /* already gone */ }
     db = null;
   }
-  const persistent = await persisting;
-  return db ? idbStore(idb, db, persistent, timeoutMs) : memoryStore(persistent);
+  return db ? idbStore(idb, db, persist, timeoutMs) : memoryStore(persist);
 }
 
-// Ask iOS not to evict our data (granted in a Home Screen app). The answer is only
-// recorded; nothing waits on it for long.
+// Ask iOS not to evict our data (granted in a Home Screen app).
 async function requestPersist() {
   try {
     const p = globalThis.navigator?.storage?.persist?.();
@@ -137,7 +137,7 @@ function finished(tx) {
   });
 }
 
-function idbStore(idb, first, persistent, timeoutMs) {
+function idbStore(idb, first, persist, timeoutMs) {
   let db = first;
   let opening = null;
   let blobsAsBytes = false;
@@ -211,7 +211,7 @@ function idbStore(idb, first, persistent, timeoutMs) {
 
   return {
     available: true,
-    persistent,
+    get persistent() { return persist.value; },
 
     async putBlob(key, blob) {
       if (!blobsAsBytes) {
@@ -289,12 +289,12 @@ function toBlob(v) {
 }
 
 // The same API with nothing kept past this page: Private Browsing, Lockdown Mode.
-function memoryStore(persistent) {
+function memoryStore(persist) {
   const blobs = new Map(), docs = new Map();
   let current = null;
   return {
     available: false,
-    persistent,
+    get persistent() { return persist.value; },
     async putBlob(k, b) { blobs.set(k, b); },
     async getBlob(k) { return blobs.get(k) ?? null; },
     async deleteBlob(k) { blobs.delete(k); },

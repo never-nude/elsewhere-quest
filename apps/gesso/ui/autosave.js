@@ -223,6 +223,12 @@ export function createAutosave(store, getEditor, { debounceMs = 300, now = () =>
     const key = tileKey(id);
     const keys = { stored, kept }; // this photo's, even if another one opens meanwhile
     keys.kept.add(key);
+    // Kept in memory only, a tile would be a second full copy of pixels the editor
+    // already holds, and nothing outlives the page anyway.
+    if (store.available === false) {
+      keys.stored.add(key);
+      return true;
+    }
     try {
       const rect = { x: meta.x, y: meta.y, w: meta.w, h: meta.h };
       const blob = new Blob([encodeTileHeader(rect, rgba.byteLength), rgba]);
