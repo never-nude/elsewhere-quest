@@ -45,7 +45,7 @@ export function attachTape(ed, undoButton) {
     press = { id: e.pointerId, x: e.clientX, timer: win.setTimeout(() => open(), HOLD_MS) };
   });
 
-  undoButton.addEventListener('pointermove', (e) => {
+  const move = (e) => {
     if (!press || e.pointerId !== press.id) return;
     press.x = e.clientX;
     if (!scrub) return;
@@ -55,7 +55,7 @@ export function attachTape(ed, undoButton) {
     if (!changed) return;
     render(true);
     if (!raf) raf = win.requestAnimationFrame(applyJump);
-  });
+  };
 
   const lift = (e) => {
     if (!press || e.pointerId !== press.id) return;
@@ -64,8 +64,14 @@ export function attachTape(ed, undoButton) {
     if (!scrub) return; // a plain tap: the click that follows undoes once
     land();
   };
-  undoButton.addEventListener('pointerup', lift);
-  undoButton.addEventListener('pointercancel', lift);
+  // Once the tape is up the pointer is captured by the tape (see open), so these
+  // listen on both.
+  const listen = (target) => {
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', lift);
+    target.addEventListener('pointercancel', lift);
+  };
+  listen(undoButton);
   // A long press must not open a context menu over the tape.
   undoButton.addEventListener('contextmenu', (e) => { if (press || scrub) e.preventDefault(); });
 
@@ -85,6 +91,14 @@ export function attachTape(ed, undoButton) {
     build();
     tape.hidden = false;
     render(false);
+    // Scrubbing to the Original disables Undo, and a disabled button may stop
+    // getting pointer events (WebKit); the tape never is disabled, so it takes the
+    // pointer for the rest of the press.
+    try {
+      tape.setPointerCapture(press.id);
+    } catch {
+      /* the pointer already went away: its pointerup lands the tape */
+    }
   }
 
   function applyJump() {
@@ -117,6 +131,10 @@ export function attachTape(ed, undoButton) {
       tape.innerHTML = '<div class="tape__head"><p class="tape__title">Rewind</p><p class="tape__hint"></p></div>'
         + '<div class="tape__window"><div class="tape__strip"></div></div>';
       panel.append(tape);
+      listen(tape);
+      // Capture can be taken away (the system, a hidden element); never leave the
+      // tape up without a finger on it.
+      tape.addEventListener('lostpointercapture', (e) => { if (scrub) lift(e); });
     }
     const strip = tape.querySelector('.tape__strip');
     strip.textContent = '';

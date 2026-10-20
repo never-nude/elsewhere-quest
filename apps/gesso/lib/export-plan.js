@@ -17,6 +17,21 @@ export function bandMatrix(band) {
   return [1, 0, 0, 1, 0, -band.y];
 }
 
+// Did a band really come back from the GPU? The develop pass writes alpha 1
+// everywhere and the clear is opaque, but a context lost mid-export (iOS resets the
+// GPU under memory pressure) reads back zeros, before 'webglcontextlost' has fired
+// to say so. Saving that would put a black stripe in Photos.
+export function bandRendered(px, samples = 64) {
+  const n = Math.floor((px?.length ?? 0) / 4);
+  if (n === 0) return false;
+  const k = Math.max(1, Math.min(n, samples));
+  for (let i = 0; i < k; i++) {
+    const p = k === 1 ? 0 : Math.round((i * (n - 1)) / (k - 1));
+    if (px[p * 4 + 3] !== 255) return false;
+  }
+  return true;
+}
+
 export function renderProgress(done, total) {
   if (!(total > 0)) return RENDER_SHARE;
   return RENDER_SHARE * Math.min(1, Math.max(0, done / total));

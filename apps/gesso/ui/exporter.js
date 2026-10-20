@@ -22,7 +22,7 @@ import { outputQuad } from '../lib/view.js';
 import { developInput } from '../lib/doc.js';
 import { resolve, uniforms as developUniforms } from '../lib/develop.js';
 import { captionBounds } from '../lib/text-layout.js';
-import { JPEG_QUALITY, JPEG_TYPE, bandMatrix, renderProgress, coverRect, clipToBand, compositeOver } from '../lib/export-plan.js';
+import { JPEG_QUALITY, JPEG_TYPE, bandMatrix, bandRendered, renderProgress, coverRect, clipToBand, compositeOver } from '../lib/export-plan.js';
 
 const WORKER_URL = new URL('../workers/export-worker.js', import.meta.url);
 // A 24 MP encode takes about a second on a phone; far past that the worker is
@@ -78,29 +78,28 @@ export async function renderOutput(ed, { doc = ed.doc, captions = null, onProgre
   await nextFrame();
   throwIfAborted(signal);
   const data = new Uint8ClampedArray(outW * outH * 4);
-  try {
-    for (let i = 0; i < plan.length; i++) {
-      throwIfAborted(signal);
-      const band = plan[i];
-      const quad = outputQuad(doc.crop, srcW, srcH, outW, outH, bandMatrix(band));
-      data.set(renderBand(renderer, { width: outW, height: band.h, quad, uniforms, grainScale: [outW, outH] }), band.y * outW * 4);
-      const part = words === 'all' ? clipToBand({ x: 0, y: 0, width: outW, height: outH }, band) : clipToBand(words, band);
-      if (part) overlayCaptions(captions, doc, data, outW, outH, part);
-      onProgress?.(renderProgress(i + 1, plan.length));
-      if (i < plan.length - 1) await nextFrame();
-    }
-  } finally {
-    captions?.release?.();
+  for (let i = 0; i < plan.length; i++) {
+    throwIfAborted(signal);
+    const band = plan[i];
+    const quad = outputQuad(doc.crop, srcW, srcH, outW, outH, bandMatrix(band));
+    data.set(renderBand(renderer, { width: outW, height: band.h, quad, uniforms, grainScale: [outW, outH] }), band.y * outW * 4);
+    const part = words === 'all' ? clipToBand({ x: 0, y: 0, width: outW, height: outH }, band) : clipToBand(words, band);
+    if (part) overlayCaptions(captions, doc, data, outW, outH, part);
+    onProgress?.(renderProgress(i + 1, plan.length));
+    if (i < plan.length - 1) await nextFrame();
   }
   return { width: outW, height: outH, data };
 }
 
 function renderBand(renderer, opts) {
+  let px;
   try {
-    return renderer.renderPixels(opts);
+    px = renderer.renderPixels(opts);
   } catch (err) {
     throw new ExportError(`could not render the photo: ${err?.message ?? err}`, 'gpu');
   }
+  if (renderer.lost || !bandRendered(px)) throw new ExportError('the GPU was reset while the photo was being saved', 'gpu');
+  return px;
 }
 
 // The output rows the captions can reach (their shadows included), so bands
@@ -124,12 +123,19 @@ function captionCover(captions, doc, outW, outH) {
 function overlayCaptions(captions, doc, data, outW, outH, rect) {
   const raster = captions.rasterize(doc, outW, outH, rect);
   if (!raster) return;
-  const ctx = raster.getContext('2d');
-  // A raster of the whole output means `rect` was not honoured: read our part of it.
-  const whole = raster.width === outW && raster.height === outH;
-  const sx = whole ? rect.x : 0, sy = whole ? rect.y : 0;
-  const img = ctx.getImageData(sx, sy, rect.width, rect.height);
-  compositeOver(data, outW, outH, img.data, img.width, img.height, rect.x, rect.y);
+  try {
+    const ctx = raster.getContext('2d');
+    // A raster of the whole output means `rect` was not honoured: read our part of it.
+    const whole = raster.width === outW && raster.height === outH;
+    const sx = whole ? rect.x : 0, sy = whole ? rect.y : 0;
+    const img = ctx.getImageData(sx, sy, rect.width, rect.height);
+    compositeOver(data, outW, outH, img.data, img.width, img.height, rect.x, rect.y);
+  } finally {
+    // iOS keeps a canvas's pixels until GC, and this one can be a whole band
+    // (~32 MB) at the export's memory peak.
+    if (typeof captions.release === 'function') captions.release(raster);
+    else raster.width = raster.height = 0;
+  }
 }
 
 // ------------------------------------------------------------------ encoding

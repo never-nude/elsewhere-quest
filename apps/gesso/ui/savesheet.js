@@ -26,6 +26,11 @@ import {
 } from '../lib/export-plan.js';
 
 const SAVED_ONCE_KEY = 'gesso:savedOnce';
+// A double-tapped Save lands its second tap on the sheet it just opened: on the
+// scrim in landscape, where the centred card doesn't cover the Save button. That
+// tap must not close the sheet (and cancel the export) it just opened.
+const CLOSE_GUARD_MS = 500;
+const SLIDE_OUT_MS = 180;
 
 let ui = null; // DOM and listeners, wired on first open
 let session = null; // { ed, captions } while the sheet is open
@@ -33,6 +38,10 @@ let job = null; // the export of one document state
 let sharing = false;
 let fallbackUrl = '';
 let fillTarget = '';
+let openedAt = 0;
+let closeTimer = 0;
+let previewOut = null; // the output size the preview shows, to refit it on rotation
+let resizeFrame = 0;
 
 export function openSaveSheet(ed, { captions = null } = {}) {
   if (!ed?.doc) return;
@@ -40,6 +49,8 @@ export function openSaveSheet(ed, { captions = null } = {}) {
   const reopening = session !== null;
   session = { ed, captions: captions ?? ed.captions ?? null };
   sharing = false;
+  openedAt = performance.now();
+  clearTimeout(closeTimer); // a slide-out still finishing must not close this sheet
   if (!reopening) ui.returnFocus = document.activeElement;
   ui.sheet.hidden = false;
   resetCard();
@@ -202,6 +213,7 @@ function hideFallback() {
 // ------------------------------------------------------------------ the sheet
 
 function closeSheet() {
+  clearTimeout(closeTimer);
   if (!ui || ui.sheet.hidden) return;
   dropUnfinished();
   hideFallback();
@@ -219,14 +231,11 @@ function closeSheet() {
 function drawPreview(ed) {
   const canvas = ui.preview;
   const o = ed.outputSize();
-  const maxH = parseFloat(getComputedStyle(canvas).maxHeight) || 280;
-  const boxW = ui.previewBox.clientWidth || ui.card.clientWidth - 32;
-  const fit = previewFit(o.width, o.height, boxW, maxH, window.devicePixelRatio || 1);
+  const room = previewRoom();
+  const fit = previewFit(o.width, o.height, room.width, room.height, window.devicePixelRatio || 1);
   const img = ed.readOutput({ maxSide: fit.maxSide, tone: true });
   canvas.width = img.width;
   canvas.height = img.height;
-  canvas.style.width = `${fit.cssW}px`;
-  canvas.style.height = `${fit.cssH}px`;
   const ctx = canvas.getContext('2d');
   ctx.putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
   const doc = ed.doc;
@@ -235,6 +244,51 @@ function drawPreview(ed) {
     const view = { scale, x: 0, y: 0, fit: scale };
     createCaptions({ doc, view, outputSize: () => o, toolId: 'save' }).draw(ctx, 1);
   }
+  previewOut = o;
+  sizePreview();
+}
+
+// Room for the preview: the card's width by the canvas's CSS max-height (280pt,
+// less in landscape).
+function previewRoom() {
+  const maxH = parseFloat(getComputedStyle(ui.preview).maxHeight) || 280;
+  return { width: ui.previewBox.clientWidth || ui.card.clientWidth - 32, height: maxH };
+}
+
+// The canvas's CSS size, always at the photo's aspect: CSS max-width/max-height
+// on an explicitly sized canvas clamp one side and stretch the picture. A short
+// landscape screen also squeezes the preview's box (the card can't grow past the
+// screen), so the canvas shrinks to what the box was left with rather than run
+// over the button below it.
+function sizePreview() {
+  if (!previewOut) return;
+  const canvas = ui.preview;
+  const room = previewRoom();
+  const set = (h) => {
+    const f = previewFit(previewOut.width, previewOut.height, room.width, h, 1);
+    canvas.style.width = `${f.cssW}px`;
+    canvas.style.height = `${f.cssH}px`;
+    return f.cssH;
+  };
+  const cssH = set(room.height);
+  const left = ui.previewBox.clientHeight;
+  if (left < cssH - 0.5) set(Math.max(1, left));
+}
+
+// Rotating with the sheet open: draw the preview again for the new room (and
+// sharp enough for it), once per frame however many resize events arrive.
+function onResize() {
+  if (!ui || ui.sheet.hidden || !session) return;
+  cancelAnimationFrame(resizeFrame);
+  resizeFrame = requestAnimationFrame(() => {
+    if (!session || ui.sheet.hidden) return;
+    try {
+      drawPreview(session.ed);
+    } catch (err) {
+      console.warn('save: no preview', err);
+      sizePreview();
+    }
+  });
 }
 
 function resetCard() {
@@ -249,7 +303,8 @@ function slideOutAndClose() {
   ui.card.style.translate = '0 100%';
   ui.scrim.style.transition = 'opacity 0.18s ease-in';
   ui.scrim.style.opacity = '0';
-  setTimeout(closeSheet, 180);
+  clearTimeout(closeTimer);
+  closeTimer = setTimeout(closeSheet, SLIDE_OUT_MS);
 }
 
 function install(root) {
@@ -276,15 +331,21 @@ function install(root) {
 
   els.share.addEventListener('click', onShareClick);
   els.sheet.addEventListener('click', (e) => {
-    if (e.target.closest('[data-close]')) closeSheet();
+    if (!e.target.closest('[data-close]')) return;
+    if (performance.now() - openedAt < CLOSE_GUARD_MS) return;
+    closeSheet();
   });
+  window.addEventListener('resize', onResize);
   els.newPhoto.addEventListener('click', () => {
     const ed = session?.ed;
     closeSheet();
     job = null; // that photo is in Photos; let its JPEG go
     ed?.newPhoto();
   });
-  els.fallbackClose.addEventListener('click', hideFallback);
+  els.fallbackClose.addEventListener('click', () => {
+    hideFallback();
+    if (!els.sheet.hidden) els.card.focus({ preventScroll: true }); // Close itself just went away
+  });
   root.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || els.sheet.hidden) return;
     if (!els.fallback.hidden) hideFallback();

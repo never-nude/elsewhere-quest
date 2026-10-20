@@ -4,6 +4,7 @@ import {
   PRESETS, DEFAULT_SIZE, brushRadius, solveFactor, discBox, clipRect, grow, findRegion, fullOffsets, rankSources,
   rubWindow, mapPoints, extendBounds, boundsRect, discRing, refineOffset, subBlock, readPadded, shrink, shrinkMask,
   stackSide, stackLayout, stackPair, correctionField, upsampleCorrection, cutTile, upsampleFill, addCorrection,
+  recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill,
 } from '../lib/remove-plan.js';
 import { diskMask, strokeMask, maskBounds, composeRef, handleHealMessage } from '../lib/heal.js';
 import { planRemoval, mulberry32 } from '../lib/inpaint.js';
@@ -338,4 +339,94 @@ test('a rub mask built in a window crops to the same pixels as one built on its 
     for (let x = 0; x < box.w; x++) if (a[y * box.w + x] !== b[(y + box.y - win.y) * win.w + x + box.x - win.x]) diff++;
   }
   assert.equal(diff, 0);
+});
+
+test('a fill recipe survives structured clone and JSON exactly', () => {
+  const tap = { kind: 'tap', cx: 100.123456789, cy: 50.5, rr: 20.004, f: 2, offsets: [{ dx: 40, dy: -3 }, { dx: -41, dy: 2 }], index: 1, D: { dx: -40, dy: 2 }, moved: false, extra: 'dropped', mask: 'data:…' };
+  const want = { kind: 'tap', cx: 100.123456789, cy: 50.5, rr: 20.004, f: 2, offsets: [{ dx: 40, dy: -3 }, { dx: -41, dy: 2 }], index: 1, D: { dx: -40, dy: 2 }, moved: false };
+  assert.deepEqual(reviveRecipe(structuredClone(recipeRecord(tap))), want);
+  assert.deepEqual(reviveRecipe(JSON.parse(JSON.stringify(recipeRecord(tap)))), want);
+  const rub = { kind: 'rub', pts: [1.234, 2, 3.5, 4.0001], rr: 7.5, seed: 3, attempt: 2, mask: 'data:…' };
+  assert.deepEqual(reviveRecipe(JSON.parse(JSON.stringify(recipeRecord(rub)))), { kind: 'rub', pts: [1.234, 2, 3.5, 4.0001], rr: 7.5, seed: 3, attempt: 2 });
+  assert.equal(recipeRecord({ kind: 'tap', cx: 1, cy: 1, rr: 1, f: 1, offsets: [] }), null); // no D: nothing to retry from
+  // a typed-array stroke is stored as a plain array
+  assert.ok(Array.isArray(recipeRecord({ ...rub, pts: Float64Array.from(rub.pts) }).pts));
+});
+
+test('a damaged or missing recipe revives as null, never throws', () => {
+  const tap = recipeRecord({ kind: 'tap', cx: 10, cy: 10, rr: 5, f: 1, offsets: [{ dx: 20, dy: 0 }], index: 0, D: { dx: 20, dy: 0 } });
+  assert.ok(reviveRecipe(tap));
+  for (const bad of [
+    null, undefined, 3, 'tap', {}, { kind: 'paint' },
+    { ...tap, offsets: [] }, { ...tap, index: 1 }, { ...tap, index: -1 }, { ...tap, f: 0 }, { ...tap, f: 1.5 },
+    { ...tap, rr: 0 }, { ...tap, cx: NaN }, { ...tap, D: null }, { ...tap, offsets: [{ dx: 1.5, dy: 0 }] },
+    { kind: 'rub', pts: [1, 2, 3], rr: 4, seed: 1, attempt: 0 }, { kind: 'rub', pts: [], rr: 4, seed: 1, attempt: 0 },
+    { kind: 'rub', pts: [1, 'x'], rr: 4, seed: 1, attempt: 0 }, { kind: 'rub', pts: [1, 2], rr: -1, seed: 1, attempt: 0 },
+    { kind: 'rub', pts: [1, 2], rr: 4 },
+  ]) {
+    assert.equal(reviveRecipe(bad), null, JSON.stringify(bad));
+  }
+  assert.equal(recipeRecord(null), null);
+});
+
+test('strokeMaskFast marks exactly the pixels lib/heal.js strokeMask does', () => {
+  const rand = mulberry32(7);
+  const cases = [
+    { pts: [10.5, 10.5], r: 0.3 }, // sub-pixel disc: just the pixel it sits in
+    { pts: [5, 5, 5, 5], r: 4 }, // a zero-length segment
+    { pts: [-20, 30, 140, 30], r: 12.5 }, // horizontal, starting off the image
+    { pts: [60, -40, 60, 130], r: 7.25 }, // vertical, through top and bottom
+    { pts: [0, 0, 119, 89], r: 0.5 }, // thin diagonal
+    { pts: [200, 200, 300, 300], r: 20 }, // wholly off the image
+    { pts: [30, 40, NaN, 3, 80, 70], r: 9 }, // a bad point is skipped, as strokeMask does
+    { pts: [-30, 45, 150, 45], r: 200 }, // covers everything
+  ];
+  for (let k = 0; k < 40; k++) {
+    const n = 1 + Math.floor(rand() * 8);
+    const pts = [];
+    for (let i = 0; i < n; i++) pts.push(rand() * 160 - 20, rand() * 130 - 20);
+    cases.push({ pts, r: 0.2 + rand() * (k % 3 === 0 ? 3 : 30) });
+  }
+  for (const { pts, r } of cases) {
+    const a = strokeMask(pts, r, 120, 90);
+    const b = strokeMaskFast(pts, r, 120, 90);
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) diff++;
+    assert.equal(diff, 0, `${diff} pixels differ for r ${r} pts ${pts.map((v) => v.toFixed?.(2)).join(',')}`);
+  }
+  assert.equal(strokeMaskFast([1, 1], 0, 4, 4).some(Boolean), false);
+  assert.throws(() => strokeMaskFast([1, 1], 2, 3.5, 4), RangeError);
+});
+
+test('strokeMaskFast stays quick on a capped rub', () => {
+  // A zig-zag across a 5453 x 1524 box with a 440 px brush, points every 0.2 r.
+  const pts = [];
+  const corners = [[600, 900], [5100, 900], [5100, 1500], [600, 1500], [600, 1100], [5100, 1300]];
+  for (let i = 0; i + 1 < corners.length; i++) {
+    const [ax, ay] = corners[i], [bx, by] = corners[i + 1];
+    const n = Math.ceil(Math.hypot(bx - ax, by - ay) / 88);
+    for (let k = 0; k < n; k++) pts.push(ax + ((bx - ax) * k) / n - 160, ay + ((by - ay) * k) / n - 450);
+  }
+  const t = performance.now();
+  const m = strokeMaskFast(pts, 440, 5453, 1524);
+  assert.ok(performance.now() - t < 400, `took ${performance.now() - t} ms`);
+  assert.ok(maskBounds(m, 5453, 1524).area > 5e6);
+});
+
+test('shrinkFill is upsampleFill shrunk, without the full-size copy', () => {
+  // texture, not just a ramp: a block average must not alias it
+  const small = makeImage(37, 23, (x, y) => [x * 6, y * 9, (x * 53 + y * 97) % 256]);
+  const win = { x: 100, y: 50, w: 370, h: 230 };
+  const T = { x: 130, y: 61, w: 203, h: 151 };
+  const ones = new Uint8Array(T.w * T.h).fill(1);
+  const full = upsampleFill(small, win, T, ones);
+  for (const f of [1, 2, 5, 16, 400]) {
+    const want = shrink(full, T.w, T.h, f);
+    const got = shrinkFill(small, win, T, f);
+    assert.equal(got.width, want.width);
+    assert.equal(got.height, want.height);
+    let worst = 0;
+    for (let i = 0; i < got.data.length; i++) worst = Math.max(worst, Math.abs(got.data[i] - want.data[i]));
+    assert.ok(worst <= 1, `f ${f}: off by ${worst}`);
+  }
 });

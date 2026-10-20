@@ -12,6 +12,7 @@
 // are laid side by side in one "stacked" image, with the copy offset between them.
 
 import { planRemoval } from './inpaint.js';
+import { cleanPoints } from './stroke.js';
 
 export const PRESETS = Object.freeze({ small: 20, medium: 36, large: 64 }); // on-screen diameters, pt
 export const DEFAULT_SIZE = PRESETS.medium;
@@ -166,6 +167,62 @@ export function boundsRect(b, r) {
     w: Math.max(Math.ceil(b.x1 + r), Math.floor(b.x1) + 1) - x,
     h: Math.max(Math.ceil(b.y1 + r), Math.floor(b.y1) + 1) - y,
   };
+}
+
+// ------------------------------------------------------------------ masks
+
+// lib/heal.js strokeMask, pixel for pixel, at a cost that grows with the rows a
+// stroke covers rather than its area. A capsule is convex, so it meets each row
+// in one run of pixels; the run's ends are found by bisection with the very same
+// inside test. strokeMask tests every pixel of every capsule's box, which for a
+// capped rub on a 48 MP photo is about a second on the main thread, twice.
+export function strokeMaskFast(points, r, w, h) {
+  if (!Number.isInteger(w) || !Number.isInteger(h) || w < 0 || h < 0) throw new RangeError(`bad size ${w}x${h}`);
+  const mask = new Uint8Array(w * h);
+  if (!Number.isFinite(r) || !(r > 0)) return mask;
+  const pts = cleanPoints(points);
+  if (pts.length === 2) spanCapsule(mask, w, h, pts[0], pts[1], pts[0], pts[1], r);
+  for (let i = 2; i < pts.length; i += 2) spanCapsule(mask, w, h, pts[i - 2], pts[i - 1], pts[i], pts[i + 1], r);
+  return mask;
+}
+
+function spanCapsule(mask, w, h, ax, ay, bx, by, r) {
+  const x0 = Math.max(0, Math.floor(Math.min(ax, bx) - r - 0.5));
+  const x1 = Math.min(w - 1, Math.ceil(Math.max(ax, bx) + r - 0.5));
+  const y0 = Math.max(0, Math.floor(Math.min(ay, by) - r - 0.5));
+  const y1 = Math.min(h - 1, Math.ceil(Math.max(ay, by) + r - 0.5));
+  const vx = bx - ax, vy = by - ay, len2 = vx * vx + vy * vy, r2 = r * r;
+  // Exactly lib/heal.js stampCapsule's test, so the two masks agree bit for bit.
+  const inside = (x, py) => {
+    const px = x + 0.5;
+    let t = len2 > 0 ? ((px - ax) * vx + (py - ay) * vy) / len2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const ex = px - ax - t * vx, ey = py - ay - t * vy;
+    return ex * ex + ey * ey <= r2;
+  };
+  for (let y = y0; y <= y1 && x0 <= x1; y++) {
+    const py = y + 0.5;
+    // Where the segment comes nearest this row lies inside the capsule whenever
+    // any of the row does, so the row's run (if any) holds a pixel next to it.
+    let t = vy !== 0 ? (py - ay) / vy : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const s = Math.floor(ax + t * vx - 0.5);
+    const a = clamp(s, x0, x1), b = clamp(s + 1, x0, x1);
+    const seed = inside(a, py) ? a : inside(b, py) ? b : -1;
+    if (seed < 0) continue;
+    let lo = x0, hi = seed; // left end: the first inside pixel in [x0, seed]
+    if (inside(lo, py)) hi = lo;
+    else while (hi - lo > 1) { const m = (lo + hi) >> 1; if (inside(m, py)) hi = m; else lo = m; }
+    const left = hi;
+    lo = seed; hi = x1; // right end: the last inside pixel in [seed, x1]
+    if (inside(hi, py)) lo = hi;
+    else while (hi - lo > 1) { const m = (lo + hi) >> 1; if (inside(m, py)) lo = m; else hi = m; }
+    mask.fill(1, y * w + left, y * w + lo + 1);
+  }
+  for (const [px, py] of [[ax, ay], [bx, by]]) {
+    const x = Math.floor(px), y = Math.floor(py);
+    if (x >= 0 && y >= 0 && x < w && y < h) mask[y * w + x] = 1;
+  }
 }
 
 // ------------------------------------------------------------------ reading pixels
@@ -380,6 +437,51 @@ export function addCorrection(rgba, box, mask, c, cw, ch, f, ox, oy) {
   return rgba;
 }
 
+// ------------------------------------------------------------------ how a fill was made
+
+// Try another and Source need to know how the newest fill was made. That rides
+// along in the fill's pool entry (pools.patches[id].how), so it survives autosave
+// and a relaunch. Numbers are kept exactly (doubles survive JSON and structured
+// clone), so a retry after a relaunch covers exactly the pixels the fill did.
+//   tap: { kind: 'tap', cx, cy, rr, f, offsets: [{ dx, dy }], index, D: { dx, dy }, moved }
+//   rub: { kind: 'rub', pts: [x, y, ...], rr, seed, attempt }
+export function recipeRecord(rec) {
+  if (rec?.kind === 'tap') {
+    if (!rec.D || !Array.isArray(rec.offsets)) return null;
+    return {
+      kind: 'tap', cx: rec.cx, cy: rec.cy, rr: rec.rr, f: rec.f,
+      offsets: rec.offsets.map(({ dx, dy }) => ({ dx, dy })), index: rec.index,
+      D: { dx: rec.D.dx, dy: rec.D.dy }, moved: !!rec.moved,
+    };
+  }
+  if (rec?.kind === 'rub') {
+    return { kind: 'rub', pts: Array.from(rec.pts), rr: rec.rr, seed: rec.seed | 0, attempt: rec.attempt | 0 };
+  }
+  return null;
+}
+
+// The recipe back from a pool entry, or null when it is missing or doesn't make
+// sense (an older draft, damage): the fill then just can't be retried.
+export function reviveRecipe(how) {
+  const fin = (...v) => v.every(Number.isFinite);
+  const isOffset = (o) => o && typeof o === 'object' && Number.isInteger(o.dx) && Number.isInteger(o.dy);
+  if (!how || typeof how !== 'object') return null;
+  if (how.kind === 'tap') {
+    const { cx, cy, rr, f, offsets, index, D } = how;
+    if (!fin(cx, cy, rr) || !(rr > 0) || !Number.isInteger(f) || f < 1) return null;
+    if (!Array.isArray(offsets) || !offsets.length || offsets.length > 16 || !offsets.every(isOffset)) return null;
+    if (!Number.isInteger(index) || index < 0 || index >= offsets.length || !isOffset(D)) return null;
+    return { kind: 'tap', cx, cy, rr, f, offsets: offsets.map(({ dx, dy }) => ({ dx, dy })), index, D: { dx: D.dx, dy: D.dy }, moved: how.moved === true };
+  }
+  if (how.kind === 'rub') {
+    const { pts, rr, seed, attempt } = how;
+    if (!Array.isArray(pts) || pts.length < 2 || pts.length % 2 || !pts.every((v) => Number.isFinite(v))) return null;
+    if (!fin(rr, seed, attempt) || !(rr > 0)) return null;
+    return { kind: 'rub', pts: pts.slice(), rr, seed: seed | 0, attempt: Math.max(0, attempt | 0) };
+  }
+  return null;
+}
+
 // ------------------------------------------------------------------ tiles
 
 // A fill tile over `box` (coordinates of `mask`, which is maskW wide): RGBA from
@@ -405,20 +507,83 @@ export function upsampleFill(small, win, box, mask) {
   const sw = small.width, sh = small.height, d = small.data;
   const kx = sw / win.w, ky = sh / win.h;
   const out = new Uint8ClampedArray(box.w * box.h * 4);
+  // Columns repeat on every row: work their taps out once (a capped rub is millions of pixels).
+  const U0 = new Int32Array(box.w), U1 = new Int32Array(box.w), FU = new Float64Array(box.w);
+  for (let x = 0; x < box.w; x++) {
+    const u = clamp((box.x + x - win.x + 0.5) * kx - 0.5, 0, sw - 1);
+    const u0 = Math.floor(u);
+    U0[x] = u0; U1[x] = Math.min(sw - 1, u0 + 1); FU[x] = u - u0;
+  }
   for (let y = 0; y < box.h; y++) {
     const v = clamp((box.y + y - win.y + 0.5) * ky - 0.5, 0, sh - 1);
     const v0 = Math.floor(v), v1 = Math.min(sh - 1, v0 + 1), fv = v - v0;
+    const r0 = v0 * sw, r1 = v1 * sw;
     for (let x = 0; x < box.w; x++) {
       const i = y * box.w + x;
       if (!mask[i]) continue;
-      const u = clamp((box.x + x - win.x + 0.5) * kx - 0.5, 0, sw - 1);
-      const u0 = Math.floor(u), u1 = Math.min(sw - 1, u0 + 1), fu = u - u0;
-      const a = (v0 * sw + u0) * 4, b = (v0 * sw + u1) * 4, c = (v1 * sw + u0) * 4, e = (v1 * sw + u1) * 4;
+      const u0 = U0[x], u1 = U1[x], fu = FU[x];
+      const a = (r0 + u0) * 4, b = (r0 + u1) * 4, c = (r1 + u0) * 4, e = (r1 + u1) * 4;
       for (let k = 0; k < 3; k++) {
         out[i * 4 + k] = (d[a + k] + (d[b + k] - d[a + k]) * fu) * (1 - fv) + (d[c + k] + (d[e + k] - d[c + k]) * fu) * fv;
       }
       out[i * 4 + 3] = 255;
     }
+  }
+  return out;
+}
+
+// The same fill seen shrunk by f over the rect T: what shrink(upsampleFill(...)
+// over all of T, f) gives (to within rounding), without making that full-size
+// copy first, which for a capped rub is tens of megabytes and a long main-thread
+// stall. Bilinear sampling is separable, so a block's average is the small
+// image's pixels weighted by each axis's averaged taps.
+export function shrinkFill(small, win, T, f) {
+  const sw = small.width, sh = small.height, d = small.data;
+  const W = Math.ceil(T.w / f), H = Math.ceil(T.h / f);
+  const cols = blockTaps(T.x - win.x, T.w, f, sw / win.w, sw);
+  const rows = blockTaps(T.y - win.y, T.h, f, sh / win.h, sh);
+  const out = new Uint8ClampedArray(W * H * 4);
+  for (let y = 0; y < H; y++) {
+    const { start: j0, w: wy } = rows[y];
+    for (let x = 0; x < W; x++) {
+      const { start: i0, w: wx } = cols[x];
+      let r = 0, g = 0, b = 0;
+      for (let j = 0; j < wy.length; j++) {
+        const q = wy[j];
+        if (!q) continue;
+        let rr = 0, gg = 0, bb = 0;
+        for (let i = 0, p = ((j0 + j) * sw + i0) * 4; i < wx.length; i++, p += 4) {
+          rr += d[p] * wx[i]; gg += d[p + 1] * wx[i]; bb += d[p + 2] * wx[i];
+        }
+        r += rr * q; g += gg * q; b += bb * q;
+      }
+      const o = (y * W + x) * 4;
+      out[o] = r; out[o + 1] = g; out[o + 2] = b; out[o + 3] = 255;
+    }
+  }
+  return { width: W, height: H, data: out };
+}
+
+// Along one axis: for each block of f full px (n px in all, the first at offset
+// o from the window's origin, k small px per full px, m small px), the run of
+// small px it reads and their weights, averaging upsampleFill's bilinear taps
+// over the block's pixels.
+function blockTaps(o, n, f, k, m) {
+  const out = [];
+  for (let a = 0; a < n; a += f) {
+    const b = Math.min(n, a + f);
+    const taps = [];
+    let lo = Infinity, hi = -1;
+    for (let x = a; x < b; x++) {
+      const u = clamp((o + x + 0.5) * k - 0.5, 0, m - 1);
+      const u0 = Math.floor(u), u1 = Math.min(m - 1, u0 + 1), fu = u - u0;
+      taps.push(u0, 1 - fu, u1, fu);
+      if (u0 < lo) lo = u0;
+      if (u1 > hi) hi = u1;
+    }
+    const w = new Float64Array(hi - lo + 1);
+    for (let t = 0; t < taps.length; t += 2) w[taps[t] - lo] += taps[t + 1] / (b - a);
+    out.push({ start: lo, w });
   }
   return out;
 }

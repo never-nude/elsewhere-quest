@@ -4,14 +4,14 @@
 // areas, and the generated fixture photo (e2e/fixture.mjs). Dev-only; nothing in
 // the app imports this.
 //
-//   node e2e/acceptance.mjs [--base http://127.0.0.1:4174/gesso/] [--only 1,2,8] [--out DIR]
+//   node e2e/acceptance.mjs [--base http://127.0.0.1:4174/gesso/] [--only 1,2,8] [--out DIR] [--time-scale 1]
 //
 // Prints one row per check (PASS / FAIL / SKIP with a one-line reason), then the
 // details of every failure; writes failure screenshots, console logs and
 // results.json to --out; exits 1 when any check fails. e2e/README.md explains how
 // each check reads the spec where the spec leaves room.
 
-import { mkdir, readFile, readdir, writeFile, access } from 'node:fs/promises';
+import { mkdir, readdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -60,7 +60,7 @@ const SCENARIO_MS = 240_000;
 // ------------------------------------------------------------------ arguments
 
 function parseArgs(argv) {
-  const o = { base: 'http://127.0.0.1:4174/gesso/', only: null, out: DEFAULT_OUT, help: false };
+  const o = { base: 'http://127.0.0.1:4174/gesso/', only: null, out: DEFAULT_OUT, timeScale: 1, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const eq = a.indexOf('=');
@@ -73,6 +73,7 @@ function parseArgs(argv) {
     if (key === '--base') o.base = val();
     else if (key === '--only') o.only = new Set(val().split(',').map((s) => Number(s.trim())).filter((n) => CHECKS[n]));
     else if (key === '--out') o.out = resolve(val());
+    else if (key === '--time-scale') o.timeScale = Math.max(1, Number(val()) || 1);
     else if (key === '--help' || key === '-h') o.help = true;
     else throw new Error(`unknown argument: ${a}`);
   }
@@ -82,11 +83,14 @@ function parseArgs(argv) {
 
 const opts = parseArgs(process.argv.slice(2));
 if (opts.help) {
-  console.log('node e2e/acceptance.mjs [--base URL] [--only 1,2,8] [--out DIR]\n');
+  console.log('node e2e/acceptance.mjs [--base URL] [--only 1,2,8] [--out DIR] [--time-scale 1]\n');
   for (const [n, name] of Object.entries(CHECKS)) console.log(`${String(n).padStart(3)}  ${name}`);
   process.exit(0);
 }
 const wanted = (n) => !opts.only || opts.only.has(n);
+// The spec's time budgets (the Remove heal, Save readiness), stretchable for slow
+// software-GL hosts; 1 is the spec.
+const budget = (ms) => Math.round(ms * opts.timeScale);
 const BASE = new URL(opts.base);
 
 // ------------------------------------------------------------------ small helpers
@@ -106,6 +110,15 @@ function diffKeys(a, b) {
   } catch {
     return ['(unreadable)'];
   }
+}
+
+// How many steps an action added: the history up to the old position is kept,
+// whatever was redoable is dropped, and the new steps follow. 0 when the earlier
+// steps were rewritten (a reset or a revert) instead.
+function stepsAdded(before, after) {
+  const kept = JSON.stringify(after.labels.slice(0, before.index + 1)) === JSON.stringify(before.labels.slice(0, before.index + 1));
+  if (!kept || after.len !== after.index + 1) return after.index - before.index > 0 ? -1 : 0;
+  return after.index - before.index;
 }
 
 async function loadPlaywright() {
@@ -334,7 +347,11 @@ function pageHelpers() {
       }
       for (const el of qa('#quick button, #dials button')) {
         if (!acc.rendered(el)) continue;
-        const cut = [el, ...el.querySelectorAll('span')].some((x) => x.scrollWidth > x.clientWidth + 1 && getComputedStyle(x).textOverflow === 'ellipsis');
+        // Clipped for real: a label cut short, or a child outside the chip's box
+        // (content running into the chip's own padding is not a cut).
+        const box = el.getBoundingClientRect();
+        const cut = [...el.querySelectorAll('span')].some((x) => x.scrollWidth > x.clientWidth + 1)
+          || [...el.children].some((c) => { const r = c.getBoundingClientRect(); return r.width > 0 && (r.left < box.left - 1 || r.right > box.right + 1); });
         if (cut) out.truncated.push(acc.describe(el));
       }
       const bad = /menu|more|options|settings|overflow/i;
@@ -412,6 +429,8 @@ function pageHelpers() {
     },
     lastStageUp: 0,
     lastBeforeUp: 0,
+    lastSaveClick: 0,
+    shareReadyAt: 0,
     samples: [],
     sampleCompare(ms) {
       acc.samples = [];
@@ -429,17 +448,54 @@ function pageHelpers() {
     if (el?.closest?.('#stage')) acc.lastStageUp = performance.now();
     if (el?.closest?.('#before')) acc.lastBeforeUp = performance.now();
   }, true);
+  window.addEventListener('click', (e) => {
+    if (e.target?.closest?.('#save')) { acc.lastSaveClick = performance.now(); acc.shareReadyAt = 0; }
+  }, true);
+  // When Save to Photos becomes ready (check 8 times it from the Save click).
+  document.addEventListener('DOMContentLoaded', () => {
+    new MutationObserver((recs) => {
+      for (const r of recs) {
+        if (r.target.id === 'share' && r.target.hasAttribute('data-ready') && !acc.shareReadyAt && acc.lastSaveClick) acc.shareReadyAt = performance.now();
+      }
+    }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['data-ready'] });
+  });
   window.__acc = acc;
 }
 
-// Check 8: navigator.share records each call, the event being dispatched when it
-// was called (window.event is only set while a listener runs synchronously), and
-// the data; then resolves like a completed share.
+// Check 8: navigator.share records each call, whether it came synchronously from
+// a click listener, and the data; then resolves like a completed share.
+// window.event cannot tell: it is still set while the microtasks a listener queued
+// run, so a share after an await would pass. Instead every listener is wrapped,
+// and the wrapper counts the click listeners on the stack; its finally runs before
+// those microtasks do.
 function shareStub() {
   window.__shareCalls = [];
+  let clickDepth = 0;
+  const wrappers = new WeakMap();
+  const add = EventTarget.prototype.addEventListener;
+  const remove = EventTarget.prototype.removeEventListener;
+  const wrap = (listener) => {
+    if (!listener || (typeof listener !== 'function' && typeof listener.handleEvent !== 'function')) return listener;
+    let w = wrappers.get(listener);
+    if (!w) {
+      w = function (e) {
+        const click = e?.type === 'click';
+        if (click) clickDepth++;
+        try {
+          return typeof listener === 'function' ? listener.call(this, e) : listener.handleEvent(e);
+        } finally {
+          if (click) clickDepth--;
+        }
+      };
+      wrappers.set(listener, w);
+    }
+    return w;
+  };
+  EventTarget.prototype.addEventListener = function (type, listener, options) { return add.call(this, type, wrap(listener), options); };
+  EventTarget.prototype.removeEventListener = function (type, listener, options) { return remove.call(this, type, wrappers.get(listener) ?? listener, options); };
   const share = function share(data) {
     const ev = window.event;
-    window.__shareCalls.push({ eventType: ev ? ev.type : null, trusted: ev ? ev.isTrusted : null, data });
+    window.__shareCalls.push({ inClick: clickDepth > 0, eventType: ev ? ev.type : null, data });
     return Promise.resolve();
   };
   const canShare = function canShare(data) { return !!data && Array.isArray(data.files) && data.files.length > 0; };
@@ -525,19 +581,29 @@ async function importFixture(s) {
   await settle(s, 250);
 }
 
+// One touch tap, like a finger: wait until the target is there, enabled, visible
+// and on top at its centre (else say which of those failed), then dispatch exactly
+// once. Playwright's own retrying tap can fire twice when the first tap opens
+// something over the target (the Save sheet over Save).
 async function tap(s, sel, { timeout = 3000 } = {}) {
-  try {
-    await s.page.locator(sel).first().tap({ timeout });
-  } catch {
-    const why = await s.page.evaluate((q) => {
+  const deadline = Date.now() + timeout;
+  let why = null;
+  for (;;) {
+    why = await s.page.evaluate((q) => {
       const el = document.querySelector(q);
       if (!el) return 'no such element';
       if (el.disabled) return 'it is disabled';
-      if (!window.__acc?.rendered(el)) return 'it is not visible';
-      return 'it did not take the tap (covered?)';
-    }, sel).catch(() => 'the page is gone');
-    throw new Error(`could not tap ${sel}: ${why}`);
+      if (!window.__acc.rendered(el)) return 'it is not visible';
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (top && top !== el && !el.contains(top)) return `it is covered by ${window.__acc.describe(top)}`;
+      return null;
+    }, sel).catch((err) => `the page failed: ${firstLine(err)}`);
+    if (!why || Date.now() > deadline) break;
+    await sleep(50);
   }
+  if (why) throw new Error(`could not tap ${sel}: ${why}`);
+  await s.page.locator(sel).first().tap({ force: true, timeout });
   s.taps++;
   await settle(s);
 }
@@ -831,8 +897,8 @@ async function scenarioDefaults() {
 
     // Undo right after an action: the state from before it, and "Undid: …".
     const undoAfter = async (what, before) => {
+      await tap(s, '#undo'); // every action starts from the photo as opened
       if (!t10) return;
-      await tap(s, '#undo');
       const after = await snap(s);
       const toast = await s.page.evaluate(() => ({ text: document.querySelector('#toast')?.textContent ?? '', on: document.querySelector('#toast')?.classList.contains('is-on') }));
       let ok = true;
@@ -855,15 +921,15 @@ async function scenarioDefaults() {
         await t7.expect(first.def, `${tool}: the first Quick chip ${quote(first.text)} has no [data-default]`);
       }
       const before = await snap(s);
-      await tap(s, '#quick button >> nth=0');
+      await tap(s, '#quick > button:first-child');
       await waitEntry(s, before, 1500);
       await settle(s, 300);
       const after = await snap(s);
-      const added = after.len - before.len;
+      const added = stepsAdded(before, after);
       const label = after.labels[after.index];
       let entryOk = false;
       if (t7) {
-        if (added !== 1 || after.index !== before.index + 1) await t7.fail(`${name}: added ${added} history entries (want exactly 1)`);
+        if (added !== 1) await t7.fail(added < 0 ? `${name}: the history was rewritten (${quote(after.labels.join(" › "))}), not extended by one step` : `${name}: added ${added} history entries (want exactly 1)`);
         else if (!label || !label.trim()) await t7.fail(`${name}: the new history entry has an empty label`);
         else entryOk = true;
         if (after.state === before.state) await t7.fail(`${name}: the document did not change`);
@@ -895,11 +961,11 @@ async function scenarioDefaults() {
       const chips = await s.page.evaluate(() => window.__acc.qa('#dials button').filter(window.__acc.rendered).map(window.__acc.text));
       let ok = true;
       if (t7) {
-        if (after.len !== before.len + 1 || label !== 'Auto-enhance') ok = await t7.fail(`Auto-enhance added ${after.len - before.len} entries, newest ${quote(label)} (want one "Auto-enhance")`);
+        if (stepsAdded(before, after) !== 1 || label !== 'Auto-enhance') ok = await t7.fail(`Auto-enhance added ${stepsAdded(before, after)} entries, newest ${quote(label)} (want one "Auto-enhance")`);
         await t7.expect(chips.length >= 1, 'Auto-enhance left no change chips in the dial row');
         if (chips.length) t7.note(`chips: ${chips.join(', ')}`);
       }
-      if (ok && after.len === before.len + 1) await undoAfter('Auto-enhance', before);
+      if (ok && stepsAdded(before, after) === 1) await undoAfter('Auto-enhance', before);
       else if (t10) await t10.fail('unverified: Auto-enhance added no step (see check 7)');
     } catch (err) {
       if (t7) await t7.fail(`Auto-enhance: ${firstLine(err)}`);
@@ -918,7 +984,7 @@ async function scenarioDefaults() {
       if (t7) {
         if (!got) await t7.fail('Remove: a tap on the speck added no history entry within 5 s');
         else if (got.label !== 'Removed spot') await t7.fail(`Remove: the tap added ${quote(got.label)} (want "Removed spot")`);
-        else if (ms > 1000) await t7.fail(`Remove: "Removed spot" took ${ms} ms after the tap (want ≤ 1000 ms)`);
+        else if (ms > budget(1000)) await t7.fail(`Remove: "Removed spot" took ${ms} ms after the tap (want ≤ ${budget(1000)} ms)`);
         else t7.note(`Removed spot in ${ms} ms`);
       }
       await settle(s, 200);
@@ -993,12 +1059,18 @@ async function oneMinuteFlow(s, t8) {
     const toast = await s.page.locator('#toast').textContent().catch(() => '');
     if (t8) await t8.fail(`Save did not open the Save sheet (#sheet stayed hidden; toast ${quote(toast)})`);
   } else {
-    const left = Math.max(0, 4000 - (Date.now() - saveAt));
-    const ready = await s.page.waitForSelector('#share[data-ready]', { state: 'attached', timeout: left }).then(() => true, () => false);
+    // Timed in the page, from the Save click to the attribute, so the harness's own
+    // round trips do not count; the wait here only needs to be long enough.
+    const left = Math.max(0, budget(4000) + 1000 - (Date.now() - saveAt));
+    let ready = await s.page.waitForSelector('#share[data-ready]', { state: 'attached', timeout: left }).then(() => true, () => false);
+    const label = await s.page.locator('#share').innerText().catch(() => '');
+    if (!ready) ready = await s.page.waitForSelector('#share[data-ready]', { state: 'attached', timeout: 20_000 }).then(() => true, () => false);
+    const ms = await s.page.evaluate(() => (window.__acc.shareReadyAt ? Math.round(window.__acc.shareReadyAt - window.__acc.lastSaveClick) : null));
     if (!ready) {
-      const label = await s.page.locator('#share').innerText().catch(() => '');
-      if (t8) await t8.fail(`Save to Photos did not gain [data-ready] within 4 s of Save (it reads ${quote(label)})`);
-    }
+      if (t8) await t8.fail(`Save to Photos never gained [data-ready] (it reads ${quote(label)} ${Math.round((Date.now() - saveAt) / 1000)} s after Save)`);
+    } else if (ms !== null && ms > budget(4000)) {
+      if (t8) await t8.fail(`Save to Photos gained [data-ready] ${ms} ms after the Save click (want ≤ ${budget(4000)} ms)`);
+    } else if (t8) t8.note(`ready ${ms ?? '<' + (Date.now() - saveAt)} ms after Save`);
     const enabled = await s.page.evaluate(() => !document.querySelector('#share')?.disabled);
     if (ready || enabled) {
       await step('#share');
@@ -1008,6 +1080,7 @@ async function oneMinuteFlow(s, t8) {
         const out = {
           count: calls.length,
           calls: calls.map((c) => ({
+            inClick: c.inClick,
             eventType: c.eventType,
             keys: c.data && typeof c.data === 'object' ? Object.keys(c.data) : [],
             files: Array.isArray(c.data?.files) ? c.data.files.map((f) => ({ isFile: f instanceof File, type: f.type, size: f.size, name: f.name })) : null,
@@ -1030,7 +1103,7 @@ async function oneMinuteFlow(s, t8) {
     const c = shared.calls[0];
     if (shared.count !== 1) await t8.fail(`navigator.share was called ${shared.count} times (want exactly 1)`);
     if (c) {
-      await t8.expect(c.eventType === 'click', `navigator.share ran ${c.eventType ? `inside a ${c.eventType} handler` : 'outside any event handler (after an await?)'}, not synchronously in the click handler`);
+      if (!c.inClick) await t8.fail(`navigator.share ran ${c.eventType === 'click' ? 'after the click handler returned (a microtask or an await)' : c.eventType ? `in a ${c.eventType} handler` : 'outside any event handler'}, not synchronously in the click handler`);
       const extra = c.keys.filter((k) => k === 'title' || k === 'text');
       await t8.expect(!extra.length, `the share data carries ${extra.join(' and ')} (want files only)`);
       if (!c.files) await t8.fail(`the share data has no files array (keys: ${c.keys.join(', ') || 'none'})`);
@@ -1164,7 +1237,7 @@ async function scenarioFallback() {
         await t.fail(`Save did not open the Save sheet (toast ${quote(toast)}), so Save to Photos could not be tapped`);
         return;
       }
-      const left = Math.max(0, 4000 - (Date.now() - saveAt));
+      const left = Math.max(0, budget(4000) - (Date.now() - saveAt));
       await s.page.waitForSelector('#share[data-ready]', { state: 'attached', timeout: left }).catch(() => {});
       await tap(s, '#share', { timeout: 4000 });
       const shown = await s.page.waitForFunction(() => [...document.querySelectorAll('img')].some((i) => i.src.startsWith('blob:') && window.__acc.visible(i)), null, { timeout: 4000 }).then(() => true, () => false);
@@ -1352,39 +1425,52 @@ async function walk(dir) {
   return out;
 }
 
+// The node half of check 14. sw.js, index.html and the manifest are read as
+// --base serves them; the list of files that must be precached comes from this
+// checkout (the files next to e2e/), so a deploy that lags the repo shows up.
 async function swStatic(t) {
-  const sw = await readFile(join(APP_DIR, 'sw.js'), 'utf8');
+  const get = async (p) => {
+    const r = await fetch(new URL(p, opts.base));
+    if (!r.ok) throw new Error(`${p}: HTTP ${r.status}`);
+    return r.text();
+  };
+  const sw = await get('sw.js');
   const m = /const\s+SHELL\s*=\s*\[([\s\S]*?)\]/.exec(sw);
   if (!m) { await t.fail('sw.js has no `const SHELL = [...]`'); return; }
   const shell = new Set([...m[1].matchAll(/['"]([^'"]+)['"]/g)].map((x) => x[1]));
   const rel = (p) => `./${relative(APP_DIR, p).split('\\').join('/')}`;
   const need = [];
   for (const d of ['lib', 'ui', 'workers']) need.push(...(await walk(join(APP_DIR, d))).map(rel));
-  // The root shell: the page, what it links, and the manifest's icons.
+  // The root shell: the page, what it links, and the manifest icons.
   const root = new Set(['./', './index.html', './styles.css', './app.js', './manifest.webmanifest']);
-  const html = await readFile(join(APP_DIR, 'index.html'), 'utf8');
+  const html = await get('index.html');
   for (const r of html.matchAll(/<(?:link|script)\b[^>]*\b(?:href|src)="(\.\/[^"#?]+)"/g)) root.add(r[1]);
   try {
-    const man = JSON.parse(await readFile(join(APP_DIR, 'manifest.webmanifest'), 'utf8'));
+    const man = JSON.parse(await get('manifest.webmanifest'));
     for (const i of man.icons ?? []) if (i.src && !/^[a-z]+:/i.test(i.src)) root.add(i.src.startsWith('./') ? i.src : `./${i.src.replace(/^\//, '')}`);
-  } catch { /* checked by the browser part */ }
+  } catch (err) {
+    await t.fail(`manifest.webmanifest: ${firstLine(err)}`);
+  }
   const missing = [...need, ...root].filter((p) => !shell.has(p));
   await t.expect(!missing.length, `sw.js SHELL is missing ${list(missing, 6)}`);
   const stale = [];
-  for (const p of shell) {
-    if (p === './') continue;
-    try { await access(join(APP_DIR, p)); } catch { stale.push(p); }
-  }
-  await t.expect(!stale.length, `sw.js SHELL lists files that do not exist: ${list(stale)}`);
-  const a = sw.indexOf("addEventListener('activate'");
-  const next = a < 0 ? -1 : sw.indexOf('addEventListener(', a + 10);
-  const block = a < 0 ? '' : sw.slice(a, next < 0 ? undefined : next);
+  await Promise.all([...shell].map(async (p) => {
+    try {
+      const r = await fetch(new URL(p, opts.base), { method: 'HEAD' });
+      if (!r.ok) stale.push(`${p} (HTTP ${r.status})`);
+    } catch (err) { stale.push(`${p} (${firstLine(err)})`); }
+  }));
+  await t.expect(!stale.length, `sw.js SHELL lists files the server does not have: ${list(stale)}`);
+  const at = sw.indexOf("addEventListener('activate'");
+  const next = at < 0 ? -1 : sw.indexOf('addEventListener(', at + 10);
+  const block = at < 0 ? '' : sw.slice(at, next < 0 ? undefined : next);
   if (!block) await t.fail('sw.js has no activate handler');
   else {
     const filter = block.search(/startsWith\(\s*['"]gesso-['"]\s*\)/);
     const del = block.indexOf('caches.delete');
     await t.expect(filter >= 0 && del > filter, 'the activate handler does not limit caches.delete to keys starting with "gesso-"');
   }
+  t.note(`${shell.size} shell entries`);
 }
 
 // A pass-through to --base that can drop off the network for real. Chromium's
@@ -1463,9 +1549,13 @@ async function scenarioOffline() {
       const probe = await s.page.evaluate(async () => {
         try { const r = await fetch(`./__offline_probe__?${Date.now()}`); return { status: r.status }; } catch (e) { return { error: String(e) }; }
       });
+      // A path the server 404s: answered by the server means the network is still up.
       if (probe.status === 404) t.note('the network still answered while offline; the result may be optimistic');
+      else t.note(`network cut (probe: ${probe.error ? 'failed' : `${probe.status} from the worker's cache`})`);
       const failed = [];
-      const onFail = (r) => failed.push(`${r.url().replace(proxy.origin, '')} (${r.failure()?.errorText})`);
+      const onFail = (r) => {
+        if (!r.url().includes('__offline_probe__')) failed.push(`${r.url().replace(proxy.origin, '')} (${r.failure()?.errorText})`);
+      };
       s.context.on('requestfailed', onFail);
       try {
         await s.page.reload({ waitUntil: 'load', timeout: 20_000 });

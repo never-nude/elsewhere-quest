@@ -6,7 +6,8 @@
 //   available: boolean,          // false when IndexedDB is unavailable (Private Browsing, Lockdown): memory only
 //   persistent: boolean,         // result of navigator.storage.persist()
 //   putBlob(key, blob), getBlob(key) -> Blob|null, deleteBlob(key),
-//   putDoc(id, record), getDoc(id) -> record|null, deleteDoc(id), docKeys() -> string[],
+//   putDoc(id, record, { current = false }), getDoc(id) -> record|null, deleteDoc(id), docKeys() -> string[],
+//                                // current: also point meta 'current' at id, in the same transaction
 //   getCurrent() -> id|null, setCurrent(id|null),
 //   blobKeys() -> string[], gc(keep: Set<string> | (key) => boolean) -> string[] dropped
 // }
@@ -234,8 +235,16 @@ function idbStore(idb, first, persistent, timeoutMs) {
 
     // Scoped over 'blobs' too: IndexedDB runs overlapping read-write transactions in
     // the order they were created, so a record can never land before a tile write
-    // that was started ahead of it.
-    putDoc: (id, record) => put(['blobs', 'docs'], 'docs', record, id),
+    // that was started ahead of it. With `current`, the record and the pointer to it
+    // land together or not at all.
+    putDoc(id, record, { current = false } = {}) {
+      if (!current) return put(['blobs', 'docs'], 'docs', record, id);
+      return run(['blobs', 'docs', 'meta'], 'readwrite', (tx) => {
+        const done = request(tx.objectStore('docs').put(record, id));
+        tx.objectStore('meta').put({ docId: id }, CURRENT);
+        return done;
+      });
+    },
     getDoc: async (id) => (await get('docs', id)) ?? null,
     deleteDoc: (id) => del('docs', id),
     docKeys: () => keys('docs'),
@@ -289,7 +298,10 @@ function memoryStore(persistent) {
     async putBlob(k, b) { blobs.set(k, b); },
     async getBlob(k) { return blobs.get(k) ?? null; },
     async deleteBlob(k) { blobs.delete(k); },
-    async putDoc(id, r) { docs.set(id, r); },
+    async putDoc(id, r, { current: point = false } = {}) {
+      docs.set(id, r);
+      if (point) current = id;
+    },
     async getDoc(id) { return docs.get(id) ?? null; },
     async deleteDoc(id) { docs.delete(id); },
     async docKeys() { return [...docs.keys()]; },

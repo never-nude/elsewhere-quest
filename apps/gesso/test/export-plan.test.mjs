@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  JPEG_TYPE, JPEG_QUALITY, RENDER_SHARE, ENCODE_CEILING, bandMatrix, renderProgress, encodeEstimateMs,
+  JPEG_TYPE, JPEG_QUALITY, RENDER_SHARE, ENCODE_CEILING, bandMatrix, bandRendered, renderProgress, encodeEstimateMs,
   coverRect, clipToBand, compositeOver, shareRoute, shareOutcome, previewFit,
   swipeCloses, sheetOffset, SWIPE_CLOSE_PT, SWIPE_FLICK_MIN_PT,
 } from '../lib/export-plan.js';
@@ -28,6 +28,21 @@ test('each band matrix puts the band top on row 0 and tiles the output exactly',
     covered += band.h;
   }
   assert.equal(covered, outH);
+});
+
+test('bandRendered accepts an opaque readback and rejects a lost context', () => {
+  const ok = new Uint8ClampedArray(4 * 1000).fill(255);
+  assert.equal(bandRendered(ok), true);
+  assert.equal(bandRendered(new Uint8ClampedArray(4 * 1000)), false, 'all zeros: the context was lost');
+  const last = ok.slice();
+  last[4 * 999 + 3] = 0;
+  assert.equal(bandRendered(last), false, 'the last pixel is always sampled');
+  const first = ok.slice();
+  first[3] = 0;
+  assert.equal(bandRendered(first), false, 'so is the first');
+  assert.equal(bandRendered(new Uint8ClampedArray([1, 2, 3, 255])), true, 'one pixel');
+  assert.equal(bandRendered(new Uint8ClampedArray(0)), false);
+  assert.equal(bandRendered(null), false);
 });
 
 test('render progress fills the render share in order, then stops', () => {

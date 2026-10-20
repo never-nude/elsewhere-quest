@@ -11,7 +11,10 @@
 // Every fill is a tile of exact final pixels (lib/patches.js). Try another and a
 // moved Source replace the newest tile, so each is one undo step. Fills run one at
 // a time, in the order they were asked for; each re-checks on landing that the
-// photo underneath is still the one it was computed from.
+// photo underneath is still the one it was computed from. How each fill was made
+// rides in its pool entry (`how`), so Try another and Source still work after a
+// relaunch. `settle()` resolves once every fill asked for has landed, so Save can
+// wait for a fill still computing instead of saving the photo without it.
 
 import { RULERS, formatValue, clampValue } from '../../lib/ruler.js';
 import { diskMask, strokeMask, maskBounds, exceedsAreaCap, composeRef } from '../../lib/heal.js';
@@ -21,7 +24,7 @@ import {
   PRESETS, DEFAULT_SIZE, DILATE_PX, FILTER_BLEED, brushRadius, solveFactor, discBox, clipRect, grow,
   findRegion, fullOffsets, rubWindow, mapPoints, extendBounds, boundsRect, readPadded, shrink, shrinkMask,
   stackSide, stackPair, correctionField, upsampleCorrection, cutTile, upsampleFill, discRing, refineOffset, subBlock,
-  rankSources, addCorrection, SEAM_PX,
+  rankSources, addCorrection, SEAM_PX, recipeRecord, reviveRecipe,
 } from '../../lib/remove-plan.js';
 import { createHealClient } from '../heal-client.js';
 
@@ -42,6 +45,8 @@ let sizing = false; // the size ruler is being dragged: preview the brush
 const jobs = []; // asked-for fills not landed yet, drawn as rings / coral
 let chain = Promise.resolve();
 let generation = 0; // bumped by Cancel: anything in flight is dropped
+let running = null; // { under } of the fill being computed
+let docId = null; // the photo the fills below belong to
 const fills = new Map(); // patch id -> how it was made, for Try another and Source
 let heal = null;
 let shimmerAt = 0;
@@ -54,25 +59,39 @@ export default {
   label: 'Remove',
   viewMode: 'output',
 
-  open() {
+  open(ed) {
     size = DEFAULT_SIZE;
     dial = 'size';
     stroke = null;
     ringDrag = null;
     sizing = false;
+    const id = ed?.committed?.id ?? null;
+    if (id !== docId) {
+      // Another photo: nothing still computing or remembered belongs to it.
+      docId = id;
+      dropPending();
+      fills.clear();
+    }
     client().warm();
   },
 
   close(ed, { cancel } = {}) {
-    if (cancel) {
-      generation++;
-      jobs.length = 0;
-      movedRing = null;
-      hideShimmer(true);
-    }
+    if (cancel) dropPending();
     stroke = null;
     ringDrag = null;
     sizing = false;
+  },
+
+  // An Undo or Redo under a fill still computing makes that fill moot (it would be
+  // dropped on landing): stop it now so the next fill doesn't wait behind it.
+  onHistory(ed) {
+    if (running && ed.committed?.remove !== running.under) heal?.cancel();
+  },
+
+  // Resolves when every fill asked for so far has landed (or been dropped); null
+  // when nothing is pending. Save waits on it so the saved copy has the fill.
+  settle() {
+    return jobs.length ? chain : null;
   },
 
   panel(ed) {
@@ -295,16 +314,24 @@ function endRing(ed) {
 function tryAnother(ed) {
   const last = lastFill(ed);
   if (!last) return;
-  ed.hint('try-another');
-  const { id, rec } = last;
-  if (rec.kind === 'tap' && rec.offsets.length < 2) {
-    ed.panel.showTip('Nothing else matches nearby. Tap Source to choose.');
-    return;
+  if (last.rec.kind === 'tap') {
+    // Only a tap fill has a Source, which the second Try another's hint points to.
+    ed.hint('try-another');
+    if (last.rec.offsets.length < 2) {
+      ed.panel.showTip('Nothing else matches nearby. Tap Source to choose.');
+      return;
+    }
   }
-  const job = rec.kind === 'tap' ? { kind: 'tap', cx: rec.cx, cy: rec.cy, rr: rec.rr } : { kind: 'rub', pts: rec.pts, rr: rec.rr };
+  const job = jobFor(last.rec);
   enqueue(ed, job, async (gen) => {
+    // Retry whatever is newest by now, so quick repeated taps of Try another (or
+    // one made while a fill was still computing) each move on to the next one.
+    const now = lastFill(ed);
+    if (!now) return;
+    const { rec } = now;
+    if (rec.kind === 'tap' && rec.offsets.length < 2) return;
+    Object.assign(job, jobFor(rec), { mask: null });
     const under = ed.committed.remove;
-    if (under.at(-1) !== id) return; // undone or replaced since the tap
     if (rec.kind === 'tap') {
       const index = (rec.index + 1) % rec.offsets.length;
       const D = rec.offsets[index];
@@ -316,6 +343,10 @@ function tryAnother(ed) {
       await land(ed, tile, next, { under, gen, replace: true });
     }
   });
+}
+
+function jobFor(rec) {
+  return rec.kind === 'tap' ? { kind: 'tap', cx: rec.cx, cy: rec.cy, rr: rec.rr } : { kind: 'rub', pts: rec.pts, rr: rec.rr };
 }
 
 // Heal a tapped spot: find where to copy from, then copy with a seam correction.
@@ -447,7 +478,7 @@ async function land(ed, tile, rec, { under, gen, replace = false, label } = {}) 
   const fresh = () => gen === generation && ed.committed?.remove === under;
   if (!tile || !fresh()) return false;
   const id = newId();
-  const meta = { ...tile.rect };
+  const meta = { ...tile.rect, how: recipeRecord(rec) };
   ed.tiles.set(id, tile.rgba);
   ed.pools = { ...ed.pools, patches: { ...ed.pools.patches, [id]: meta } };
   try {
@@ -464,7 +495,8 @@ async function land(ed, tile, rec, { under, gen, replace = false, label } = {}) 
   }
   fills.set(id, rec);
   const keep = replace ? under.slice(0, -1) : under;
-  ed.commit({ ...ed.committed, remove: [...keep, id] }, label);
+  // A fill that lands after Done is still Remove's step, whatever tool is open.
+  ed.commit({ ...ed.committed, remove: [...keep, id] }, label, { tool: 'remove' });
   return true;
 }
 
@@ -477,14 +509,16 @@ function enqueue(ed, job, work) {
   ed.requestRender();
   chain = chain.then(async () => {
     if (gen !== generation) return;
+    running = { under: ed.committed?.remove };
     try {
       await work(gen);
     } catch (err) {
-      console.warn('Remove failed', err);
-      if (gen === generation) {
+      if (err?.code !== 'cancelled') console.warn('Remove failed', err);
+      if (gen === generation && err?.code !== 'cancelled') {
         ed.toast(err?.code === 'timeout' ? 'That took too long. Try a smaller area.' : "Couldn't remove that. Try again.", 2400);
       }
     } finally {
+      running = null;
       const i = jobs.indexOf(job);
       if (i >= 0) jobs.splice(i, 1);
       if (!jobs.length) hideShimmer(false);
@@ -494,13 +528,28 @@ function enqueue(ed, job, work) {
   });
 }
 
+// Cancel, or another photo: drop every fill asked for and not landed yet.
+function dropPending() {
+  generation++;
+  jobs.length = 0;
+  movedRing = null;
+  heal?.cancel();
+  hideShimmer(true);
+}
+
 // ------------------------------------------------------------------ drawing
 
+// The newest fill and how it was made: remembered from this session, or read back
+// from its pool entry after a relaunch.
 function lastFill(ed) {
   const ids = ed.committed?.remove;
   if (!ids?.length) return null;
   const id = ids[ids.length - 1];
-  const rec = fills.get(id);
+  let rec = fills.get(id);
+  if (!rec) {
+    rec = reviveRecipe(ed.pools?.patches?.[id]?.how);
+    if (rec) fills.set(id, rec);
+  }
   return rec ? { id, rec } : null;
 }
 

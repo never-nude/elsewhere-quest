@@ -232,7 +232,7 @@ test('a started draft with edits and a fill loads back the same', async () => {
 test('schedule debounces; flush writes at once and returns when stored', async () => {
   const writes = [];
   const base = await openStore();
-  const store = { ...base, putDoc: async (id, rec) => { writes.push(rec.history.index); return base.putDoc(id, rec); } };
+  const store = { ...base, putDoc: async (id, rec, opts) => { writes.push(rec.history.index); return base.putDoc(id, rec, opts); } };
   let ed = fakeEditor();
   const auto = createAutosave(store, () => ed, { debounceMs: 30 });
   await auto.startDraft('d1', photo());
@@ -262,9 +262,9 @@ test('a flush during a slow write is not lost, and the newest write wins', async
     ...base,
     // Writes land in the order they were made, each after a delay, like IndexedDB
     // transactions on the same store.
-    putDoc(id, rec) {
+    putDoc(id, rec, opts) {
       const prev = gates.at(-1) ?? Promise.resolve();
-      const p = prev.then(() => new Promise((r) => setTimeout(r, 25))).then(() => base.putDoc(id, rec));
+      const p = prev.then(() => new Promise((r) => setTimeout(r, 25))).then(() => base.putDoc(id, rec, opts));
       gates.push(p);
       return p;
     },
@@ -285,7 +285,7 @@ test('a flush during a slow write is not lost, and the newest write wins', async
 test('a failed write is retried by the next flush', async () => {
   const base = await openStore();
   let fail = false;
-  const store = { ...base, putDoc: async (id, rec) => { if (fail) throw new Error('disk hiccup'); return base.putDoc(id, rec); } };
+  const store = { ...base, putDoc: async (id, rec, opts) => { if (fail) throw new Error('disk hiccup'); return base.putDoc(id, rec, opts); } };
   const ed = fakeEditor();
   const auto = createAutosave(store, () => ed, { debounceMs: 10 });
   await auto.startDraft('d1', photo());
@@ -359,13 +359,148 @@ test('a damaged draft makes loadDraft throw; discard then forgets it', async () 
     if (damage === 'source') await store.deleteBlob('source:d1');
     if (damage === 'record') await store.deleteDoc('d1');
     if (damage === 'tileSize') await store.putBlob('tile:p1', new Blob([encodeTileHeader(p, p.w * p.h * 4), new Uint8Array(3)]));
-    await assert.rejects(auto.loadDraft(), Error, damage);
-    await auto.discard();
+    // A relaunch: nothing is on screen yet.
+    const relaunched = createAutosave(store, () => null);
+    await assert.rejects(relaunched.loadDraft(), Error, damage);
+    await relaunched.discard();
     assert.equal(await store.getCurrent(), null);
     assert.deepEqual(await store.blobKeys(), []);
     assert.deepEqual(await store.docKeys(), []);
-    assert.equal(await auto.loadDraft(), null);
+    assert.equal(await relaunched.loadDraft(), null);
   }
+});
+
+test('Discard, then keep editing a photo with fills: its tiles are kept and it restores', async () => {
+  const { store, auto, ed } = await setup();
+  ed.tiles = new Map();
+  await auto.startDraft('d1', photo());
+  const p = patch();
+  const rgba = rgbaFor(p);
+  ed.tiles.set('p1', rgba);
+  ed.pools = { strokes: {}, patches: { p1: p } };
+  await auto.saveTile('p1', rgba, p);
+  ed.commit({ ...ed.committed, remove: ['p1'] }, 'Removed spot', 'remove');
+  await auto.flush();
+  await auto.discard();
+  assert.equal(await store.getCurrent(), null);
+  assert.deepEqual(await store.docKeys(), []);
+  // The picker was cancelled: the photo on screen keeps its original and fills.
+  assert.deepEqual((await store.blobKeys()).sort(), ['source:d1', 'tile:p1']);
+  ed.commit(setIn(ed.committed, ['light', 'brightness'], 7), 'Brightness +7');
+  await auto.flush();
+  const d = await createAutosave(store, () => null).loadDraft();
+  assert.ok(d);
+  assert.deepEqual(H.labels(d.history).map((l) => l.label), ['Original', 'Removed spot', 'Brightness +7']);
+  assert.deepEqual(d.tiles.get('p1'), rgba);
+});
+
+test('a fill whose tile failed to store is stored again before any record names it', async () => {
+  const base = await openStore();
+  let failTiles = 1;
+  const store = {
+    ...base,
+    async putBlob(k, b) {
+      if (k.startsWith('tile:') && failTiles > 0) {
+        failTiles--;
+        throw new DOMException('full', 'QuotaExceededError');
+      }
+      return base.putBlob(k, b);
+    },
+  };
+  const ed = fakeEditor();
+  ed.tiles = new Map();
+  const auto = createAutosave(store, () => ed, { debounceMs: 10 });
+  await auto.startDraft('d1', photo());
+  ed.commit(setIn(ed.committed, ['light', 'brightness'], 9), 'Brightness +9');
+  await auto.flush();
+  const p = patch();
+  const rgba = rgbaFor(p, 3);
+  ed.tiles.set('p1', rgba);
+  ed.pools = { strokes: {}, patches: { p1: p } };
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    assert.equal(await auto.saveTile('p1', rgba, p), false);
+    ed.commit({ ...ed.committed, remove: ['p1'] }, 'Removed spot', 'remove');
+    await auto.flush(); // stores the tile again, then the record
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(ed.toasts, ["This iPhone is out of space, so this edit isn't being kept."]);
+  const d = await createAutosave(store, () => null).loadDraft();
+  assert.equal(H.current(d.history).remove[0], 'p1');
+  assert.deepEqual(d.tiles.get('p1'), rgba);
+
+  // When it cannot be stored at all, the last record that can be restored stays.
+  failTiles = Infinity;
+  const q = patch({ x: 50 });
+  ed.tiles.set('p2', rgbaFor(q, 4));
+  ed.pools = { strokes: {}, patches: { p1: p, p2: q } };
+  console.warn = () => {};
+  try {
+    await auto.saveTile('p2', ed.tiles.get('p2'), q);
+    ed.commit({ ...ed.committed, remove: ['p1', 'p2'] }, 'Removed spot', 'remove');
+    await auto.flush();
+    ed.commit(setIn(ed.committed, ['light', 'contrast'], 5), 'Contrast +5');
+    await auto.flush();
+  } finally {
+    console.warn = warn;
+  }
+  const d2 = await createAutosave(store, () => null).loadDraft();
+  assert.deepEqual(H.labels(d2.history).map((l) => l.label), ['Original', 'Brightness +9', 'Removed spot']);
+});
+
+test('a photo opened while the last edit was still loading wins', async () => {
+  const { store, auto, ed, swap } = await setup('d1');
+  await auto.startDraft('d1', photo('one.jpg'));
+  ed.commit(setIn(ed.committed, ['light', 'brightness'], 4), 'Brightness +4');
+  await auto.flush();
+  // Relaunch: the restore starts, and a picked photo lands before it finishes.
+  let shown = null;
+  const auto2 = createAutosave(store, () => shown, { debounceMs: 10 });
+  const loading = auto2.loadDraft();
+  shown = fakeEditor('d2');
+  const starting = auto2.startDraft('d2', photo('two.jpg'));
+  assert.equal(await loading, null, 'the older draft is not resumed over the new photo');
+  await starting;
+  shown.commit(setIn(shown.committed, ['color', 'warmth'], 12), 'Warmth +12');
+  await auto2.flush();
+  const d = await createAutosave(store, () => null).loadDraft();
+  assert.equal(H.current(d.history).id, 'd2');
+  assert.equal(H.current(d.history).color.warmth, 12);
+  assert.deepEqual(await store.blobKeys(), ['source:d2']);
+  swap(null);
+});
+
+test("a new photo whose original can't be stored leaves nothing to restore, not the previous photo", async () => {
+  const base = await openStore();
+  let failSource = false;
+  const store = {
+    ...base,
+    async putBlob(k, b) {
+      if (failSource && k.startsWith('source:')) throw new DOMException('full', 'QuotaExceededError');
+      return base.putBlob(k, b);
+    },
+  };
+  let ed = fakeEditor('d1');
+  const auto = createAutosave(store, () => ed, { debounceMs: 10 });
+  await auto.startDraft('d1', photo('one.jpg'));
+  ed.commit(setIn(ed.committed, ['light', 'brightness'], 4), 'Brightness +4');
+  await auto.flush();
+  assert.equal(await store.getCurrent(), 'd1');
+  failSource = true;
+  ed = fakeEditor('d2');
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    await auto.startDraft('d2', photo('two.jpg'));
+    ed.commit(setIn(ed.committed, ['light', 'brightness'], 8), 'Brightness +8');
+    await auto.flush();
+  } finally {
+    console.warn = warn;
+  }
+  assert.equal(await store.getCurrent(), null);
+  assert.equal(await createAutosave(store, () => null).loadDraft(), null);
 });
 
 test('Discard, then keep editing the same photo: the draft comes back', async () => {

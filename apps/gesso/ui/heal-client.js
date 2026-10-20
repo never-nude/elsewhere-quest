@@ -5,6 +5,8 @@
 //   heal.correct(img, mask, dx, dy, { iters, featherPx }) -> Promise<{ width, height, data }>
 //   heal.inpaint(img, mask, { scale, seed })      -> Promise<{ width, height, data }>
 //   heal.warm()      start the worker early (Remove opening), so the first tap is quick
+//   heal.cancel()    drop every job in flight (they reject with code 'cancelled'); the
+//                    busy worker is stopped and a fresh one starts with the next job
 //   heal.dispose()
 //
 // img is { width, height, data: Uint8ClampedArray RGBA }, mask a Uint8Array of
@@ -20,7 +22,7 @@ export class HealError extends Error {
   constructor(message, code) {
     super(message);
     this.name = 'HealError';
-    this.code = code; // 'timeout' | 'crashed' | 'failed'
+    this.code = code; // 'timeout' | 'crashed' | 'failed' | 'cancelled'
   }
 }
 
@@ -132,6 +134,14 @@ export function createHealClient({ timeoutMs = 20000, url = new URL('../workers/
       const mask = new Uint8Array(64);
       mask[27] = 1;
       run({ type: 'find', img, mask, maxResults: 1 }, [img.data.buffer, mask.buffer]).catch(() => {});
+    },
+    // A fill nobody wants any more (Cancel, an Undo under it) would otherwise keep
+    // the worker busy for seconds while the next fill waits behind it.
+    cancel() {
+      if (!pending.size) return false;
+      drop();
+      settleAll(new HealError('Cancelled', 'cancelled'));
+      return true;
     },
     dispose() {
       drop();
