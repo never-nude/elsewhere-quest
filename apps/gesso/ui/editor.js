@@ -345,11 +345,24 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     if (overlay.width !== w || overlay.height !== h) { overlay.width = w; overlay.height = h; }
   }
 
+  // Note which frames actually paint the overlay. A frame that only clears it
+  // (brush lifted, tool closed) has been seen to leave the previous frame on
+  // screen when it shares the frame with a WebGL draw underneath, so an empty
+  // overlay is hidden outright instead of trusted to be transparent.
+  const overlayCtx = overlay.getContext('2d');
+  let overlayDrew = false;
+  for (const name of ['fill', 'stroke', 'fillRect', 'strokeRect', 'fillText', 'strokeText', 'drawImage', 'putImageData']) {
+    const fn = overlayCtx[name].bind(overlayCtx);
+    overlayCtx[name] = (...args) => { overlayDrew = true; return fn(...args); };
+  }
+
   function drawOverlay(dpr) {
-    const ctx = overlay.getContext('2d');
+    const ctx = overlayCtx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, overlay.width, overlay.height);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.beginPath(); // a path never carries over into the next frame
+    overlayDrew = false;
     if (compare.mode !== 'before' && tool.wantsCaptions !== false) ed.drawCaptions?.(ctx, toolId === 'text' ? 1 : toolId === 'remove' ? 0.3 : 1);
     tool.drawOverlay?.(ed, ctx);
     if (compare.mode === 'wipe') {
@@ -360,6 +373,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       ctx.lineTo(compare.x, stage.clientHeight);
       ctx.stroke();
     }
+    overlay.style.visibility = overlayDrew ? 'visible' : 'hidden';
   }
 
   function updateZoomUi() {

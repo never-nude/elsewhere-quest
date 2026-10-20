@@ -566,7 +566,7 @@ button:disabled { cursor: default; }
 .action:disabled { color: var(--ink-3); }
 .action--save {
   justify-self: end;
-  width: 104px;
+  width: min(104px, 100%);
   background: var(--accent);
   color: var(--on-accent);
 }

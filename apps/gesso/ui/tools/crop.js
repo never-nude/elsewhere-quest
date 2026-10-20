@@ -55,7 +55,7 @@ export default {
     const shaped = ['4:5', '5:4', '16:9', '9:16'].includes(c.aspect);
     return {
       title: 'Crop',
-      hint: 'Tap Auto, pick a shape, or drag the corners.',
+      hint: 'Tap Auto or a shape, or drag a corner.',
       cancel: true,
       done: true,
       quick: QUICK.map((q) => ({
