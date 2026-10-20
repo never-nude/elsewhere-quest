@@ -22,6 +22,9 @@ export function createHints(getEditor, {
   now = () => Date.now(),
   panelEl = () => globalThis.document?.getElementById('panel') ?? null,
   watchFade = domWatch,
+  // Surfaces that hide the whole panel: the Save sheet, its touch-and-hold
+  // fallback, and the Text edit bar (the keyboard is up under it).
+  covers = () => ['sheet', 'fallback', 'editbar'].map((id) => globalThis.document?.getElementById(id)),
 } = {}) {
   let counters = initialCounters();
   let shown = reviveShown(read(storage, HINTS_KEY));
@@ -65,6 +68,10 @@ export function createHints(getEditor, {
       counters = r.counters;
       const id = r.hint;
       if (!id || pending || now() < upUntil) return null;
+      // A fill can land after Save was tapped or Text was opened. Under the sheet or
+      // the keyboard the hint would be marked but never read; dropped, it gets its
+      // next chance.
+      if (covers().some((el) => el && !el.hidden)) return null;
       if (isFaded()) {
         unwatch = watchFade(panelEl(), release);
         if (unwatch) {

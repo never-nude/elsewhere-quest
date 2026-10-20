@@ -4,6 +4,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHints } from '../ui/hints-ui.js';
 import { HINT_MS, HINTS_KEY, PHOTO_DRAG_KEY, hintById } from '../lib/hints.js';
+import { TAPED } from '../ui/tape.js';
 
 function fakeStorage(init = {}) {
   const m = new Map(Object.entries(init));
@@ -129,6 +130,28 @@ test('a hint earned while the panel is faded waits for the fade to lift', () => 
   assert.deepEqual(JSON.parse(r.storage.getItem(HINTS_KEY)), ['H1']);
   r.wait(HINT_MS);
   assert.equal(r.hints.event('auto-enhance'), 'H14');
+});
+
+test('a hint earned under the rewind tape waits for the tape to go', () => {
+  const tips = [];
+  const classes = new Set([TAPED]);
+  let watcher = null;
+  const hints = createHints(() => ({ panel: { showTip: (text) => tips.push(text) } }), {
+    storage: fakeStorage(),
+    now: () => 1000,
+    panelEl: () => ({ classList: { contains: (c) => classes.has(c) } }),
+    watchFade: (el, cb) => { watcher = cb; return () => { watcher = null; }; },
+  });
+  assert.equal(hints.event('undo'), null);
+  assert.equal(hints.event('undo'), null);
+  assert.equal(hints.event('undo'), null);
+  assert.equal(hints.pending, 'H5');
+  classes.add('is-faded'); // still hidden: a class change alone does not release it
+  watcher();
+  assert.equal(tips.length, 0);
+  classes.clear();
+  watcher();
+  assert.deepEqual(tips, [hintById('H5').text]);
 });
 
 test('unknown events and junk are ignored; broken storage still shows hints', () => {
