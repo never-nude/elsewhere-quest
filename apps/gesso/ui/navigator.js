@@ -7,11 +7,16 @@
 //
 // The thumbnail is redrawn only while the navigator is showing and the history
 // state has changed, so a commit costs one 176 px readback and a pinch costs none.
+// Nothing runs every frame: the editor rewrites the status word after every step,
+// which is the cue to look, with a slow check behind it in case a step ever comes
+// without one.
 
 import { navigatorFrame } from '../lib/view.js';
 import { insideFrame, centerOn, dragBy } from '../lib/navpan.js';
 
 const THUMB_SIDE = 176; // 2x the navigator's long side: sharp enough at DPR 3, cheap to read back
+const SETTLE_MS = 120; // a tape scrub jumps every frame; one readback per this, not per jump
+const BACKSTOP_MS = 1000;
 
 export function attachNavigator(ed, root = document) {
   const zoom = root.querySelector('#zoom');
@@ -31,7 +36,9 @@ export function attachNavigator(ed, root = document) {
 
   let drawnState = null;
   let drawnRevision = -1;
-  let raf = 0;
+  let settle = 0;
+  let backstop = 0;
+  let scratch = null; // one small canvas, reused: iOS counts every live canvas
 
   function paint() {
     const out = ed.readOutput({ maxSide: THUMB_SIDE, tone: true });
@@ -42,10 +49,12 @@ export function attachNavigator(ed, root = document) {
       canvas.width = cw;
       canvas.height = ch;
     }
-    const src = root.createElement('canvas');
-    src.width = out.width;
-    src.height = out.height;
-    src.getContext('2d').putImageData(new ImageData(out.data, out.width, out.height), 0, 0);
+    scratch ??= root.createElement('canvas');
+    if (scratch.width !== out.width || scratch.height !== out.height) {
+      scratch.width = out.width;
+      scratch.height = out.height;
+    }
+    scratch.getContext('2d').putImageData(new ImageData(out.data, out.width, out.height), 0, 0);
     // Fitted and centred exactly as navigatorFrame assumes, so the frame lines up.
     const k = Math.min(w / out.width, h / out.height);
     const dw = out.width * k, dh = out.height * k;
@@ -54,28 +63,43 @@ export function attachNavigator(ed, root = document) {
     ctx.clearRect(0, 0, cw, ch);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(src, ((w - dw) / 2) * dpr, ((h - dh) / 2) * dpr, dw * dpr, dh * dpr);
+    ctx.drawImage(scratch, ((w - dw) / 2) * dpr, ((h - dh) / 2) * dpr, dw * dpr, dh * dpr);
   }
 
-  function tick() {
-    raf = 0;
+  function check() {
+    win.clearTimeout(settle);
+    settle = 0;
     if (zoom.hidden || !ed.committed) return;
-    if (ed.committed !== drawnState || ed.revision !== drawnRevision) {
-      drawnState = ed.committed;
-      drawnRevision = ed.revision;
-      try {
-        paint();
-      } catch (err) {
-        console.warn('navigator thumbnail', err); // a lost GL context: the frame still works
-      }
+    if (ed.committed === drawnState && ed.revision === drawnRevision) return;
+    drawnState = ed.committed;
+    drawnRevision = ed.revision;
+    try {
+      paint();
+    } catch (err) {
+      console.warn('navigator thumbnail', err); // a lost GL context: the frame still works
     }
-    raf = win.requestAnimationFrame(tick);
   }
 
-  // The editor shows #zoom when the view zooms in; start watching for changes then.
-  new win.MutationObserver(() => {
-    if (!zoom.hidden && !raf) raf = win.requestAnimationFrame(tick);
-  }).observe(zoom, { attributes: true, attributeFilter: ['hidden'] });
+  function soon() {
+    if (!zoom.hidden && !settle) settle = win.setTimeout(check, SETTLE_MS);
+  }
+
+  // The editor shows #zoom from inside its draw: paint now, so the thumbnail is
+  // never blank for a frame, and keep a slow check going only while it shows.
+  function shownChanged() {
+    if (zoom.hidden) {
+      win.clearInterval(backstop);
+      backstop = 0;
+      win.clearTimeout(settle);
+      settle = 0;
+      return;
+    }
+    check();
+    if (!backstop) backstop = win.setInterval(check, BACKSTOP_MS);
+  }
+  new win.MutationObserver(shownChanged).observe(zoom, { attributes: true, attributeFilter: ['hidden'] });
+  const status = root.querySelector('#status');
+  if (status) new win.MutationObserver(soon).observe(status, { childList: true, characterData: true, subtree: true });
 
   // ------------------------------------------------------------------ dragging
 
@@ -95,12 +119,15 @@ export function attachNavigator(ed, root = document) {
     return [e.clientX - b.left, e.clientY - b.top];
   }
 
+  // A new touch always takes the navigator: the last one's lift may never have
+  // come (capture lost), and a drag waiting for it would leave the navigator dead.
   nav.addEventListener('pointerdown', (e) => {
-    if (drag || zoom.hidden) return;
+    drag = null;
+    if (zoom.hidden) return;
     const g = geometry();
     if (!g) return;
     e.preventDefault();
-    nav.setPointerCapture?.(e.pointerId);
+    try { nav.setPointerCapture(e.pointerId); } catch { /* already gone */ }
     const [x, y] = local(e);
     let start = g.v;
     if (!insideFrame(g.frame, x, y)) {
@@ -112,6 +139,12 @@ export function attachNavigator(ed, root = document) {
 
   nav.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.id) return;
+    // The view was refitted under the finger (an Undo changed the crop, Fit was
+    // tapped): the drag's starting view belongs to another picture now.
+    if (zoom.hidden || ed.view?.fit !== drag.start.fit) {
+      drag = null;
+      return;
+    }
     const [x, y] = local(e);
     ed.setView(dragBy(drag.start, drag.frame, x - drag.x, y - drag.y));
   });
@@ -121,9 +154,10 @@ export function attachNavigator(ed, root = document) {
   };
   nav.addEventListener('pointerup', end);
   nav.addEventListener('pointercancel', end);
+  nav.addEventListener('lostpointercapture', end);
 
   return {
     get dragging() { return !!drag; },
-    redraw() { drawnState = null; if (!zoom.hidden && !raf) raf = win.requestAnimationFrame(tick); },
+    redraw() { drawnState = null; check(); },
   };
 }

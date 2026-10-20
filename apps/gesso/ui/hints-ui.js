@@ -5,13 +5,17 @@
 //
 // One hint at a time: a hint earned while another is still up is neither shown nor
 // marked, so it gets its next chance (lib/hints.js thresholds are "at least"). A
-// hint earned while the panel is faded under a ruler or photo drag waits for the
-// fade to lift, so it is read at full strength for its whole time.
+// hint earned while the panel is faded under a ruler or photo drag, or covered by
+// the rewind tape, waits for the panel to come back, so it is read at full
+// strength for its whole time.
 //
 // Events reach here through ed.hint(name, data); names lib/hints.js does not know
 // ('pinch', 'first-ruler-drag') are counted as nothing.
 
 import { observe, initialCounters, reviveShown, markShown, hintById, HINT_MS, HINTS_KEY, PHOTO_DRAG_KEY } from '../lib/hints.js';
+import { TAPED } from './tape.js';
+
+const HIDDEN_BY = ['is-faded', TAPED]; // #panel classes under which a tip can't be read
 
 export function createHints(getEditor, {
   storage = browserStorage(),
@@ -25,7 +29,10 @@ export function createHints(getEditor, {
   let pending = null;
   let unwatch = null;
 
-  const isFaded = () => !!panelEl()?.classList?.contains('is-faded');
+  const isFaded = () => {
+    const list = panelEl()?.classList;
+    return !!list && HIDDEN_BY.some((c) => list.contains(c));
+  };
 
   function show(id) {
     const h = hintById(id);
