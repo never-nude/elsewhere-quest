@@ -692,6 +692,7 @@ button:disabled { cursor: default; }
 .sheet__coach { margin: 0; text-align: center; font-size: 15px; color: var(--ink); }
 .sheet__foot { margin: 0; text-align: center; font-size: 13px; color: var(--ink-2); }
 .sheet__secondary { width: 100%; min-height: 48px; border-radius: 14px; background: var(--raised); font-size: 16px; font-weight: 600; }
+#sheet-main { display: flex; flex-direction: column; gap: 8px; }
 .sheet__done { display: flex; flex-direction: column; gap: 10px; }
 .sheet__success { margin: 0; text-align: center; font-size: 16px; font-weight: 600; }
 
@@ -720,7 +721,8 @@ button:disabled { cursor: default; }
 
 .noscript { position: fixed; inset: auto 0 40% 0; text-align: center; color: var(--ink-2); }
 
-@keyframes rise { from { transform: translateY(100%); } }
+/* `translate`, not `transform`: the landscape card is centred with transform: translateX(-50%). */
+@keyframes rise { from { translate: 0 100%; } }
 @keyframes fade { from { opacity: 0; } }
 
 /* ------------------------------------------------------------------ landscape: a side column */

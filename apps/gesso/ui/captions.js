@@ -140,7 +140,9 @@ export function createCaptions(ed) {
     const b = band ?? { x: 0, y: 0, width: outW, height: outH };
     const k = Number.isFinite(scale) && scale > 0 ? scale : 1;
     const canvas = makeCanvas(Math.max(1, Math.round(b.width * k)), Math.max(1, Math.round(b.height * k)));
-    const ctx = canvas.getContext('2d');
+    // Read back once with getImageData: a CPU-backed canvas skips a GPU readback,
+    // and every band's strip then rasterizes the same way (no step at a seam).
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
     // Saving without the words would be a silent loss; fail the export instead.
     if (!ctx) throw new Error('captions: no 2D context for the export raster');
     for (const cap of list) {

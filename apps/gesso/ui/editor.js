@@ -598,7 +598,12 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     // waiting here costs no user activation.
     const pending = Object.values(tools).map((t) => t?.settle?.(ed)).filter(Boolean);
     if (toolId !== 'home') closeTool({ cancel: false, hint: false });
-    if (pending.length) await Promise.all(pending);
+    if (pending.length) {
+      const busy = root.querySelector('#busy');
+      busy.hidden = false;
+      busy.querySelector('span').textContent = 'Finishing…';
+      try { await Promise.all(pending); } finally { busy.hidden = true; }
+    }
     onSave?.(ed);
   });
 
@@ -625,7 +630,11 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     get view() { return view; },
     get sourceInfo() { return sourceInfo; },
     get revision() { return revision; },
-    markSaved() { savedRevision = revision; statusEl.textContent = 'Saved'; },
+    markSaved() {
+      savedRevision = revision;
+      statusEl.textContent = 'Saved';
+      store?.schedule?.(); // persist "in Photos" so a relaunch doesn't ask to save again
+    },
     get isSaved() { return revision === savedRevision; },
     live: setLive,
     commit,

@@ -209,7 +209,7 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
   }
 
   // Render into a temporary RGBA8 target and read it back in the same task.
-  function renderToBuffer(width, height, quad, u, opts) {
+  function renderToBuffer(width, height, quad, u, opts, into = null, offset = 0) {
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
     gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA8, width, height);
@@ -225,8 +225,9 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
         writeQuad(quad, width, height, false); // FBO row 0 = top row: readPixels is top-first
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         gl.bindVertexArray(null);
-        const out = new Uint8ClampedArray(width * height * 4);
-        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, out);
+        // An export band reads straight into the whole output (§5.7), not a copy per band.
+        const out = into ?? new Uint8ClampedArray(width * height * 4);
+        gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, out, into ? offset : 0);
         return out;
       });
     } finally {
@@ -494,14 +495,15 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
     // return RGBA rows top-first.
     // `before` = pristine, untouched; `tone: false` = the current pixels (fills
     // included) through the crop but with no tone, for analysis.
-    renderPixels({ width, height, quad, uniforms, grainScale = [width, height], before = false, tone = true }) {
+    // `into` (+ `offset`, in bytes): read the rows into that array and return it.
+    renderPixels({ width, height, quad, uniforms, grainScale = [width, height], before = false, tone = true, into = null, offset = 0 }) {
       if (!ok || lost) throw new Error('WebGL is not available right now');
       const plain = before || !tone;
       return renderToBuffer(width, height, quad, plain ? IDENTITY : uniforms, {
         texture: before ? pristine : base ?? pristine,
         grainScale,
         paint: !plain,
-      });
+      }, into, offset);
     },
   };
   return api;

@@ -64,7 +64,7 @@ async function main() {
       clearTimeout(restoring);
       try {
         if (currentFile) {
-          const { bitmap } = await decodeForEditing(currentFile, { maxPixels: workCap() });
+          const { bitmap } = await decodeForEditing(currentFile, { maxPixels: autosave.maxPixels ?? workCap() });
           renderer.loadSource(bitmap);
           bitmap.close();
           editor.resync();
@@ -79,6 +79,13 @@ async function main() {
     fatal('Gesso needs WebGL, which this browser (or Lockdown Mode) has turned off.');
     return;
   }
+
+  // "Choose a photo" works from the first paint: a photo picked while the store is
+  // still opening (up to 3 s if IndexedDB hangs) is kept for when the editor is ready.
+  const fileInput = $('#file');
+  let earlyFile = null;
+  const keepEarly = () => { earlyFile = fileInput.files?.[0] ?? earlyFile; fileInput.value = ''; };
+  fileInput.addEventListener('change', keepEarly);
 
   const store = await openStore();
   if (!store.available) $('#hint').textContent = "Edits won't be kept if you leave Gesso.";
@@ -106,7 +113,7 @@ async function main() {
   installBubble(editor);
 
   // ---- import ------------------------------------------------------------------
-  const fileInput = $('#file');
+  fileInput.removeEventListener('change', keepEarly);
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];
     fileInput.value = '';
@@ -114,8 +121,10 @@ async function main() {
     await importFile(file);
   });
 
+  let importing = false;
   async function importFile(file) {
     const busy = $('#busy');
+    importing = true;
     busy.hidden = false;
     $('#busy span').textContent = 'Opening…';
     try {
@@ -135,7 +144,7 @@ async function main() {
       currentFile = file;
       const id = `d${Date.now().toString(36)}`;
       editor.begin({ id, info: { type: decoded.type, natW: decoded.natW, natH: decoded.natH, name: file.name }, now: Date.now() });
-      await autosave.startDraft(id, file);
+      autosave.startDraft(id, file); // never rejects; the original is stored in the background
       if (decoded.downscaled) {
         const mp = Math.round((renderer.size.width * renderer.size.height) / 1e5) / 10;
         editor.panel.showTip(`Editing at ${mp} MP`);
@@ -146,6 +155,7 @@ async function main() {
       $('#hint').textContent = msg;
       editor.toast?.(msg, 2600);
     } finally {
+      importing = false;
       busy.hidden = true;
     }
   }
@@ -183,20 +193,42 @@ async function main() {
   $('#new-photo').addEventListener('click', () => askNewPhoto());
 
   // ---- restore -----------------------------------------------------------------
+  // "Choose a photo" stays live meanwhile: a photo picked before the restore lands
+  // wins, and the restore stands down.
+  const picked = () => importing || !!editor.committed;
+  if (earlyFile) importFile(earlyFile);
   try {
-    const draft = await autosave.loadDraft();
-    if (draft) {
+    const draft = picked() ? null : await autosave.loadDraft();
+    if (draft && !picked()) {
+      $('#busy').hidden = false;
+      $('#busy span').textContent = 'Opening…';
       const { bitmap } = await decodeForEditing(draft.file, { maxPixels: draft.maxPixels ?? workCap() });
-      renderer.loadSource(bitmap);
-      bitmap.close();
-      currentFile = draft.file;
-      editor.resume(draft);
-      editor.toast('Restored your last edit', 1800);
+      if (picked()) {
+        bitmap.close();
+      } else {
+        renderer.loadSource(bitmap);
+        bitmap.close();
+        // Fills are pixels at the working size: a photo that decodes at any other
+        // size would put every one of them in the wrong place.
+        const src = draft.history.entries[0].state.source;
+        const got = renderer.size;
+        if (got.width !== src.w || got.height !== src.h) {
+          renderer.unloadSource();
+          throw new Error(`restore: decoded ${got.width}x${got.height}, edited at ${src.w}x${src.h}`);
+        }
+        currentFile = draft.file;
+        editor.resume(draft);
+        editor.toast('Restored your last edit', 1800);
+      }
     }
   } catch (err) {
     console.warn('restore failed', err);
-    autosave.discard?.();
-    $('#hint').textContent = "Your last edit couldn't be restored.";
+    if (!picked()) {
+      autosave.discard?.();
+      $('#hint').textContent = "Your last edit couldn't be restored.";
+    }
+  } finally {
+    if (!importing) $('#busy').hidden = true;
   }
 
   // ---- install line, offline shell ------------------------------------------------
@@ -216,7 +248,7 @@ async function main() {
       });
     }).catch(() => {});
   }
-  navigator.storage?.persist?.().catch(() => {});
+  // openStore() asks for persistent storage (store.persistent).
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') autosave.flush();
