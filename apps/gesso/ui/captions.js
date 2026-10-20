@@ -134,11 +134,12 @@ export function createCaptions(ed) {
     return id === null ? null : `caption:${id}`;
   }
 
-  function rasterize(doc, outW, outH, band = null) {
+  function rasterize(doc, outW, outH, band = null, scale = 1) {
     const list = doc?.text;
     if (!Array.isArray(list) || list.length === 0) return null;
     const b = band ?? { x: 0, y: 0, width: outW, height: outH };
-    const canvas = makeCanvas(Math.max(1, Math.round(b.width)), Math.max(1, Math.round(b.height)));
+    const k = Number.isFinite(scale) && scale > 0 ? scale : 1;
+    const canvas = makeCanvas(Math.max(1, Math.round(b.width * k)), Math.max(1, Math.round(b.height * k)));
     const ctx = canvas.getContext('2d');
     // Saving without the words would be a silent loss; fail the export instead.
     if (!ctx) throw new Error('captions: no 2D context for the export raster');
@@ -150,8 +151,9 @@ export function createCaptions(ed) {
       if (bb.x - m > b.x + b.width || bb.x + bb.width + m < b.x || bb.y - m > b.y + b.height || bb.y + bb.height + m < b.y) continue;
       const mm = captionMatrix(cap, lay, outW, outH);
       ctx.save();
-      ctx.setTransform(mm[0], mm[1], mm[2], mm[3], mm[4] - b.x, mm[5] - b.y);
-      paintCaption(ctx, cap, lay, 1);
+      ctx.setTransform(k, 0, 0, k, -b.x * k, -b.y * k);
+      ctx.transform(mm[0], mm[1], mm[2], mm[3], mm[4], mm[5]);
+      paintCaption(ctx, cap, lay, k);
       ctx.restore();
     }
     return canvas;
