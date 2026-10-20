@@ -108,7 +108,8 @@ export default {
     if (!cap) {
       slot = { kind: 'message', text: 'Add a caption', action: 'add' };
     } else if (dial === 'color') {
-      slot = { kind: 'swatches', colors: SWATCHES, selected: cap.color };
+      // Swatch hexes are lowercase; a revived '#FFD60A' must still show as picked.
+      slot = { kind: 'swatches', colors: SWATCHES, selected: String(cap.color).toLowerCase() };
     } else if (dial === 'angle') {
       slot = { kind: 'ruler', id: 'angle', spec: RULERS.textAngle, value: cap.angle };
     } else {
@@ -171,7 +172,7 @@ export default {
   onSwatch(ed, hex) {
     if (editing) finishEditing(ed);
     const cap = findCaption(ed.committed, selectedId);
-    if (!cap) return;
+    if (!cap || String(cap.color).toLowerCase() === hex) return;
     const next = updateCaption(ed.committed, cap.id, { color: hex });
     if (next !== ed.committed) ed.commit(next);
   },
