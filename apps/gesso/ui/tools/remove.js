@@ -17,14 +17,14 @@
 // wait for a fill still computing instead of saving the photo without it.
 
 import { RULERS, formatValue, clampValue } from '../../lib/ruler.js';
-import { diskMask, strokeMask, maskBounds, exceedsAreaCap, composeRef } from '../../lib/heal.js';
+import { diskMask, maskBounds, exceedsAreaCap, composeRef } from '../../lib/heal.js';
 import { strokeBounds } from '../../lib/stroke.js';
 import { sourceToOutput, apply } from '../../lib/geometry.js';
 import {
   PRESETS, DEFAULT_SIZE, DILATE_PX, FILTER_BLEED, brushRadius, solveFactor, discBox, clipRect, grow,
   findRegion, fullOffsets, rubWindow, mapPoints, extendBounds, boundsRect, readPadded, shrink, shrinkMask,
   stackSide, stackPair, correctionField, upsampleCorrection, cutTile, upsampleFill, discRing, refineOffset, subBlock,
-  rankSources, addCorrection, SEAM_PX, recipeRecord, reviveRecipe,
+  rankSources, addCorrection, SEAM_PX, recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill,
 } from '../../lib/remove-plan.js';
 import { createHealClient } from '../heal-client.js';
 
@@ -431,19 +431,19 @@ async function rubTile(ed, rec) {
   const { width: W, height: H } = ed.renderer.size;
   const box = clipRect(strokeBounds(rec.pts, rec.rr), W, H);
   if (!box) return null;
-  const boxMask = strokeMask(mapPoints(rec.pts, box), rec.rr, box.w, box.h);
+  const boxMask = strokeMaskFast(mapPoints(rec.pts, box), rec.rr, box.w, box.h);
   if (!maskBounds(boxMask, box.w, box.h)) return null;
   const { rect: win, scale } = rubWindow(box, W, H, rec.attempt);
   let rgba;
   if (scale >= 1) {
     const img = { width: win.w, height: win.h, data: ed.renderer.readRect(win) };
-    const mask = strokeMask(mapPoints(rec.pts, win), rec.rr, win.w, win.h);
+    const mask = strokeMaskFast(mapPoints(rec.pts, win), rec.rr, win.w, win.h);
     const filled = await client().inpaint(img, mask, { seed: rec.seed });
     rgba = cutTile(filled.data, win.w, { x: 0, y: 0, w: box.w, h: box.h }, box.x - win.x, box.y - win.y, boxMask, box.w);
   } else {
     const small = pick(ed.renderer.readSource({ rect: win, scale }));
     const kx = small.width / win.w, ky = small.height / win.h;
-    const mask = strokeMask(mapPoints(rec.pts, win, kx, ky), rec.rr * Math.max(kx, ky) + FILTER_BLEED, small.width, small.height);
+    const mask = strokeMaskFast(mapPoints(rec.pts, win, kx, ky), rec.rr * Math.max(kx, ky) + FILTER_BLEED, small.width, small.height);
     const filled = await client().inpaint(small, mask, { seed: rec.seed });
     rgba = upsampleFill(filled, win, box, boxMask);
     await matchSeam(ed, rec, filled, win, box, boxMask, rgba);
@@ -459,13 +459,12 @@ async function matchSeam(ed, rec, filled, win, box, boxMask, rgba) {
   const { width: W, height: H } = ed.renderer.size;
   const f = Math.max(1, Math.ceil(Math.max(box.w, box.h) / SEAM_PX));
   const T = grow(box, 3 * f, W, H);
-  const holeMask = strokeMask(mapPoints(rec.pts, T), rec.rr, T.w, T.h);
+  const holeMask = strokeMaskFast(mapPoints(rec.pts, T), rec.rr, T.w, T.h);
   const hole = maskBounds(holeMask, T.w, T.h);
   if (!hole) return;
   const target = ed.renderer.readRect(T);
-  const fill = upsampleFill(filled, win, T, new Uint8Array(T.w * T.h).fill(1));
   const ts = shrink(target, T.w, T.h, f);
-  const fs = shrink(fill, T.w, T.h, f);
+  const fs = shrinkFill(filled, win, T, f);
   const small = stackPair(ts.data, fs.data, shrinkMask(holeMask, T.w, T.h, f), ts.width, ts.height, stackSide(hole, T.w, T.h));
   const solved = await client().correct(small.img, small.mask, small.dx, small.dy, { featherPx: 0 });
   addCorrection(rgba, box, boxMask, correctionField(solved.data, small), ts.width, ts.height, f, box.x - T.x, box.y - T.y);

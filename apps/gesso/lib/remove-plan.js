@@ -420,14 +420,19 @@ export function upsampleCorrection(c, cw, ch, f, F) {
 // shrunk window): c was solved over a block shrunk by f whose origin lies at
 // (-ox, -oy) from the box, i.e. the box starts at (ox, oy) inside that block.
 export function addCorrection(rgba, box, mask, c, cw, ch, f, ox, oy) {
+  const U0 = new Int32Array(box.w), U1 = new Int32Array(box.w), FU = new Float64Array(box.w);
+  for (let x = 0; x < box.w; x++) {
+    const u = clamp((x + ox + 0.5) / f - 0.5, 0, cw - 1);
+    const u0 = Math.floor(u);
+    U0[x] = u0; U1[x] = Math.min(cw - 1, u0 + 1); FU[x] = u - u0;
+  }
   for (let y = 0; y < box.h; y++) {
     const v = clamp((y + oy + 0.5) / f - 0.5, 0, ch - 1);
     const v0 = Math.floor(v), v1 = Math.min(ch - 1, v0 + 1), fv = v - v0;
     for (let x = 0; x < box.w; x++) {
       const i = y * box.w + x;
       if (!mask[i]) continue;
-      const u = clamp((x + ox + 0.5) / f - 0.5, 0, cw - 1);
-      const u0 = Math.floor(u), u1 = Math.min(cw - 1, u0 + 1), fu = u - u0;
+      const u0 = U0[x], u1 = U1[x], fu = FU[x];
       const a = (v0 * cw + u0) * 3, b = (v0 * cw + u1) * 3, d = (v1 * cw + u0) * 3, e = (v1 * cw + u1) * 3;
       for (let k = 0; k < 3; k++) {
         rgba[i * 4 + k] += (c[a + k] + (c[b + k] - c[a + k]) * fu) * (1 - fv) + (c[d + k] + (c[e + k] - c[d + k]) * fu) * fv;
