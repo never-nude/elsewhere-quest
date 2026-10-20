@@ -82,7 +82,7 @@ export async function renderOutput(ed, { doc = ed.doc, captions = null, onProgre
     throwIfAborted(signal);
     const band = plan[i];
     const quad = outputQuad(doc.crop, srcW, srcH, outW, outH, bandMatrix(band));
-    data.set(renderBand(renderer, { width: outW, height: band.h, quad, uniforms, grainScale: [outW, outH] }), band.y * outW * 4);
+    renderBand(renderer, { width: outW, height: band.h, quad, uniforms, grainScale: [outW, outH], into: data, offset: band.y * outW * 4 });
     const part = words === 'all' ? clipToBand({ x: 0, y: 0, width: outW, height: outH }, band) : clipToBand(words, band);
     if (part) overlayCaptions(captions, doc, data, outW, outH, part);
     onProgress?.(renderProgress(i + 1, plan.length));
@@ -91,15 +91,19 @@ export async function renderOutput(ed, { doc = ed.doc, captions = null, onProgre
   return { width: outW, height: outH, data };
 }
 
+// One band into its rows of `opts.into`. A renderer that reads straight into the
+// output (§5.7) hands `into` back; otherwise it returns the band's own pixels to copy.
 function renderBand(renderer, opts) {
+  const { into, offset, width, height } = opts;
   let px;
   try {
     px = renderer.renderPixels(opts);
   } catch (err) {
     throw new ExportError(`could not render the photo: ${err?.message ?? err}`, 'gpu');
   }
-  if (renderer.lost || !bandRendered(px)) throw new ExportError('the GPU was reset while the photo was being saved', 'gpu');
-  return px;
+  const rows = px === into ? into.subarray(offset, offset + width * height * 4) : px;
+  if (renderer.lost || !bandRendered(rows)) throw new ExportError('the GPU was reset while the photo was being saved', 'gpu');
+  if (px !== into) into.set(px, offset);
 }
 
 // The output rows the captions can reach (their shadows included), so bands

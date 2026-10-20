@@ -777,18 +777,31 @@ async function centerOf(s, sel) {
 
 // ------------------------------------------------------------------ the UI states checks 2–4 visit
 
+// `then` steps are selectors to tap or functions of the session. `undo` takes the
+// state's own edit back after measuring (Home has no Cancel).
 const STATES = [
   { id: 'home' },
+  // Up to five change chips in the dial row: the widest the row ever gets.
+  { id: 'home/after Auto-enhance', then: ['[data-quick="auto"]'], undo: true },
   { id: 'crop', tool: 'crop' },
   { id: 'light', tool: 'light' },
   { id: 'light/Paint', tool: 'light', then: ['[data-dial="paint"]'] },
   { id: 'color', tool: 'color' },
   { id: 'color/Pick white', tool: 'color', then: ['[data-dial="pick"]'] },
   { id: 'remove', tool: 'remove' },
+  { id: 'remove/Source', tool: 'remove', then: [healSpeck, '[data-dial="source"]'] },
   { id: 'text', tool: 'text' },
   { id: 'text/after Done', tool: 'text', then: ['#caption-done'] },
   { id: 'text/Color', tool: 'text', then: ['#caption-done', '[data-dial="color"]'] },
 ];
+
+// Remove's first fill, so Source and Try another come alive.
+async function healSpeck(s) {
+  const before = await snap(s);
+  await pointerTap(s, await speckPoint(s));
+  if (!(await waitEntry(s, before, budget(5000)))) throw new Error('a tap on the speck made no fill');
+  await settle(s, 200);
+}
 
 // ------------------------------------------------------------------ scenario: layout (1, 2, 3, 4, 5, 13 and 12's gesture table)
 
@@ -857,7 +870,7 @@ async function scenarioLayout(vp, { gestures }) {
     for (const st of t2 || t3 || t4 || t13 || gestures ? STATES : []) {
       try {
         if (st.tool) await openTool(s, st.tool);
-        for (const sel of st.then ?? []) await tap(s, sel);
+        for (const step of st.then ?? []) await (typeof step === 'function' ? step(s) : tap(s, step));
         await settle(s, 150);
         const m = await s.page.evaluate((sels) => window.__acc.measure(sels), selectors);
         if (!home) home = m;
@@ -869,6 +882,7 @@ async function scenarioLayout(vp, { gestures }) {
       } catch (err) {
         for (const t of [t2, t3, t4, t13]) if (t) await t.fail(`${st.id}: ${firstLine(err)}`);
       }
+      if (st.undo) await tap(s, '#undo').catch(() => {});
       if (st.tool) await goHome(s).catch(() => {});
     }
     for (const t of [t2, t3, t4, t13]) if (t) { t.note(`${STATES.length} states`); await t.end(); }
@@ -1898,6 +1912,7 @@ async function main() {
       for (const run of results.get(r.no).filter((x) => x.status === 'FAIL')) {
         console.log(`  ${r.no} ${r.name} — ${run.where}`);
         for (const reason of run.reasons) console.log(`      • ${reason}`);
+        for (const note of run.notes) console.log(`      · ${note}`);
         for (const shot of run.shots) console.log(`      ▸ ${shot}`);
       }
     }
