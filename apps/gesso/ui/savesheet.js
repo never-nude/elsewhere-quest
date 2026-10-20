@@ -219,6 +219,12 @@ function closeSheet() {
   hideFallback();
   ui.sheet.hidden = true;
   resetCard();
+  // iOS holds canvas memory until GC; and a preview that fails to draw next time
+  // must not show this photo.
+  ui.preview.width = 0;
+  ui.preview.height = 0;
+  previewOut = null;
+  cancelAnimationFrame(resizeFrame);
   session = null;
   sharing = false;
   const back = ui.returnFocus;
@@ -388,5 +394,8 @@ function install(root) {
   };
   els.card.addEventListener('pointerup', end);
   els.card.addEventListener('pointercancel', end);
+  // The sheet closed under the finger (Escape, a second finger on the scrim): the
+  // pointerup may never reach the card, and a stuck drag would refuse every swipe.
+  els.card.addEventListener('lostpointercapture', end);
   return els;
 }

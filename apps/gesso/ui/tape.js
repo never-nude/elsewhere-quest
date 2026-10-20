@@ -8,13 +8,16 @@
 // the window, before the editor's listener on the button can see it.
 //
 // The tape covers the fixed-height panel (absolute, inset 0) and never resizes
-// anything. Styles: ui/tape.css, linked here if index.html does not link it.
+// anything. While it is up #panel carries TAPED, so ui/hints-ui.js holds an earned
+// hint back until it can be read. Styles: ui/tape.css, linked here if index.html
+// does not link it.
 
 import { labels } from '../lib/history.js';
 import { HOLD_MS, startScrub, moveScrub, scrubStatus, landingText } from '../lib/tape.js';
 
 const ICONS = { crop: 'crop', light: 'light', color: 'color', remove: 'remove', text: 'text', home: 'wand' };
 const CLICK_GRACE_MS = 400; // a click this long after the lift still belongs to the press
+export const TAPED = 'has-tape';
 
 export function attachTape(ed, undoButton) {
   if (!ed || !undoButton) return null;
@@ -31,6 +34,7 @@ export function attachTape(ed, undoButton) {
   let press = null; // { id, x, timer }
   let scrub = null;
   let rows = [];
+  let seen = null; // the history the tape was built from, its own jumps included
   let tape = null;
   let swallow = false;
   let swallowTimer = 0;
@@ -38,40 +42,35 @@ export function attachTape(ed, undoButton) {
 
   undoButton.addEventListener('pointerdown', (e) => {
     swallow = false;
-    if (press || e.button > 0) return;
+    if (e.button > 0) return;
+    if (press) end(); // its lift went missing; never leave a tape up without a finger
     const h = ed.history;
     if (!h || h.entries.length < 2) return;
-    undoButton.setPointerCapture?.(e.pointerId);
-    press = { id: e.pointerId, x: e.clientX, timer: win.setTimeout(() => open(), HOLD_MS) };
+    try { undoButton.setPointerCapture(e.pointerId); } catch { /* already gone */ }
+    press = { id: e.pointerId, x: e.clientX, timer: win.setTimeout(open, HOLD_MS) };
   });
 
-  const move = (e) => {
+  // The press is followed on the window, in the capture phase, so its moves and its
+  // lift arrive wherever the finger goes and whoever holds the capture: a lift on
+  // another element (capture lost, a disabled Undo) would otherwise leave the
+  // tape up over the panel for good.
+  win.addEventListener('pointermove', (e) => {
     if (!press || e.pointerId !== press.id) return;
     press.x = e.clientX;
-    if (!scrub) return;
+    if (!scrub || !current()) return;
     const next = moveScrub(scrub, e.clientX, e.timeStamp);
     const changed = next.index !== scrub.index;
     scrub = next;
     if (!changed) return;
     render(true);
     if (!raf) raf = win.requestAnimationFrame(applyJump);
-  };
-
+  }, true);
   const lift = (e) => {
-    if (!press || e.pointerId !== press.id) return;
-    win.clearTimeout(press.timer);
-    press = null;
-    if (!scrub) return; // a plain tap: the click that follows undoes once
-    land();
+    if (press && e.pointerId === press.id) end();
   };
-  // Once the tape is up the pointer is captured by the tape (see open), so these
-  // listen on both.
-  const listen = (target) => {
-    target.addEventListener('pointermove', move);
-    target.addEventListener('pointerup', lift);
-    target.addEventListener('pointercancel', lift);
-  };
-  listen(undoButton);
+  win.addEventListener('pointerup', lift, true);
+  win.addEventListener('pointercancel', lift, true);
+  doc.addEventListener('visibilitychange', () => { if (doc.visibilityState === 'hidden' && press) end(); });
   // A long press must not open a context menu over the tape.
   undoButton.addEventListener('contextmenu', (e) => { if (press || scrub) e.preventDefault(); });
 
@@ -86,10 +85,9 @@ export function attachTape(ed, undoButton) {
     const h = ed.history;
     if (!press || !h || h.entries.length < 2) return;
     swallow = true;
-    rows = labels(h);
-    scrub = startScrub(h.index, rows.length, press.x, performance.now());
-    build();
+    load(h);
     tape.hidden = false;
+    panel.classList.add(TAPED);
     render(false);
     // Scrubbing to the Original disables Undo, and a disabled button may stop
     // getting pointer events (WebKit); the tape never is disabled, so it takes the
@@ -97,27 +95,73 @@ export function attachTape(ed, undoButton) {
     try {
       tape.setPointerCapture(press.id);
     } catch {
-      /* the pointer already went away: its pointerup lands the tape */
+      /* the pointer already went away: its lift lands the tape */
     }
+  }
+
+  // The press ended (lifted, cancelled, or lost): land if the tape is up. A plain
+  // tap has no tape, and the click that follows it undoes once.
+  function end() {
+    win.clearTimeout(press.timer);
+    press = null;
+    if (scrub) land();
+  }
+
+  function load(h) {
+    seen = h;
+    rows = labels(h);
+    scrub = startScrub(h.index, rows.length, press.x, performance.now());
+    build();
+  }
+
+  // Is the tape still in step with the history? Something else may have changed it
+  // while the tape is up (a Remove fill landing, a keyboard Undo); jumping by a row
+  // of the old list would then land on the wrong step, so the tape starts again
+  // from where the history is now.
+  function current() {
+    const h = ed.history;
+    if (h === seen) return true;
+    if (h && h.entries === seen.entries && h.index === seen.index) {
+      seen = h; // only the open tool's mark moved
+      return true;
+    }
+    win.cancelAnimationFrame(raf);
+    raf = 0;
+    if (!h || h.entries.length < 2 || !press) {
+      close();
+      return false;
+    }
+    load(h);
+    render(false);
+    return false;
   }
 
   function applyJump() {
     raf = 0;
-    if (scrub && ed.history && ed.history.index !== scrub.index) ed.jumpTo(scrub.index);
+    if (!scrub || !current()) return;
+    if (ed.history.index !== scrub.index) {
+      ed.jumpTo(scrub.index);
+      seen = ed.history;
+    }
   }
 
   function land() {
     win.cancelAnimationFrame(raf);
     raf = 0;
     applyJump();
-    const text = landingText(rows, scrub.start, scrub.index);
-    scrub = null;
-    tape.hidden = true;
+    const text = scrub ? landingText(rows, scrub.start, scrub.index) : null;
+    close();
     if (text) ed.toast(text, 1600);
     // The click for this press may never come (the finger moved off); don't let a
     // later keyboard Undo be eaten in its place.
     win.clearTimeout(swallowTimer);
     swallowTimer = win.setTimeout(() => { swallow = false; }, CLICK_GRACE_MS);
+  }
+
+  function close() {
+    scrub = null;
+    if (tape) tape.hidden = true;
+    panel.classList.remove(TAPED);
   }
 
   function build() {
@@ -131,10 +175,11 @@ export function attachTape(ed, undoButton) {
       tape.innerHTML = '<div class="tape__head"><p class="tape__title">Rewind</p><p class="tape__hint"></p></div>'
         + '<div class="tape__window"><div class="tape__strip"></div></div>';
       panel.append(tape);
-      listen(tape);
-      // Capture can be taken away (the system, a hidden element); never leave the
-      // tape up without a finger on it.
-      tape.addEventListener('lostpointercapture', (e) => { if (scrub) lift(e); });
+      // Capture can be taken away (the system, a hidden element) and the lift then
+      // may never be seen; never leave the tape up without a finger on it.
+      tape.addEventListener('lostpointercapture', (e) => { if (scrub && press && e.pointerId === press.id) end(); });
+      // A touch on a tape that has no finger of its own puts it away.
+      tape.addEventListener('pointerdown', (e) => { if (press && e.pointerId !== press.id) end(); });
     }
     const strip = tape.querySelector('.tape__strip');
     strip.textContent = '';
