@@ -140,3 +140,17 @@ Delivery (local, pushed, merged, deployment verified):
 - Delivery at this record: validated local changes on `claude/gesso-ios`, pending
   authorized commit/push and a review PR. Other devices cannot fetch these changes
   until publication; the follow-up delivery record will identify the published work.
+
+## 2026-10-20 — Gesso iOS delivery
+
+- Implementation committed as `6b538da` and pushed to `claude/gesso-ios`.
+- Draft PR #8: https://github.com/never-nude/elsewhere-quest/pull/8 — open and
+  mergeable when checked. This preserves the original handoff/design work from
+  Claude alongside the implementation. Other devices can fetch the branch.
+- Main has not been changed and no web or App Store release was performed.
+  Validation is recorded above; Simulator standalone smoke also passed after
+  the actual-host navigation fix and strict single-attempt upload checks.
+- Physical-device installation remains pending Xcode Apple Developer account
+  sign-in/profile creation. Existing local profiles were inspected; none can sign
+  this bundle for the paired phone. Retry the README commands after sign-in;
+  signing credentials, profiles and scratch results do not travel through Git.

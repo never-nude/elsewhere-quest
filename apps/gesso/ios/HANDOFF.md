@@ -9,6 +9,9 @@ See the latest `STATUS.md` entry for actual validation and delivery. The origina
 handoff below is preserved as history; its “what is left” and unanswered-identity
 sections describe the state before this continuation.
 
+Implementation is pushed on this branch and available in
+[draft PR #8](https://github.com/never-nude/elsewhere-quest/pull/8).
+
 Device signing currently needs an Apple Developer account signed into Xcode
 Settings → Accounts. The certificate exists, but Xcode reported “No Accounts”
 when asked to create the new bundle's development profile. Simulator validation
