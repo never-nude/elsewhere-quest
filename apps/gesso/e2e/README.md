@@ -70,10 +70,10 @@ viewport `--viewport` names (they pass at 956×440 too).
    exactly the listed buttons in order. Each sits inside the viewport minus the
    measured `env(safe-area-inset-*)`, is at least 44×44, overlaps no other control,
    and every visible text piece is at least 12px.
-2. **Nothing hidden.** In twelve states (Home, and Home after Auto-enhance with its
-   change chips; Crop; Light and Light › Paint; Color and Color › Pick white; Remove,
-   and Remove › Source after a fill; Text with the edit bar up, Text after Done, and
-   Text › Color), it checks the following:
+2. **Nothing hidden.** In fourteen states (Home, and Home after Auto-enhance with its
+   change chips; Crop; Light, Light › Paint and Light › Outline; Color and Color › Pick
+   white; Remove, Remove › Source after a fill and Remove › Outline; Text with the
+   edit bar up, Text after Done, and Text › Color), it checks the following:
    - No element anywhere has an accessible name matching the regex. The name is
      approximately the browser's: labelledby, aria-label, alt or label, content for
      roles that are named from content, then title.
@@ -139,7 +139,7 @@ viewport `--viewport` names (they pass at 956×440 too).
       commits the words like the edit bar's Done; that one step is noted.
 12. **Gesture coverage.**
     - Live DOM: for each `GESTURES` row (lib/hints.js as served), every part of its
-      `visibleEquivalent` must exist in at least one of the ten states, or its `hint`
+      `visibleEquivalent` must exist in at least one of the fourteen states, or its `hint`
       must exist in `HINTS`. Selectors that are missing but covered by a hint are
       noted.
     - Browser: earn H14 (Auto-enhance) and H3 (two Before taps), tracking every

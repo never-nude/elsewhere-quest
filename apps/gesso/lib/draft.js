@@ -130,6 +130,15 @@ function revivePools(raw, refs, source) {
   const strokes = {}, patches = {};
   for (const id of refs.strokes) {
     const s = Object.hasOwn(strokesIn, id) ? strokesIn[id] : null;
+    if (isObj(s) && s.kind === 'outline') {
+      // Light › Outline: a polygon (source px, plain numbers) and an amount, no brush.
+      if (!PAINT_MODES.has(s.mode) || !isPoints(s.poly) || s.poly.length < 6 || s.poly.length % 2 ||
+          !(Number.isFinite(s.amount) && s.amount >= 0 && s.amount <= 1)) {
+        throw new Error(`draft: outline ${id} is missing or damaged`);
+      }
+      strokes[id] = { kind: 'outline', mode: s.mode, poly: Array.from(s.poly), amount: s.amount };
+      continue;
+    }
     if (!isObj(s) || !PAINT_MODES.has(s.mode) || !(Number.isFinite(s.r) && s.r > 0) || !isPoints(s.pts)) {
       throw new Error(`draft: stroke ${id} is missing or damaged`);
     }

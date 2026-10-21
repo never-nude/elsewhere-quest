@@ -120,7 +120,12 @@ export default {
         return true;
       }
       if (g.type === 'hold-end' && loupe) {
-        pickWhite(ed, loupe.x, loupe.y);
+        // A second finger landing (zoom) or a pointercancel ends the hold too: no pick.
+        if (!g.cancelled) pickWhite(ed, loupe.x, loupe.y);
+        else {
+          loupe = null;
+          ed.requestRender();
+        }
         return true;
       }
       return false;

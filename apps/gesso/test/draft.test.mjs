@@ -120,6 +120,25 @@ test('revive fills in missing info from the document and ignores a bad cap', () 
   assert.equal(d.maxPixels, null);
 });
 
+// Light › Outline keeps a polygon and an amount in pools.strokes, no brush.
+test('an outline entry in pools.strokes revives as stored, and a damaged one throws', () => {
+  const outline = { kind: 'outline', mode: 'darken', poly: [10, 10, 40.5, 12, 80, 30, 20, 60], amount: 0.67 };
+  let h = sampleHistory();
+  h = H.push(h, { ...H.current(h), paint: ['s1', 'o1'] }, 'Darkened inside outline', 'light');
+  const pools = { ...samplePools(), strokes: { ...samplePools().strokes, o1: outline } };
+  const good = () => structuredClone(draftRecord({ id: 'd1', serialized: serialized(h, pools) }));
+  assert.deepEqual(reviveDraft(good(), 'd1').pools.strokes, { s1: pools.strokes.s1, o1: outline });
+  const broken = [
+    ['an outline with a bad mode', () => { const r = good(); r.pools.strokes.o1.mode = 'smudge'; return r; }],
+    ['an outline with two points', () => { const r = good(); r.pools.strokes.o1.poly = [1, 2, 3, 4]; return r; }],
+    ['an outline with an odd coordinate list', () => { const r = good(); r.pools.strokes.o1.poly = [1, 2, 3, 4, 5, 6, 7]; return r; }],
+    ['an outline with a NaN point', () => { const r = good(); r.pools.strokes.o1.poly[1] = NaN; return r; }],
+    ['an outline with an amount above 1', () => { const r = good(); r.pools.strokes.o1.amount = 1.5; return r; }],
+    ['an outline with no amount', () => { const r = good(); delete r.pools.strokes.o1.amount; return r; }],
+  ];
+  for (const [what, make] of broken) assert.throws(() => reviveDraft(make(), 'd1'), /outline o1/, what);
+});
+
 test('a damaged record throws instead of half-restoring', () => {
   const good = () => structuredClone(draftRecord({ id: 'd1', serialized: serialized(sampleHistory(), samplePools()) }));
   const broken = [

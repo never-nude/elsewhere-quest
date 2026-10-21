@@ -4,11 +4,12 @@ import {
   PRESETS, DEFAULT_SIZE, brushRadius, solveFactor, discBox, clipRect, grow, findRegion, fullOffsets, rankSources,
   rubWindow, mapPoints, extendBounds, boundsRect, discRing, refineOffset, subBlock, readPadded, shrink, shrinkMask,
   stackSide, stackLayout, stackPair, correctionField, upsampleCorrection, cutTile, upsampleFill, addCorrection,
-  recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill, silhouetteSvg,
+  recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill, silhouetteSvg, outlineBox, outlineMask, polygonSvg, DILATE_PX,
 } from '../lib/remove-plan.js';
 import { diskMask, strokeMask, maskBounds, composeRef, handleHealMessage } from '../lib/heal.js';
 import { planRemoval, mulberry32 } from '../lib/inpaint.js';
 import { strokeBounds } from '../lib/stroke.js';
+import { polygonMask, polygonBounds, transformPolygon } from '../lib/lasso.js';
 
 function makeImage(width, height, fn) {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -442,4 +443,92 @@ test('silhouetteSvg draws the rubbed path into its box as an SVG data URL', () =
   assert.ok(!url.includes('"'), 'safe inside url("…")');
   const dot = decodeURIComponent(silhouetteSvg([105, 210], 3, { x: 100, y: 200, w: 10, h: 10 }).split(',')[1]);
   assert.match(dot, /<circle cx="5" cy="10" r="3"/);
+});
+
+// ------------------------------------------------------------------ outlines (SPEC F15)
+
+const TRI = Float32Array.from([20.5, 10.5, 60.5, 30.5, 30.5, 70.5]); // source px
+
+test('outlineBox is polygonBounds grown by DILATE_PX in remove-plan\'s rect shape, clipped', () => {
+  const b = polygonBounds(TRI, 1, { width: 200, height: 100, pad: DILATE_PX });
+  assert.deepEqual(outlineBox(TRI, 200, 100), { x: b.x, y: b.y, w: b.width, h: b.height });
+  assert.deepEqual(outlineBox(TRI, 200, 100), { x: 18, y: 8, w: 45, h: 65 });
+  assert.deepEqual(outlineBox(TRI, 40, 100), { x: 18, y: 8, w: 22, h: 65 }, 'clipped to the image');
+  assert.equal(outlineBox(TRI, 10, 5), null, 'off the image');
+  assert.equal(outlineBox(Float32Array.from([-30, -30, -10, -30, -20, -10]), 100, 100), null);
+});
+
+test('outlineMask is the polygon grown by DILATE_PX as a 0/1 mask, like strokeMaskFast', () => {
+  const box = outlineBox(TRI, 200, 100);
+  const m = outlineMask(TRI, box, box.w, box.h);
+  assert.equal(m.length, box.w * box.h);
+  assert.ok(m.every((v) => v === 0 || v === 1));
+  const want = polygonMask(TRI, { width: box.w, height: box.h, x: box.x, y: box.y, feather: 0, grow: DILATE_PX });
+  for (let i = 0; i < m.length; i++) assert.equal(m[i], want[i] ? 1 : 0);
+  const bounds = maskBounds(m, box.w, box.h);
+  assert.ok(bounds.area > 0);
+  // the grown shape fills its box to the edges (the box is the polygon plus the growth)
+  assert.ok(bounds.x <= 1 && bounds.y <= 1 && bounds.x + bounds.w >= box.w - 1 && bounds.y + bounds.h >= box.h - 1);
+  // inside the triangle's centroid, outside near a far corner
+  const cx = Math.round((20.5 + 60.5 + 30.5) / 3 - box.x), cy = Math.round((10.5 + 30.5 + 70.5) / 3 - box.y);
+  assert.equal(m[cy * box.w + cx], 1);
+  assert.equal(m[box.w - 1], 0);
+});
+
+test('an outline mask built in a shrunk window covers the same shape as one on its box', () => {
+  const W = 400, H = 300;
+  const poly = Float32Array.from([120.5, 80.5, 200.5, 90.5, 230.5, 170.5, 150.5, 210.5, 100.5, 150.5]);
+  const box = outlineBox(poly, W, H);
+  const win = { x: 60, y: 40, w: 240, h: 220 };
+  const full = outlineMask(poly, win, win.w, win.h);
+  const onBox = outlineMask(poly, box, box.w, box.h);
+  let diff = 0;
+  for (let y = 0; y < box.h; y++) for (let x = 0; x < box.w; x++) diff += full[(y + box.y - win.y) * win.w + x + box.x - win.x] !== onBox[y * box.w + x];
+  assert.equal(diff, 0, 'window and box agree pixel for pixel');
+  // at half size the hole is the shape shrunk and grown by DILATE_PX/2 plus the bleed
+  const kx = 0.5, ky = 0.5, sw = win.w * kx, sh = win.h * ky;
+  const small = outlineMask(poly, win, sw, sh, kx, ky, 2.5);
+  const want = polygonMask(transformPolygon(poly, [kx, 0, 0, ky, -win.x * kx, -win.y * ky]), { width: sw, height: sh, feather: 0, grow: DILATE_PX * kx + 2.5 });
+  for (let i = 0; i < small.length; i++) assert.equal(small[i], want[i] ? 1 : 0);
+  assert.ok(maskBounds(small, sw, sh).area > maskBounds(outlineMask(poly, win, sw, sh, kx, ky), sw, sh).area, 'bleed grows the hole');
+});
+
+test('polygonSvg fills the loop into its box as an SVG data URL', () => {
+  const url = polygonSvg([110, 220, 150.04, 260, 190, 230], { x: 100, y: 200, w: 120.5, h: 80 });
+  assert.ok(url.startsWith('data:image/svg+xml,'));
+  const svg = decodeURIComponent(url.slice('data:image/svg+xml,'.length));
+  assert.match(svg, /viewBox="0 0 120.5 80"/);
+  assert.match(svg, /<path d="M10 20L50 60L90 30Z" fill="#fff"\/>/);
+  assert.ok(!url.includes('"'), 'safe inside url("…")');
+  assert.ok(!decodeURIComponent(polygonSvg([1, 2, 3, 4], { x: 0, y: 0, w: 10, h: 10 }).split(',')[1]).includes('<path'), 'two points are no loop');
+});
+
+test('an outline recipe survives JSON and structured clone; a tap healed from one place keeps its polygon', () => {
+  const poly = Float32Array.from([10.04, 20, 30.5, 40.96, 50, 60]);
+  const want = { kind: 'outline', poly: Float32Array.from([10, 20, 30.5, 41, 50, 60]), seed: 2, attempt: 1 };
+  assert.deepEqual(reviveRecipe(JSON.parse(JSON.stringify(recipeRecord({ kind: 'outline', poly, seed: 2, attempt: 1, mask: 'x' })))), want);
+  assert.deepEqual(reviveRecipe(structuredClone(recipeRecord({ kind: 'outline', poly, seed: 2, attempt: 1 }))), want);
+  // the stored polygon is already 0.1 px: storing it again changes nothing
+  const twice = recipeRecord(reviveRecipe(recipeRecord({ kind: 'outline', poly, seed: 2, attempt: 1 })));
+  assert.deepEqual(twice, recipeRecord({ kind: 'outline', poly, seed: 2, attempt: 1 }));
+  assert.equal(recipeRecord({ kind: 'outline', poly: [1, 2, 3, 4], seed: 1, attempt: 0 }), null, 'two points are no loop');
+  const tap = { kind: 'tap', poly, cx: 30, cy: 40, rr: 25, f: 1, offsets: [{ dx: 80, dy: 0 }], index: 0, D: { dx: 80, dy: 0 }, moved: false };
+  const back = reviveRecipe(JSON.parse(JSON.stringify(recipeRecord(tap))));
+  assert.deepEqual(back, { ...tap, poly: want.poly });
+  assert.equal(back.pts, undefined);
+});
+
+test('a damaged outline recipe revives as null', () => {
+  const ok = recipeRecord({ kind: 'outline', poly: [1, 2, 3, 4, 5, 6], seed: 1, attempt: 0 });
+  assert.ok(reviveRecipe(ok));
+  for (const bad of [
+    { ...ok, poly: [1, 2, 3, 4] }, { ...ok, poly: [1, 2, 3, 4, 5] }, { ...ok, poly: [1, 2, 3, 4, 5, 'x'] }, { ...ok, poly: null }, { ...ok, poly: [1, 2, 3, 4, 5, NaN] },
+    { ...ok, seed: 'a' }, { kind: 'outline', poly: [1, 2, 3, 4, 5, 6] },
+  ]) {
+    assert.equal(reviveRecipe(bad), null, JSON.stringify(bad));
+  }
+  const tap = recipeRecord({ kind: 'tap', poly: [1, 2, 3, 4, 5, 6], cx: 3, cy: 3, rr: 5, f: 1, offsets: [{ dx: 20, dy: 0 }], index: 0, D: { dx: 20, dy: 0 } });
+  assert.ok(reviveRecipe(tap));
+  assert.equal(reviveRecipe({ ...tap, poly: [1, 2] }), null);
+  assert.equal(reviveRecipe({ ...tap, pts: [1, 2] }), null, 'a shape is a path or a polygon, not both');
 });

@@ -19,6 +19,7 @@ import { fitView, viewMatrix, zoomAt, panBy, clampView, stageToContent, outputQu
 import { initialGestures, reduceGesture, SLOP } from '../lib/gestures.js';
 import { planReconcile, repaintPlan } from '../lib/patches.js';
 import { dabs } from '../lib/stroke.js';
+import { outlinePaint } from '../lib/outline-paint.js';
 import { createPanel } from './panel.js';
 import { blurLuminance } from './renderer.js';
 import { TAPED } from './tape.js';
@@ -63,6 +64,7 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
   let viewKey = '';
   let keptView = null; // the photo's view while Crop shows its own frame: { key, view }
   let compare = { mode: 'off', x: 0 };
+  let holdByTool = false; // the hold under way was claimed by the tool: a Before peek meanwhile never swallows it
   let gesture = initialGestures();
   let wakeTimer = 0;
   let renderQueued = false;
@@ -85,7 +87,10 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     // Focus was on Done or Cancel, which Home hides: hand it to the tool's dock button.
     onFocusLost: () => dockButtons.find((b) => b.dataset.tool === lastClosed)?.focus({ preventScroll: true }),
     onRuler: (phase, value) => {
-      if (phase === 'start') ed.hint('ruler-drag', { tool: toolId });
+      // `scrub`: whether a one-finger photo drag could adjust this ruler. H1 teaches
+      // that scrub, which a tool only offers while a drag is not already its brush
+      // or loop (Paint, Outline: dragAxis 'free'); H2 counts every ruler drag.
+      if (phase === 'start') ed.hint('ruler-drag', { tool: toolId, scrub: tool.dragAxis?.(ed) !== 'free' });
       tool.onRuler?.(ed, phase, value);
       if (phase !== 'move') refresh();
     },
@@ -225,7 +230,13 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
     renderer.clearPaint();
     for (const id of ids) {
       const s = pools.strokes[id];
-      if (s) renderer.paintDabs(s.mode, dabs(s.pts, s.r), s.r);
+      if (!s) continue;
+      if (s.kind === 'outline') {
+        // Light › Outline: the polygon rasterised at the mask's own scale with a
+        // soft edge, so every replay lands the same texels.
+        const p = outlinePaint(s.poly, renderer.size, renderer.paintScale());
+        if (p) renderer.paintMask(s.mode, p.mask, p.rect, s.amount);
+      } else renderer.paintDabs(s.mode, dabs(s.pts, s.r), s.r);
     }
   }
 
@@ -571,23 +582,30 @@ export function createEditor({ root, renderer, tools, hints, store, onSave, onNe
       ed.hint('pinch');
       return;
     }
-    if (g.type === 'hold-start' && !tool.claimsHold) {
-      compare = { mode: 'before', x: g.x, from: [g.x, g.y] };
-      ed.hint('hold-photo', { tool: toolId });
-      requestRender();
-      return;
+    if (g.type === 'hold-start') {
+      holdByTool = !!tool.claimsHold;
+      if (!holdByTool) {
+        compare = { mode: 'before', x: g.x, from: [g.x, g.y] };
+        ed.hint('hold-photo', { tool: toolId });
+        requestRender();
+        return;
+      }
     }
-    if (g.type === 'hold-move' && compare.mode !== 'off') {
+    if (g.type === 'hold-move' && !holdByTool && compare.mode !== 'off') {
       // A resting finger drifts a point or two: only a real slide starts the wipe.
       if (compare.from && Math.hypot(g.x - compare.from[0], g.y - compare.from[1]) <= SLOP) return;
       compare = { mode: 'wipe', x: g.x };
       requestRender();
       return;
     }
-    if (g.type === 'hold-end' && compare.mode !== 'off') {
-      compare = { mode: 'off', x: 0 };
-      requestRender();
-      return;
+    if (g.type === 'hold-end') {
+      const mine = holdByTool;
+      holdByTool = false; // a cancelled hold ends the same way
+      if (!mine && compare.mode !== 'off') {
+        compare = { mode: 'off', x: 0 };
+        requestRender();
+        return;
+      }
     }
     // SPEC F11: a caption tapped in any other tool opens Text with it selected.
     if (g.type === 'tap' && toolId !== 'text' && typeof g.target === 'string' && g.target.startsWith('caption:')) {

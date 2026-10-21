@@ -57,8 +57,8 @@ function play(events, shown = new Set(), counters = initialCounters()) {
 
 const repeat = (n, ev) => Array.from({ length: n }, () => ev);
 
-test('HINTS is exactly H1..H14 from the spec, with text and side effects', () => {
-  assert.deepEqual(HINTS.map((h) => h.id), Array.from({ length: 14 }, (_, i) => `H${i + 1}`));
+test('HINTS is exactly H1..H17 from the spec, with text and side effects', () => {
+  assert.deepEqual(HINTS.map((h) => h.id), Array.from({ length: 17 }, (_, i) => `H${i + 1}`));
   const text = Object.fromEntries(HINTS.map((h) => [h.id, h.text]));
   assert.equal(text.H1, 'Tip: you can also drag sideways on the photo.');
   assert.equal(text.H2, 'Double-tap the ruler to reset.');
@@ -74,6 +74,9 @@ test('HINTS is exactly H1..H14 from the spec, with text and side effects', () =>
   assert.equal(text.H12, 'Tap Tall/Wide to turn the frame.');
   assert.equal(text.H13, 'Paint with one finger. Paint again to build it up.');
   assert.equal(text.H14, 'Tap a change to fine-tune it.');
+  assert.equal(text.H15, 'Loop loosely around it. The line snaps to the edges.');
+  assert.equal(text.H16, 'Filled inside the outline. Try another gives a different fill.');
+  assert.equal(text.H17, 'Drag the ruler to change how much.');
   assert.equal(hintById('H1').sideEffect, 'photoDrag');
   for (const h of HINTS.slice(1)) assert.equal(h.sideEffect, null, h.id);
   for (const h of HINTS) {
@@ -89,7 +92,7 @@ test('HINTS is exactly H1..H14 from the spec, with text and side effects', () =>
 });
 
 test('coverage: every gesture has a visible equivalent from the contract or a hint that exists', () => {
-  assert.equal(GESTURES.length, 24, 'one entry per row of the SPEC §4 gesture table');
+  assert.equal(GESTURES.length, 26, 'one entry per row of the SPEC §4 gesture table');
   const ids = new Set();
   for (const g of GESTURES) {
     assert.ok(!ids.has(g.id), `${g.id} unique`);
@@ -127,24 +130,30 @@ test('the gesture table carries the hints the spec names', () => {
   assert.equal(by['paint-photo'].hint, 'H13');
   assert.equal(by['tap-caption-elsewhere'].hint, 'H11');
   assert.equal(by['remove-source'].hint, 'H8');
+  assert.equal(by['outline-remove'].hint, 'H16');
+  assert.equal(by['outline-light'].hint, 'H17');
   for (const id of ['text-tap-caption', 'text-drag-caption', 'text-pinch']) assert.equal(by[id].hint, 'H10');
 });
 
-test('H1 fires on the first ruler drag in Light or Color, not elsewhere', () => {
-  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'light' }]).fired, ['H1']);
-  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'color' }]).fired, ['H1']);
-  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'crop' }]).fired, []);
+test('H1 fires on the first ruler drag in Light or Color that a photo drag could adjust, not elsewhere', () => {
+  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'light', scrub: true }]).fired, ['H1']);
+  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'color', scrub: true }]).fired, ['H1']);
+  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'crop', scrub: false }]).fired, []);
+  // Light's Amount ruler (Outline on) or Paint: a photo drag traces or paints, so no H1.
+  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'light', scrub: false }]).fired, []);
+  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'light' }]).fired, [], 'no scrub flag, no H1');
   assert.deepEqual(play(['ruler-drag']).fired, [], 'no tool, no H1');
 });
 
-test('H2 fires on the second ruler drag in any tool', () => {
-  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'light' }, { name: 'ruler-drag', tool: 'light' }]).fired, ['H1', 'H2']);
-  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'crop' }, { name: 'ruler-drag', tool: 'remove' }]).fired, ['H2']);
+test('H2 fires on the second ruler drag in any tool, scrub or not', () => {
+  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'light', scrub: true }, { name: 'ruler-drag', tool: 'light', scrub: true }]).fired, ['H1', 'H2']);
+  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'crop', scrub: false }, { name: 'ruler-drag', tool: 'remove', scrub: false }]).fired, ['H2']);
+  assert.deepEqual(play([{ name: 'ruler-drag', tool: 'light', scrub: false }, { name: 'ruler-drag', tool: 'text', scrub: false }]).fired, ['H2']);
 });
 
 test('when one event earns two hints the lower id shows and the other waits its turn', () => {
   // Crop first, then Light: the Light drag is both the first Light drag and the second drag.
-  const r = play([{ name: 'ruler-drag', tool: 'crop' }, { name: 'ruler-drag', tool: 'light' }, { name: 'ruler-drag', tool: 'crop' }]);
+  const r = play([{ name: 'ruler-drag', tool: 'crop', scrub: false }, { name: 'ruler-drag', tool: 'light', scrub: true }, { name: 'ruler-drag', tool: 'crop', scrub: false }]);
   assert.deepEqual(r.fired, ['H1', 'H2']);
 });
 
@@ -154,9 +163,9 @@ test('a hint that could not show gets its next chance (thresholds are at least)'
   counters = countEvent(counters, 'heal');
   assert.equal(nextHint('heal', counters, []), 'H6');
   // But H1 never fires from a non-qualifying event even when its count is already met.
-  const c = countEvent(initialCounters(), { name: 'ruler-drag', tool: 'light' });
-  const c2 = countEvent(c, { name: 'ruler-drag', tool: 'crop' });
-  assert.equal(nextHint({ name: 'ruler-drag', tool: 'crop' }, c2, ['H2']), null);
+  const c = countEvent(initialCounters(), { name: 'ruler-drag', tool: 'light', scrub: true });
+  const c2 = countEvent(c, { name: 'ruler-drag', tool: 'crop', scrub: false });
+  assert.equal(nextHint({ name: 'ruler-drag', tool: 'crop', scrub: false }, c2, ['H2']), null);
 });
 
 test('H3 is eligible on each of the first two Before taps only, and shows once', () => {
@@ -209,8 +218,8 @@ test('H13 on the first Paint selection, H14 on the first Auto-enhance', () => {
 
 test('no hint ever fires twice, across any mix of events and sessions', () => {
   const pool = [
-    { name: 'ruler-drag', tool: 'light' }, { name: 'ruler-drag', tool: 'color' }, { name: 'ruler-drag', tool: 'crop' },
-    'before-tap', 'before-hold', { name: 'hold-photo', tool: 'remove' }, { name: 'hold-photo', tool: 'text' },
+    { name: 'ruler-drag', tool: 'light', scrub: true }, { name: 'ruler-drag', tool: 'color', scrub: true }, { name: 'ruler-drag', tool: 'crop', scrub: false },
+    { name: 'ruler-drag', tool: 'light', scrub: false }, 'before-tap', 'before-hold', { name: 'hold-photo', tool: 'remove' }, { name: 'hold-photo', tool: 'text' },
     'undo', 'heal', 'rub-fill', 'try-another', 'caption-done', 'home-with-caption', 'home',
     'ratio-chip', 'pinch', 'first-ruler-drag', 'paint-select', 'auto-enhance', 'nonsense',
   ];
@@ -231,19 +240,25 @@ test('no hint ever fires twice, across any mix of events and sessions', () => {
 
 test('every hint can actually be earned', () => {
   const events = [
-    { name: 'ruler-drag', tool: 'light' }, { name: 'ruler-drag', tool: 'light' }, 'before-tap', 'before-hold',
+    { name: 'ruler-drag', tool: 'light', scrub: true }, { name: 'ruler-drag', tool: 'light', scrub: true }, 'before-tap', 'before-hold',
     ...repeat(3, 'undo'), 'heal', 'rub-fill', 'try-another', 'try-another', { name: 'hold-photo', tool: 'remove' },
     'caption-done', 'home-with-caption', 'ratio-chip', 'paint-select', 'auto-enhance',
+    { name: 'outline-on', tool: 'remove' }, { name: 'outline-done', tool: 'remove' }, { name: 'outline-done', tool: 'light' },
   ];
   assert.deepEqual(play(events).fired, HINTS.map((h) => h.id));
+  // H16 and H17 share a trigger and are told apart by the tool, so neither fires for the other's.
+  assert.deepEqual(play([{ name: 'outline-done', tool: 'light' }]).fired, ['H17']);
+  assert.deepEqual(play([{ name: 'outline-done', tool: 'remove' }]).fired, ['H16']);
+  assert.deepEqual(play(['outline-done']).fired, [], 'no tool, no hint');
 });
 
 test('countEvent is pure and tolerant', () => {
   const c0 = Object.freeze(initialCounters());
-  const c1 = countEvent(c0, { name: 'ruler-drag', tool: 'color' });
+  const c1 = countEvent(c0, { name: 'ruler-drag', tool: 'color', scrub: true });
   assert.equal(c0.rulerDrag, 0, 'input untouched');
   assert.equal(c1.rulerDrag, 1);
   assert.equal(c1.rulerDragLightColor, 1);
+  assert.equal(countEvent(c0, { name: 'ruler-drag', tool: 'color', scrub: false }).rulerDragLightColor, 0, 'no scrub, no H1 count');
   assert.equal(countEvent(c0, 'nonsense'), c0, 'unknown events change nothing');
   assert.equal(countEvent(c0, null), c0);
   assert.equal(countEvent(c0, { tool: 'light' }), c0, 'an event needs a name');

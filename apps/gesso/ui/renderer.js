@@ -48,6 +48,23 @@ void main() {
 }
 `;
 
+// Light › Outline: a soft polygon mask splatted into the RG8 mask in one draw
+// (the dab shader with the Gaussian replaced by the mask sample). Uses the
+// develop quad layout (aPos, aUv, aOut), so VERTEX is its vertex shader.
+const MASK_FRAGMENT = `#version 300 es
+precision highp float;
+in vec2 vUv;
+out vec4 outColor;
+uniform sampler2D uMask;
+uniform vec3 uChannel;  // as the dab shader
+uniform float uAmount;
+void main() {
+  float w = texture(uMask, vUv).r * uAmount;
+  if (uChannel.b > 0.5) outColor = vec4(0.0, 0.0, 0.0, w);
+  else outColor = vec4(uChannel.rg * w, 0.0, 0.0);
+}
+`;
+
 const UNIFORM_NAMES = [
   'uImage', 'uBlur', 'uHasBlur', 'uPaint', 'uHasPaint', 'uWb', 'uExposure', 'uShadows',
   'uHighlights', 'uGamma', 'uContrast', 'uBlacks', 'uWhites', 'uSaturation', 'uVibrance', 'uVignette',
@@ -61,8 +78,10 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
   let gl = null;
   let program = null;
   let dabProgram = null;
+  let maskProgram = null;
   let loc = {};
   let dabLoc = {};
+  let maskLoc = {};
   let vao = null;
   let vbo = null;
   let dabVao = null;
@@ -118,6 +137,12 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
     gl.enableVertexAttribArray(dabLoc.aLocal);
     gl.vertexAttribPointer(dabLoc.aLocal, 2, gl.FLOAT, false, 16, 8);
     gl.bindVertexArray(null);
+    maskProgram = link(gl, VERTEX, MASK_FRAGMENT);
+    maskLoc = {
+      uMask: gl.getUniformLocation(maskProgram, 'uMask'),
+      uChannel: gl.getUniformLocation(maskProgram, 'uChannel'),
+      uAmount: gl.getUniformLocation(maskProgram, 'uAmount'),
+    };
     pristine = base = blurTex = paintTex = paintFbo = null;
     return true;
   }
@@ -459,6 +484,48 @@ export function createRenderer(canvas, { onLost, onRestored } = {}) {
       gl.bindVertexArray(null);
       gl.disable(gl.BLEND);
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    },
+
+    // The paint mask's scale against the source (S/4, capped at 2048 px on the
+    // long side), known before the mask exists so a polygon can be rasterised
+    // at exactly the texels it will land on.
+    paintScale() {
+      if (paintSize) return paintSize.scale;
+      return size ? Math.min(0.25, 2048 / Math.max(size.width, size.height)) : 0;
+    },
+
+    // Light › Outline: `mask` (Uint8Array, rect.w x rect.h at the paint mask's
+    // scale, 0..255) x `amount` (0..1; 1 = 1.5 EV) into the paint mask over
+    // `rect` (source px). mode as paintDabs; erase takes the mask out.
+    paintMask(mode, mask, rect, amount) {
+      if (!paintTex) api.clearPaint();
+      const s = paintSize.scale, W = paintSize.width, H = paintSize.height;
+      const w = Math.max(1, Math.round(rect.w * s)), h = Math.max(1, Math.round(rect.h * s));
+      if (mask.length < w * h) throw new RangeError(`paintMask: ${mask.length} texels for ${w}x${h}`);
+      const tex = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, w, h, 0, gl.RED, gl.UNSIGNED_BYTE, mask);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+      setSampling(gl, false);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, paintFbo);
+      gl.viewport(0, 0, W, H);
+      gl.useProgram(maskProgram);
+      gl.uniform1i(maskLoc.uMask, 0);
+      gl.uniform3fv(maskLoc.uChannel, mode === 'brighten' ? [1, 0, 0] : mode === 'darken' ? [0, 1, 0] : [0, 0, 1]);
+      gl.uniform1f(maskLoc.uAmount, Math.max(0, Math.min(1, amount)));
+      gl.enable(gl.BLEND);
+      if (mode === 'erase') gl.blendFunc(gl.ZERO, gl.ONE_MINUS_SRC_ALPHA);
+      else gl.blendFunc(gl.ONE, gl.ONE);
+      gl.bindVertexArray(vao);
+      // The quad in paint-mask px (mask row 0 = source row 0, as paintDabs), uv 0..1 over the mask.
+      writeQuad([[0, 0], [1, 0], [0, 1], [1, 1]].map(([u, v]) => ({ x: (rect.x + u * rect.w) * s, y: (rect.y + v * rect.h) * s, u, v, ox: u, oy: v })), W, H, false);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      gl.bindVertexArray(null);
+      gl.disable(gl.BLEND);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.deleteTexture(tex);
     },
 
     dropPaint() {

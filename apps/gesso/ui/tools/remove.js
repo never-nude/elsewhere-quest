@@ -15,18 +15,29 @@
 // rides in its pool entry (`how`), so Try another and Source still work after a
 // relaunch. `settle()` resolves once every fill asked for has landed, so Save can
 // wait for a fill still computing instead of saving the photo without it.
+//
+// Outline (SPEC F19) is a mode chip in the dial row. While it is on, a drag
+// traces a loop whose line clings to the nearest strong edge (lib/lasso.js, on a
+// 1024 px copy of the cropped photo), with the photo around the finger shown at
+// 3x in a corner window (ui/magnifier.js) so the hand never hides the edge. Lift
+// closes the loop along edges and fills the inside through the rub pipeline with
+// the polygon as the shape; the polygon is kept in source px, so a later crop or
+// rotation doesn't move the fill, and goes in the pool entry like a rub's path.
 
 import { RULERS, formatValue, clampValue } from '../../lib/ruler.js';
 import { diskMask, maskBounds, exceedsAreaCap, composeRef } from '../../lib/heal.js';
 import { strokeBounds } from '../../lib/stroke.js';
-import { sourceToOutput, apply } from '../../lib/geometry.js';
+import { sourceToOutput, outputToSource, multiply, apply } from '../../lib/geometry.js';
+import { buildCostMap, createLasso, transformPolygon, polygonArea, polygonBounds, polygonRecord } from '../../lib/lasso.js';
 import {
   PRESETS, DEFAULT_SIZE, DILATE_PX, FILTER_BLEED, brushRadius, solveFactor, discBox, clipRect, grow,
   findRegion, fullOffsets, rubWindow, mapPoints, extendBounds, boundsRect, readPadded, shrink, shrinkMask,
   stackSide, stackPair, correctionField, upsampleCorrection, cutTile, upsampleFill, discRing, refineOffset, subBlock,
   rankSources, addCorrection, SEAM_PX, recipeRecord, reviveRecipe, strokeMaskFast, shrinkFill, silhouetteSvg, copyByMatches,
+  outlineBox, outlineMask, polygonSvg,
 } from '../../lib/remove-plan.js';
 import { createHealClient } from '../heal-client.js';
+import { createMagnifier, drawTrace } from '../magnifier.js';
 
 const SPEC = RULERS.removeSize;
 const CORAL = 'rgba(255, 77, 109, 0.45)';
@@ -36,10 +47,25 @@ const SHIMMER_MIN_MS = 400; // SPEC F10: a tap's fill lands with a 0.4 s shimmer
 const RING_HIT_PT = 22; // the Source ring is grabbable within at least a 44pt circle
 const CAP_TIP = 'Big area. Do it in smaller pieces.';
 const MATCH_MAX_PX = 8_000_000; // a rub's window read back at full size (32 MB) to copy its matches
+const ANALYSIS_PX = 1024; // the lasso's edge map: the cropped photo at this long side
+const SNAP_PT = 18; // SPEC F19: the line snaps to an edge within this of the finger, on screen
+const ANCHOR_PT = 24; // an anchor every this far along the snapped line, on screen
+const TINY_PT2 = 16; // a loop enclosing less than this on screen (4 x 4 pt) is nothing to fill
 
 let size = DEFAULT_SIZE; // brush diameter, pt on screen
-let dial = 'size'; // 'size' | 'source'
+let dial = 'size'; // 'size' | 'outline' | 'source'
 let stroke = null; // the rub under the finger: { pts, r, rr, b (point box), capped (when the cap tip last showed), x, y }
+// Outline's edge map: { cm, kx, ky (analysis px per output px), crop, remove (what it was built from) }.
+// Built off the finger when Outline comes on and after every fill; dropped on close.
+let costMap = null;
+let costTimer = 0;
+// The loop under the finger: { lasso, pending (analysis px, moved once per frame), kx, ky, spacing,
+// reach (the snap radius on screen), crop (what the edge map was built through) }.
+let trace = null;
+// A loop a held finger just lifted: filled on the next microtask unless the
+// reducer's next word is pinch-start (see onGesture 'hold-end').
+let ending = null;
+let mag = null; // the corner magnifier, made on the first trace
 let ringDrag = null; // { id, rec, start: [x, y], cur: [x, y] } source px
 let movedRing = null; // a dropped ring, drawn there until its fill lands
 let sizing = false; // the size ruler is being dragged: preview the brush
@@ -60,6 +86,8 @@ export default {
   id: 'remove',
   label: 'Remove',
   viewMode: 'output',
+  // While Outline is on a still finger is the start of a loop, not Before.
+  get claimsHold() { return dial === 'outline'; },
 
   open(ed) {
     size = DEFAULT_SIZE;
@@ -82,12 +110,17 @@ export default {
     stroke = null;
     ringDrag = null;
     sizing = false;
+    cancelTrace(ed);
+    dropCostMap();
+    mag?.dispose();
+    mag = null;
   },
 
   // An Undo or Redo under a fill still computing makes that fill moot (it would be
   // dropped on landing): stop it now so the next fill doesn't wait behind it.
   onHistory(ed) {
     if (running && ed.committed?.remove !== running.under) heal?.cancel();
+    if (dial === 'outline') scheduleCostMap(ed); // the photo under the loop may have changed
   },
 
   // Resolves when every fill asked for so far has landed (or been dropped); null
@@ -100,9 +133,11 @@ export default {
     const last = lastFill(ed);
     const sourceOk = last?.rec.kind === 'tap';
     const showSource = dial === 'source' && sourceOk;
+    const outline = dial === 'outline';
+    const filling = outline && jobs.some((j) => j.kind === 'outline');
     return {
       title: 'Remove',
-      hint: 'Tap a spot, or rub over something.',
+      hint: filling ? 'Filling inside the outline…' : outline ? 'Loop around it. The line snaps to edges.' : 'Tap a spot, or rub over something.',
       cancel: true,
       done: true,
       quick: [
@@ -112,7 +147,8 @@ export default {
         { id: 'another', label: 'Try another', kind: 'action', disabled: !last },
       ],
       dials: [
-        { id: 'size', label: 'Size', value: formatValue(SPEC, size), selected: !showSource, kind: 'dial' },
+        { id: 'size', label: 'Size', value: formatValue(SPEC, size), selected: !showSource && !outline, kind: 'dial' },
+        { id: 'outline', label: 'Outline', kind: 'mode', selected: outline, value: outline ? 'On' : 'Off' },
         {
           id: 'source', label: 'Source', kind: 'mode', selected: showSource, disabled: !sourceOk,
           value: sourceOk ? (last.rec.moved ? 'Moved' : 'Auto') : '–',
@@ -127,7 +163,7 @@ export default {
   onQuick(ed, id) {
     if (Object.hasOwn(PRESETS, id)) {
       size = PRESETS[id];
-      dial = 'size';
+      setDial(ed, 'size');
     } else if (id === 'another') {
       tryAnother(ed);
     }
@@ -135,7 +171,9 @@ export default {
   },
 
   onDial(ed, id) {
-    if (id === 'size' || id === 'source') dial = id;
+    // Outline is a switch: tapping it again turns it off (back to the brush).
+    if (id === 'outline') setDial(ed, dial === 'outline' ? 'size' : 'outline');
+    else if (id === 'size' || id === 'source') setDial(ed, id);
     ed.requestRender();
   },
 
@@ -154,6 +192,7 @@ export default {
   },
 
   // SPEC F10: the rub under the finger shows in a 2x loupe (stage px of the finger).
+  // A loop has the corner magnifier instead.
   loupe() {
     return stroke ? { x: stroke.x, y: stroke.y } : null;
   },
@@ -172,19 +211,37 @@ export default {
       case 'tap':
         return g.target === 'ring' ? true : tap(ed, g.x, g.y);
       case 'drag-start':
-        return g.target === 'ring' ? startRing(ed, g) : startRub(ed, g);
+      case 'hold-start': // only while Outline is on (claimsHold): a still finger starts the loop too
+        if (g.target === 'ring') return g.type === 'drag-start' && startRing(ed, g);
+        return dial === 'outline' ? startTrace(ed, g) : g.type === 'drag-start' && startRub(ed, g);
       case 'drag':
+      case 'hold-move':
         if (ringDrag) return moveRing(ed, g);
         if (stroke) return moveRub(ed, g);
+        if (trace) return moveTrace(ed, g);
         return false;
       case 'drag-end':
         if (ringDrag) return endRing(ed);
         if (stroke) return endRub(ed);
+        if (trace) return endTrace(ed);
+        return false;
+      case 'hold-end':
+        // Only a loop can be under a held finger (claimsHold). The reducer says
+        // hold-end for a second finger landing and for a pointercancel as well as
+        // for a lift (SPEC §4 rule 2 wants those to cancel, not fill): a pinch-start
+        // follows the second finger in the same batch, so the fill waits a
+        // microtask for it; a reducer that marks the other says `cancelled`.
+        if (!trace) return false;
+        if (g.cancelled) { cancelTrace(ed); return true; }
+        return endTrace(ed, { later: true });
+      case 'pinch-start':
+        cancelTrace(ed); // a loop still live or just lifted by the first finger: no step
         return false;
       case 'drag-cancel':
-        if (!ringDrag && !stroke) return false;
+        if (!ringDrag && !stroke && !trace) return false;
         ringDrag = null;
         stroke = null;
+        cancelTrace(ed);
         ed.requestRender();
         return true;
       default:
@@ -196,7 +253,10 @@ export default {
     const map = toStage(ed);
     const k = 1 / ed.sourcePerStagePx(); // stage px per source px
     ctx.save();
-    for (const j of jobs) if (j.kind === 'rub') coral(ctx, map, j.pts, j.rr * k);
+    for (const j of jobs) {
+      if (j.kind === 'rub') coral(ctx, map, j.pts, j.rr * k);
+      else if (j.kind === 'outline') drawTrace(ctx, { path: stagePoints(map, j.poly), closed: true });
+    }
     if (stroke) {
       coral(ctx, map, stroke.pts, stroke.rr * k);
       ring(ctx, stroke.x, stroke.y, size / 2);
@@ -234,8 +294,218 @@ export default {
     }
     ctx.restore();
     placeShimmer(ed, map);
+    drawTraceOverlay(ed, ctx); // last: the magnifier sits on top of everything
   },
 };
+
+// ------------------------------------------------------------------ outline
+
+function setDial(ed, id) {
+  if (id === dial) return;
+  const was = dial;
+  dial = id;
+  if (id === 'outline') {
+    ed.hint('outline-on', { tool: 'remove' });
+    scheduleCostMap(ed);
+  } else if (was === 'outline') {
+    cancelTrace(ed);
+    dropCostMap();
+  }
+}
+
+// The lasso's edge map of the cropped photo at analysis size, built once per
+// photo state (design/lasso-integration.md §5: ~40–90 ms, so off the finger when possible) and
+// keyed on what it saw: the crop and the fills.
+function ensureCostMap(ed) {
+  const st = ed.committed;
+  if (costMap && costMap.crop === st.crop && costMap.remove === st.remove) return costMap;
+  const a = ed.readOutput({ maxSide: ANALYSIS_PX, tone: false });
+  const o = ed.outputSize();
+  costMap = { cm: buildCostMap(a), kx: a.width / o.width, ky: a.height / o.height, crop: st.crop, remove: st.remove };
+  return costMap;
+}
+
+function scheduleCostMap(ed) {
+  clearTimeout(costTimer);
+  costTimer = setTimeout(() => {
+    costTimer = 0;
+    if (dial !== 'outline' || trace || !ed.committed) return;
+    try {
+      ensureCostMap(ed);
+    } catch (err) {
+      console.warn('Outline: edge map not built', err); // tried again on the next drag-start
+    }
+  }, 0);
+}
+
+function dropCostMap() {
+  clearTimeout(costTimer);
+  costTimer = 0;
+  costMap = null;
+}
+
+// Finger (stage px) -> the lasso's analysis px.
+function toAnalysis(ed, x, y, kx, ky) {
+  const [ox, oy] = ed.stageToDoc(x, y);
+  return { x: ox * kx, y: oy * ky };
+}
+
+function startTrace(ed, g) {
+  let map;
+  try {
+    map = ensureCostMap(ed);
+  } catch (err) {
+    console.warn('Outline: edge map not built', err);
+    return false;
+  }
+  const { cm, kx, ky } = map;
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  // Snap reach and anchor spacing are constant on screen, like brush sizes.
+  const R = clamp((SNAP_PT / ed.view.scale) * kx, 6, 40);
+  const spacing = clamp((ANCHOR_PT / ed.view.scale) * kx, 8, 48);
+  const lasso = createLasso(cm, { snapRadius: R, anchorSpacing: spacing });
+  lasso.begin(toAnalysis(ed, g.x, g.y, kx, ky));
+  trace = { lasso, pending: null, kx, ky, spacing, reach: (R / kx) * ed.view.scale, crop: map.crop };
+  (mag ??= createMagnifier(ed)).begin({ x: g.x, y: g.y });
+  ed.requestRender();
+  return true;
+}
+
+// Moves arrive per coalesced pointer event; the lasso is moved once per frame
+// (drawTraceOverlay), a search costing up to a few ms.
+function moveTrace(ed, g) {
+  trace.pending = toAnalysis(ed, g.x, g.y, trace.kx, trace.ky);
+  mag.move({ x: g.x, y: g.y });
+  ed.requestRender();
+  return true;
+}
+
+function endTrace(ed, { later = false } = {}) {
+  const t = trace;
+  trace = null;
+  if (!later) return finishTrace(ed, t);
+  ending = t;
+  queueMicrotask(() => {
+    if (ending !== t) return; // a pinch-start (or a close) got there first
+    ending = null;
+    finishTrace(ed, t);
+  });
+  return true;
+}
+
+function finishTrace(ed, t) {
+  const { lasso, pending, kx, ky } = t;
+  if (pending) lasso.move(pending);
+  mag.end();
+  const poly = lasso.end(); // closes the loop along edges; analysis px
+  ed.requestRender();
+  // A fill landing mid-trace found `trace` set and left the map stale: now, off the finger.
+  if (dial === 'outline') scheduleCostMap(ed);
+  if (!poly) return true;
+  const st = ed.committed;
+  // Undo under the other hand took the crop the loop was traced through away:
+  // its analysis px no longer mean anything on this photo.
+  if (st.crop !== t.crop) return true;
+  // A tap-sized loop, or a line out and back, encloses nothing worth a step.
+  const areaPt = (polygonArea(poly) / (kx * ky)) * ed.view.scale ** 2;
+  if (areaPt < TINY_PT2) return true;
+  const toSource = multiply(outputToSource(st.crop, st.source.w, st.source.h), [1 / kx, 0, 0, 1 / ky, 0, 0]);
+  // Kept at 0.1 px, exactly as the pool entry stores it, so a retry after a
+  // relaunch rasterises the very same pixels.
+  const polyS = Float32Array.from(polygonRecord(transformPolygon(poly, toSource)));
+  const { width: W, height: H } = ed.renderer.size;
+  const box = outlineBox(polyS, W, H);
+  if (!box) return true;
+  if (exceedsAreaCap(box, W, H)) {
+    // The finger can't be stopped mid-loop like a rub, so the cap is judged on lift.
+    ed.panel.showTip(CAP_TIP);
+    return true;
+  }
+  const job = { kind: 'outline', poly: polyS, seed: 1, attempt: 0 };
+  enqueue(ed, job, (gen) => fillOutline(ed, job, gen));
+  ed.refresh(); // the hint says the fill is computing (enqueue refreshes again when it lands)
+  return true;
+}
+
+function cancelTrace(ed) {
+  const t = trace ?? ending;
+  if (!t) return;
+  trace = ending = null;
+  t.lasso.cancel();
+  mag?.cancel();
+  ed.requestRender();
+  if (dial === 'outline') scheduleCostMap(ed); // as finishTrace; close()/setDial drop it right after
+}
+
+// The snapped line on the stage at 1x, then the magnifier. While the magnifier
+// fades after lift it shows the last trace it drew and asks for frames itself.
+function drawTraceOverlay(ed, ctx) {
+  if (!trace) {
+    if (mag?.active) mag.draw(ctx);
+    return;
+  }
+  const { lasso, kx, ky, spacing, reach } = trace;
+  if (trace.pending) {
+    lasso.move(trace.pending);
+    trace.pending = null;
+  }
+  const p = lasso.path();
+  const path = new Float32Array(p.length);
+  for (let i = 0; i + 1 < p.length; i += 2) {
+    const [sx, sy] = ed.docToStage(p[i] / kx, p[i + 1] / ky);
+    path[i] = sx;
+    path[i + 1] = sy;
+  }
+  // The lasso drops an anchor every `spacing` px along its 8-connected path and
+  // doesn't list them, so they are found again the way it counts.
+  const anchors = [];
+  let len = 0;
+  for (let i = 2; i < p.length; i += 2) {
+    len += p[i] !== p[i - 2] && p[i + 1] !== p[i - 1] ? Math.SQRT2 : 1;
+    if (len >= spacing) { anchors.push(path[i], path[i + 1]); len = 0; }
+  }
+  ctx.save();
+  if (path.length >= 6) {
+    // The chord back to the start, so the loop the lift will close is visible.
+    ctx.beginPath();
+    ctx.moveTo(path[path.length - 2], path[path.length - 1]);
+    ctx.lineTo(path[0], path[1]);
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = INK;
+    ctx.globalAlpha = 0.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+  drawTrace(ctx, { path, anchors });
+  ctx.restore();
+  mag.draw(ctx, { path, anchors, snapRadius: reach }); // the reach as clamped, not as asked for
+}
+
+// Flat source-px points (a polygon) mapped to stage px.
+function stagePoints(map, pts) {
+  const out = new Float32Array(pts.length);
+  for (let i = 0; i + 1 < pts.length; i += 2) {
+    const [sx, sy] = map(pts[i], pts[i + 1]);
+    out[i] = sx;
+    out[i + 1] = sy;
+  }
+  return out;
+}
+
+// A fill's shape, rubbed { pts, rr } or outlined { poly }: its box, and its mask
+// over a rect seen at kx, ky with `bleed` extra px of reach.
+function shapeBox(s, W, H) {
+  return s.poly ? outlineBox(s.poly, W, H) : clipRect(strokeBounds(s.pts, s.rr), W, H);
+}
+
+function shapeMask(s, rect, w = rect.w, h = rect.h, kx = 1, ky = kx, bleed = 0) {
+  if (s.poly) return outlineMask(s.poly, rect, w, h, kx, ky, bleed);
+  return strokeMaskFast(mapPoints(s.pts, rect, kx, ky), s.rr * Math.max(kx, ky) + bleed, w, h);
+}
+
+const shapeOf = (s) => (s.poly ? { poly: s.poly } : { pts: s.pts });
 
 // ------------------------------------------------------------------ gestures
 
@@ -366,7 +636,7 @@ function tryAnother(ed) {
     } else {
       // PatchMatch can bend a straight line it fills across (a horizon behind
       // someone). The alternative is a tap's copy from one place, over the rubbed
-      // shape: lines carry straight on, and it has a Source to drag.
+      // or outlined shape: lines carry straight on, and it has a Source to drag.
       const found = await rubOffsets(ed, rec);
       if (found) {
         const tile = await healTile(ed, found, found.offsets[0], found.f);
@@ -381,14 +651,17 @@ function tryAnother(ed) {
 }
 
 function jobFor(rec) {
-  return rec.kind === 'tap' && !rec.pts ? { kind: 'tap', cx: rec.cx, cy: rec.cy, rr: rec.rr } : { kind: 'rub', pts: rec.pts, rr: rec.rr };
+  if (rec.kind === 'tap' && !rec.pts && !rec.poly) return { kind: 'tap', cx: rec.cx, cy: rec.cy, rr: rec.rr };
+  return rec.poly ? { kind: 'outline', poly: rec.poly } : { kind: 'rub', pts: rec.pts, rr: rec.rr };
 }
 
-// Where a rubbed shape could be copied from in one piece, searched like a tap
-// (healSpot) with the shape's long side as its size; null when nowhere fits.
+// Where a rubbed or outlined shape could be copied from in one piece, searched
+// like a tap (healSpot) with the shape's long side as its size; null when
+// nowhere fits. An outline has no brush: its half long side stands in for rr
+// (the seam ring's width, the shimmer's box).
 async function rubOffsets(ed, rec) {
   const { width: W, height: H } = ed.renderer.size;
-  const box = clipRect(strokeBounds(rec.pts, rec.rr), W, H);
+  const box = shapeBox(rec, W, H);
   if (!box) return null;
   const half = Math.max(box.w, box.h) / 2;
   const f = solveFactor(half);
@@ -398,10 +671,10 @@ async function rubOffsets(ed, rec) {
     : pick(ed.renderer.readSource({ rect: region, scale: 1 / f }));
   const size = { width: small.width, height: small.height }; // the worker takes `small`
   const kx = small.width / region.w, ky = small.height / region.h;
-  const mask = strokeMaskFast(mapPoints(rec.pts, region, kx, ky), rec.rr * Math.max(kx, ky) + (f > 1 ? FILTER_BLEED : 0), small.width, small.height);
+  const mask = shapeMask(rec, region, small.width, small.height, kx, ky, f > 1 ? FILTER_BLEED : 0);
   const offsets = fullOffsets(await client().find(small, mask, { maxResults: 4 }), region, size);
   if (!offsets.length) return null;
-  return { kind: 'tap', pts: rec.pts, cx: box.x + box.w / 2, cy: box.y + box.h / 2, rr: rec.rr, f, offsets };
+  return { kind: 'tap', ...shapeOf(rec), cx: box.x + box.w / 2, cy: box.y + box.h / 2, rr: rec.rr ?? half, f, offsets };
 }
 
 // Heal a tapped spot: find where to copy from, then copy with a seam correction.
@@ -439,12 +712,11 @@ async function healSpot(ed, job, gen) {
 // here at full size.
 async function healTile(ed, spot, D, f) {
   const { width: W, height: H } = ed.renderer.size;
-  const box = spot.pts ? clipRect(strokeBounds(spot.pts, spot.rr), W, H) : discBox(spot.cx, spot.cy, spot.rr, W, H);
+  const shaped = !!(spot.pts || spot.poly); // a rub or an outline healed from one place
+  const box = shaped ? shapeBox(spot, W, H) : discBox(spot.cx, spot.cy, spot.rr, W, H);
   if (!box) return null;
   const T = grow(box, 3 * f, W, H); // ≥ 2 shrunk px of known surroundings
-  const holeMask = spot.pts
-    ? strokeMaskFast(mapPoints(spot.pts, T), spot.rr, T.w, T.h)
-    : diskMask(spot.cx - T.x, spot.cy - T.y, spot.rr, T.w, T.h);
+  const holeMask = shaped ? shapeMask(spot, T) : diskMask(spot.cx - T.x, spot.cy - T.y, spot.rr, T.w, T.h);
   const hole = maskBounds(holeMask, T.w, T.h);
   if (!hole) return null;
   const side = stackSide(hole, T.w, T.h);
@@ -456,7 +728,7 @@ async function healTile(ed, spot, D, f) {
   if (!wide) return null;
   // Only the band right at the seam decides whether lines carry on across it.
   const ringW = Math.max(3, Math.min(16, Math.round(0.25 * spot.rr)));
-  const ring = spot.pts ? shapeRing(holeMask, strokeMaskFast(mapPoints(spot.pts, T), spot.rr + ringW, T.w, T.h)) : discRing(spot.cx - T.x, spot.cy - T.y, spot.rr, ringW, T.w, T.h);
+  const ring = shaped ? shapeRing(holeMask, shapeMask(spot, T, T.w, T.h, 1, 1, ringW)) : discRing(spot.cx - T.x, spot.cy - T.y, spot.rr, ringW, T.w, T.h);
   const nudge = refineOffset(target, wide, T.w, T.h, m, ring);
   const used = { dx: D.dx + nudge.dx, dy: D.dy + nudge.dy };
   const source = subBlock(wide, T.w + 2 * m, m + nudge.dx, m + nudge.dy, T.w, T.h);
@@ -490,30 +762,36 @@ async function fillArea(ed, job, gen) {
   if (await land(ed, tile, job, { under, gen, label: 'Removed area' })) ed.hint('rub-fill');
 }
 
-// PatchMatch over the rubbed area, inside its local window. Small windows run at
-// full size on exact pixels; bigger ones on a shrunk copy whose fill is brought
-// back up inside the area.
+async function fillOutline(ed, job, gen) {
+  const under = ed.committed.remove;
+  const tile = await rubTile(ed, job);
+  if (await land(ed, tile, job, { under, gen, label: 'Removed outline' })) ed.hint('outline-done', { tool: 'remove' });
+}
+
+// PatchMatch over the rubbed or outlined area, inside its local window. Small
+// windows run at full size on exact pixels; bigger ones on a shrunk copy whose
+// fill is brought back up inside the area.
 async function rubTile(ed, rec) {
   const { width: W, height: H } = ed.renderer.size;
-  const box = clipRect(strokeBounds(rec.pts, rec.rr), W, H);
+  const box = shapeBox(rec, W, H);
   if (!box) return null;
-  const boxMask = strokeMaskFast(mapPoints(rec.pts, box), rec.rr, box.w, box.h);
+  const boxMask = shapeMask(rec, box);
   if (!maskBounds(boxMask, box.w, box.h)) return null;
   const { rect: win, scale } = rubWindow(box, W, H, rec.attempt);
   let rgba;
   if (scale >= 1) {
     const img = { width: win.w, height: win.h, data: ed.renderer.readRect(win) };
-    const mask = strokeMaskFast(mapPoints(rec.pts, win), rec.rr, win.w, win.h);
+    const mask = shapeMask(rec, win);
     const filled = await client().inpaint(img, mask, { seed: rec.seed });
     rgba = cutTile(filled.data, win.w, { x: 0, y: 0, w: box.w, h: box.h }, box.x - win.x, box.y - win.y, boxMask, box.w);
   } else {
     const small = pick(ed.renderer.readSource({ rect: win, scale }));
     const kx = small.width / win.w, ky = small.height / win.h;
-    const mask = strokeMaskFast(mapPoints(rec.pts, win, kx, ky), rec.rr * Math.max(kx, ky) + FILTER_BLEED, small.width, small.height);
+    const mask = shapeMask(rec, win, small.width, small.height, kx, ky, FILTER_BLEED);
     const filled = await client().inpaint(small, mask, { seed: rec.seed });
     rgba = upsampleFill(filled, win, box, boxMask);
     if (filled.from && win.w * win.h <= MATCH_MAX_PX) {
-      const winMask = strokeMaskFast(mapPoints(rec.pts, win), rec.rr, win.w, win.h);
+      const winMask = shapeMask(rec, win);
       copyByMatches(rgba, filled, ed.renderer.readRect(win), win, box, boxMask, winMask);
     }
     await matchSeam(ed, rec, filled, win, box, boxMask, rgba);
@@ -529,7 +807,7 @@ async function matchSeam(ed, rec, filled, win, box, boxMask, rgba) {
   const { width: W, height: H } = ed.renderer.size;
   const f = Math.max(1, Math.ceil(Math.max(box.w, box.h) / SEAM_PX));
   const T = grow(box, 3 * f, W, H);
-  const holeMask = strokeMaskFast(mapPoints(rec.pts, T), rec.rr, T.w, T.h);
+  const holeMask = shapeMask(rec, T);
   const hole = maskBounds(holeMask, T.w, T.h);
   if (!hole) return;
   const target = ed.renderer.readRect(T);
@@ -595,6 +873,9 @@ function enqueue(ed, job, work) {
       if (!jobs.length) hideShimmer(false);
       ed.requestRender();
       ed.refresh();
+      // The photo the edge map saw has changed: rebuild it now, off the finger,
+      // not under the next drag-start.
+      if (dial === 'outline') scheduleCostMap(ed);
     }
   });
 }
@@ -727,7 +1008,7 @@ function placeShimmer(ed, map) {
   if (j.kind === 'tap') {
     for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) add(j.cx + dx * j.rr, j.cy + dy * j.rr);
   } else {
-    const b = strokeBounds(j.pts, j.rr);
+    const b = j.kind === 'outline' ? polyRect(j.poly) : strokeBounds(j.pts, j.rr);
     for (const [x, y] of [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]]) add(x, y);
   }
   el.style.left = `${x0}px`;
@@ -735,10 +1016,10 @@ function placeShimmer(ed, map) {
   el.style.width = `${Math.max(1, x1 - x0)}px`;
   el.style.height = `${Math.max(1, y1 - y0)}px`;
   el.style.borderRadius = j.kind === 'tap' ? '50%' : '0';
-  // A rubbed area shimmers in its own shape. The mask is drawn once, in this
-  // frame's stage px; mask-size 100% keeps it fitted through a pinch.
-  if (j.kind === 'rub' && !j.mask) j.mask = silhouette(map, j, x0, y0, x1 - x0, y1 - y0, ed.sourcePerStagePx());
-  const url = j.kind === 'rub' && j.mask ? `url("${j.mask}")` : 'none';
+  // A rubbed or outlined area shimmers in its own shape. The mask is drawn once,
+  // in this frame's stage px; mask-size 100% keeps it fitted through a pinch.
+  if (j.kind !== 'tap' && !j.mask) j.mask = silhouette(map, j, x0, y0, x1 - x0, y1 - y0, ed.sourcePerStagePx());
+  const url = j.kind !== 'tap' && j.mask ? `url("${j.mask}")` : 'none';
   if (url !== shimmerMask) {
     shimmerMask = url;
     el.style.maskImage = el.style.webkitMaskImage = url;
@@ -746,10 +1027,17 @@ function placeShimmer(ed, map) {
   }
 }
 
+function polyRect(poly) {
+  const b = polygonBounds(poly, 1, { pad: DILATE_PX });
+  return { x: b.x, y: b.y, w: b.width, h: b.height };
+}
+
 function silhouette(map, j, x0, y0, w, h, perPx) {
+  const box = { x: x0, y: y0, w, h };
+  if (j.kind === 'outline') return polygonSvg(stagePoints(map, j.poly), box);
   const pts = [];
   for (let i = 0; i + 1 < j.pts.length; i += 2) pts.push(...map(j.pts[i], j.pts[i + 1]));
-  return silhouetteSvg(pts, j.rr / perPx, { x: x0, y: y0, w, h });
+  return silhouetteSvg(pts, j.rr / perPx, box);
 }
 
 function pick({ width, height, data }) {

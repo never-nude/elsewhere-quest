@@ -61,6 +61,12 @@ export const RULERS = deepFreeze({
     id: 'textAngle', label: 'Angle', min: -180, max: 180, def: 0, unitsPerPt: 0.5, decimals: 0,
     format: 'degrees', detents: [-90, 0, 90], tick: 5, major: 45, nudge: 5,
   },
+  // Light › Outline: how much light inside the loop, signed (right brightens, left
+  // darkens); ±100 is ±1.5 EV, the default +67 about +1 EV.
+  outlineAmount: {
+    id: 'outlineAmount', label: 'Amount', min: -100, max: 100, def: 67, unitsPerPt: 0.25, decimals: 0,
+    format: 'signed', detents: [0, 67], tick: 5, major: 25, nudge: 5,
+  },
 });
 
 // A spec written by hand in SPEC §5.9's shape ({ min, max, def, unitsPerPt }) has

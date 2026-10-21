@@ -13,6 +13,7 @@
 
 import { planRemoval } from './inpaint.js';
 import { cleanPoints } from './stroke.js';
+import { polygonBounds, polygonMask, transformPolygon, polygonRecord, revivePolygon } from './lasso.js';
 
 export const PRESETS = Object.freeze({ small: 20, medium: 36, large: 64 }); // on-screen diameters, pt
 export const DEFAULT_SIZE = PRESETS.medium;
@@ -225,6 +226,26 @@ function spanCapsule(mask, w, h, ax, ay, bx, by, r) {
   }
 }
 
+// An outlined polygon (lib/lasso.js, source px) as a fill's shape, so it goes
+// through the rub pipeline in place of a brushed path: its box in remove-plan's
+// rect shape, grown by `pad` like a rub's rr = r + DILATE_PX, clipped to the
+// image; null when none of it is on the photo.
+export function outlineBox(poly, W, H, pad = DILATE_PX) {
+  const b = polygonBounds(poly, 1, { width: W, height: H, pad });
+  return b ? { x: b.x, y: b.y, w: b.width, h: b.height } : null;
+}
+
+// The polygon's mask over `rect` (source px) as a w x h image of it seen at kx,
+// ky (a shrunk window): grown by DILATE_PX, so the object's soft fringe goes too,
+// plus `bleed` px of the shrunk image (FILTER_BLEED, a seam ring's width). 0/1,
+// as strokeMaskFast makes it, so every consumer treats the two shapes alike.
+export function outlineMask(poly, rect, w, h, kx = 1, ky = kx, bleed = 0) {
+  const p = transformPolygon(poly, [kx, 0, 0, ky, -rect.x * kx, -rect.y * ky]);
+  const m = polygonMask(p, { width: w, height: h, feather: 0, grow: DILATE_PX * Math.max(kx, ky) + bleed });
+  for (let i = 0; i < m.length; i++) m[i] = m[i] ? 1 : 0;
+  return m;
+}
+
 // The rubbed area's outline as an SVG data URL, for the shimmer's CSS mask:
 // `pts` (flat x, y) and `radius` in the same px as the box { x, y, w, h } it is
 // drawn into. A string, not a canvas: a canvas readback (toDataURL) waits for the
@@ -242,6 +263,23 @@ export function silhouetteSvg(pts, radius, box) {
     for (let i = 2; i + 1 < pts.length; i += 2) d += `L${at(i)}`;
     shape = `<path d="${d}" fill="none" stroke="#fff" stroke-width="${n(2 * r)}" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
+  return svgUrl(shape, w, h);
+}
+
+// The same for an outlined polygon: the loop, filled.
+export function polygonSvg(pts, box) {
+  const n = (v) => Math.round(v * 10) / 10;
+  const w = Math.max(1, n(box.w)), h = Math.max(1, n(box.h));
+  let shape = '';
+  if (pts.length >= 6) {
+    let d = '';
+    for (let i = 0; i + 1 < pts.length; i += 2) d += `${i ? 'L' : 'M'}${n(pts[i] - box.x)} ${n(pts[i + 1] - box.y)}`;
+    shape = `<path d="${d}Z" fill="#fff"/>`;
+  }
+  return svgUrl(shape, w, h);
+}
+
+function svgUrl(shape, w, h) {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="none">${shape}</svg>`;
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
@@ -469,21 +507,28 @@ export function addCorrection(rgba, box, mask, c, cw, ch, f, ox, oy) {
 // along in the fill's pool entry (pools.patches[id].how), so it survives autosave
 // and a relaunch. Numbers are kept exactly (doubles survive JSON and structured
 // clone), so a retry after a relaunch covers exactly the pixels the fill did.
-//   tap: { kind: 'tap', cx, cy, rr, f, offsets: [{ dx, dy }], index, D: { dx, dy }, moved, pts? }
-//        (pts: a rub healed from one place, Try another's alternative to PatchMatch)
+//   tap: { kind: 'tap', cx, cy, rr, f, offsets: [{ dx, dy }], index, D: { dx, dy }, moved, pts? | poly? }
+//        (pts or poly: a rub or an outline healed from one place, Try another's
+//        alternative to PatchMatch)
 //   rub: { kind: 'rub', pts: [x, y, ...], rr, seed, attempt }
+//   outline: { kind: 'outline', poly: [x, y, ...] (source px, 0.1 px), seed, attempt }
 export function recipeRecord(rec) {
   if (rec?.kind === 'tap') {
     if (!rec.D || !Array.isArray(rec.offsets)) return null;
+    if (rec.poly && polygonRecord(rec.poly).length < 6) return null;
     return {
       kind: 'tap', cx: rec.cx, cy: rec.cy, rr: rec.rr, f: rec.f,
       offsets: rec.offsets.map(({ dx, dy }) => ({ dx, dy })), index: rec.index,
       D: { dx: rec.D.dx, dy: rec.D.dy }, moved: !!rec.moved,
-      ...(rec.pts ? { pts: Array.from(rec.pts) } : {}),
+      ...(rec.poly ? { poly: polygonRecord(rec.poly) } : rec.pts ? { pts: Array.from(rec.pts) } : {}),
     };
   }
   if (rec?.kind === 'rub') {
     return { kind: 'rub', pts: Array.from(rec.pts), rr: rec.rr, seed: rec.seed | 0, attempt: rec.attempt | 0 };
+  }
+  if (rec?.kind === 'outline') {
+    const poly = polygonRecord(rec.poly);
+    return poly.length >= 6 ? { kind: 'outline', poly, seed: rec.seed | 0, attempt: rec.attempt | 0 } : null;
   }
   return null;
 }
@@ -501,9 +546,11 @@ export function reviveRecipe(how) {
     if (!Number.isInteger(index) || index < 0 || index >= offsets.length || !isOffset(D)) return null;
     const pts = how.pts;
     if (pts !== undefined && (!Array.isArray(pts) || pts.length < 2 || pts.length % 2 || !pts.every((v) => Number.isFinite(v)))) return null;
+    const poly = how.poly !== undefined ? revivePolygon(how.poly) : null;
+    if ((how.poly !== undefined && !poly) || (poly && pts)) return null;
     return {
       kind: 'tap', cx, cy, rr, f, offsets: offsets.map(({ dx, dy }) => ({ dx, dy })), index, D: { dx: D.dx, dy: D.dy }, moved: how.moved === true,
-      ...(pts ? { pts: pts.slice() } : {}),
+      ...(poly ? { poly } : pts ? { pts: pts.slice() } : {}),
     };
   }
   if (how.kind === 'rub') {
@@ -511,6 +558,11 @@ export function reviveRecipe(how) {
     if (!Array.isArray(pts) || pts.length < 2 || pts.length % 2 || !pts.every((v) => Number.isFinite(v))) return null;
     if (!fin(rr, seed, attempt) || !(rr > 0)) return null;
     return { kind: 'rub', pts: pts.slice(), rr, seed: seed | 0, attempt: Math.max(0, attempt | 0) };
+  }
+  if (how.kind === 'outline') {
+    const poly = revivePolygon(how.poly);
+    if (!poly || !fin(how.seed, how.attempt)) return null;
+    return { kind: 'outline', poly, seed: how.seed | 0, attempt: Math.max(0, how.attempt | 0) };
   }
   return null;
 }

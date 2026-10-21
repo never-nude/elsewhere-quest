@@ -424,6 +424,10 @@ button:disabled { cursor: default; }
   color: var(--ink-2);
 }
 .dial__name { font-size: 11px; font-weight: 500; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+/* Six chips in the row (Light with Outline, SPEC F6): tighter type, so Brightness
+   and Highlights stay whole at 402pt instead of ellipsising. */
+.panel__dials:has(> :nth-child(6)) .dial { padding: 0 2px; }
+.panel__dials:has(> :nth-child(6)) .dial__name { font-size: 10px; letter-spacing: -0.02em; }
 .dial__value { font-size: 14px; font-weight: 600; line-height: 1.2; color: var(--ink); font-variant-numeric: tabular-nums; }
 .dial--action .dial__value { font-size: 13px; }
 /* One-tap actions in the dial row (Home's change chips, Rotate, Flip, Add, Delete)
