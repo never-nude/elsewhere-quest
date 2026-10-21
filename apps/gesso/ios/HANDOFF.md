@@ -1,5 +1,19 @@
 # Gesso iOS app — handoff (2026-10-20)
 
+## Continuation by Codex (2026-10-20)
+
+The owner confirmed `quest.elsewhere.gesso`, project `apps/gesso-ios/`, and
+permanent origin `gesso://localhost`. The synthesized [DESIGN.md](DESIGN.md),
+exact [BRIDGE.md](BRIDGE.md), web integration and buildable native app now exist.
+See the latest `STATUS.md` entry for actual validation and delivery. The original
+handoff below is preserved as history; its “what is left” and unanswered-identity
+sections describe the state before this continuation.
+
+Device signing currently needs an Apple Developer account signed into Xcode
+Settings → Accounts. The certificate exists, but Xcode reported “No Accounts”
+when asked to create the new bundle's development profile. Simulator validation
+passes; device installation and real photo/RAW/Vision checks remain pending.
+
 Written by Claude Code (Fable 5.1) on the owner's Mac mini so another agent or model can finish
 this from a clean clone. Branch: `claude/gesso-ios`, cut from `claude/gesso-outline` after PR #7
 (Outline) merged to `main` and deployed to https://elsewhere.quest/gesso/.

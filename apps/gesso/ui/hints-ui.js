@@ -18,6 +18,7 @@
 
 import { observe, initialCounters, reviveShown, markShown, hintById, HINT_MS, HINTS_KEY, PHOTO_DRAG_KEY } from '../lib/hints.js';
 import { TAPED } from './tape.js';
+import { subjectLiftAvailable } from './platform.js';
 
 const HIDDEN_BY = ['is-faded', TAPED]; // #panel classes under which a tip can't be read
 
@@ -52,7 +53,7 @@ export function createHints(getEditor, {
     shown = markShown(shown, id);
     write(storage, HINTS_KEY, JSON.stringify(shown));
     if (h.sideEffect === 'photoDrag') write(storage, PHOTO_DRAG_KEY, '1');
-    panel.showTip(h.text, HINT_MS);
+    panel.showTip(id === 'H15' && subjectLiftAvailable() ? 'Tap it, or loop around it. The line snaps to edges.' : h.text, HINT_MS);
     upUntil = now() + HINT_MS;
     return true;
   }

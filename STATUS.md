@@ -83,3 +83,60 @@ Delivery (local, pushed, merged, deployment verified):
 - Owner: handed off by the Claude Code session on the Mac mini. Branch: `claude/gesso-ios` (from `claude/gesso-outline` after the merge). Validation: documentation only in this commit; the app is unchanged from `main` (608 tests, 17/17 acceptance as recorded above).
 - Next: answer the open questions in HANDOFF.md (bundle id, pinned origin, RAW storage, subject-lift UX, area cap, minimum iOS), then steps 1–3 there, then a device build (Xcode 27.1, the paired iPhone 17 Pro and a signing identity are all on the Mac mini; commands in HANDOFF.md).
 - Delivery: committed and pushed to `claude/gesso-ios`; not merged, not deployed.
+
+## 2026-10-20 — Gesso iOS implementation and native validation
+
+- Task/owner: Codex continuation on the owner's Mac, branch `claude/gesso-ios`.
+  The owner confirmed bundle ID `quest.elsewhere.gesso`, project in this repo at
+  `apps/gesso-ios/`, and permanent origin `gesso://localhost` (`/gesso/` entry).
+  The owner subsequently authorized signed device installation and branch
+  commit/push. No merge to main or App Store submission has been performed.
+- Implemented: `ios/DESIGN.md` and `BRIDGE.md`; pure reply/transfer transport and
+  `ui/platform.js`; native picker interception, PNG-normalized RAW draft sources,
+  truthful Photos save/share with denial/Settings and stale-session protection;
+  explicit native subject tap cases in Remove and Light, current-output Vision
+  input and existing Outline commit paths; haptics, native probe rows and web
+  fallbacks. `lib/lasso.js` is unchanged. Deploy excludes the iOS design documents.
+- Native app: checked-in XcodeGen spec and generated project, persistent WKWebView
+  at the pinned origin, always-recopied offline bundle with manifest/content hash,
+  single main-actor operation table and scheme handler, issued UUID transfer files
+  with ArrayBuffer POST, leases and cleanup, PHPicker, ImageIO/CIRAW PNG development,
+  PhotoKit add-only save, native Share, Vision contours, lifecycle flush/reload,
+  Pigment Wheel icon, privacy manifest, launch color and DEBUG diagnostics.
+- Validation actually performed: `npm test` using working Node 22 — **653 pass**;
+  isolated `node e2e/acceptance.mjs` — **17/17** at strict timings (spot 160 ms,
+  Save ready 658 ms); native browser suite — **12/12** across Chromium and WebKit;
+  Simulator XCTest — **9/9**, including real custom-origin 5 MB byte-exact POST/GET,
+  release/duplicate handling, worker imports/JPEG, editor startup, storage reload,
+  path/symlink/MIME/cancellation checks and exact PNG dimensions/two-tone EXIF
+  orientation and the actual EditorViewController host. A fresh standalone
+  `-GessoSmoke` launch passes editor startup, 5 MB transfer, native ping, JPEG worker,
+  secure fixed origin and both storage APIs across reload. Unsigned Debug and
+  Release Simulator builds succeed. Native start, save, denied and shared screen
+  captures reviewed. Scratch logs/results are under
+  `/tmp/gesso-scratch/` on this Mac and are not repository artifacts.
+- Corrections from runtime validation: preserve system Lockdown preferences;
+  setting `isLockdownModeEnabled = false` throws without a restricted browser
+  entitlement on the installed Simulator. CIRAWFilter initialization also accepts
+  JPEGs here, so RAW detection uses ImageIO type/DNG metadata instead. Fixed RAW
+  portrait overdecode, UTF-8 picker filenames, transfer body timeouts/malformed
+  metadata cleanup, and native-only controls appearing in the Safari DOM. Actual
+  host launch also caught Foundation URL.path dropping the entry's trailing slash;
+  the navigation guard now uses URLComponents.path and has a regression test.
+- Device blocker: the signed build reached provisioning but Xcode reported
+  **“No Accounts”** and no development profile for the new bundle. A development
+  certificate/team exists and the paired phone is recognized; the owner must sign
+  in at Xcode → Settings → Accounts before automatic provisioning can proceed.
+  No successful signed device build, installation or launch is claimed.
+- Next: retry the device commands in `apps/gesso-ios/README.md` after sign-in,
+  install/launch with `-GessoSmoke`, retrieve `Documents/gesso-smoke.json`, then
+  relaunch normally. Real Photos/RAW/Vision/haptics, keyboard/insets, background
+  recovery and backup exclusion still require hands-on release checks. Check
+  App Store name/privacy declarations before TestFlight.
+- Environment: default Homebrew Node 25 currently fails on a missing simdjson
+  dylib. Node 22 at `/opt/homebrew/opt/node@22/bin/node` works; validation used
+  `PATH=/opt/homebrew/opt/node@22/bin:$PATH`. The build-copy script uses Python's
+  standard library and does not depend on Node.
+- Delivery at this record: validated local changes on `claude/gesso-ios`, pending
+  authorized commit/push and a review PR. Other devices cannot fetch these changes
+  until publication; the follow-up delivery record will identify the published work.

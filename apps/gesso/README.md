@@ -65,6 +65,7 @@ won't work.)
 ```bash
 npm test           # node --test over every lib/ module (pure, no DOM)
 npm run e2e        # Playwright acceptance checks (SPEC.md §1b) against a running server
+node e2e/native.mjs # native-bridge UI checks in Chromium + WebKit; run after acceptance
 ```
 
 `lib/` holds everything that can be tested without a browser: the develop
@@ -74,6 +75,21 @@ horizon detection, healing and PatchMatch inpainting, text layout, and image
 I/O. `ui/` is the DOM and WebGL layer on top. `SPEC.md` is the design.
 
 Diagnostics for a real device: open `/gesso/?probe=1`.
+
+## iOS app
+
+`../gesso-ios/` hosts this same editor from its app bundle in a WKWebView. The
+native build adds PHPicker import (including RAW development), direct Save to
+Photos, Share, subject taps in Outline, and haptics. Native RAW imports store a
+working-size lossless sRGB PNG as the draft source. The web picker and sharing
+behavior remain available when no native bridge is injected.
+
+The permanent app origin is `gesso://localhost`; its drafts are separate from
+Safari's. The native bundle is offline from first launch and updates with the
+app, so it does not register a service worker. Design and wire contract:
+[`ios/DESIGN.md`](ios/DESIGN.md), [`ios/BRIDGE.md`](ios/BRIDGE.md).
+
+Build and native test instructions live in [`../gesso-ios/README.md`](../gesso-ios/README.md).
 
 ## Honesty clauses
 

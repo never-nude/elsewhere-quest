@@ -835,6 +835,13 @@ Cut order if the schedule slips: Paint light, then Source, then rewind tape, the
 
 ## 6. iOS Safari constraints we honour
 
+The dedicated iOS app hosts the same editor and adds native platform paths;
+`ios/DESIGN.md` and `ios/BRIDGE.md` specify those additions. Safari behavior in
+this section stays the web baseline. Native mode uses PHPicker/PhotoKit,
+exact-size sRGB PNG RAW development, tap-to-lift within Outline, restrained
+haptics and a persistent app-owned WebKit store at `gesso://localhost`. It loads
+the offline bundle directly and skips the Safari install line/service worker.
+
 - **Canvas area 67.1 MP and 8192 px per side; WebGL buffer clamped to 8192.** `lib/limits.fitWorkingSize` enforces both. After every allocation, check `drawingBufferWidth === canvas.width`, a 1-px sample, and a non-null blob. The 24.5 MP cap is presented as a memory budget, never as a canvas limit.
 - **No canvas memory cap; jetsam is around 1.5–2 GB.** This drives the 900 MB ledger, explicit freeing, strip import, band export, tiles instead of full-frame undo snapshots, and autosave after every step.
 - **16 WebGL contexts per page, 4 per worker.** Exactly one WebGL2 context. Thumbnails, loupe and analysis all use it. Workers do not use WebGL.

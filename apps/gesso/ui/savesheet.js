@@ -22,9 +22,10 @@
 import { exportJpeg, isAbort } from './exporter.js';
 import { createCaptions } from './captions.js';
 import { exportFileName } from '../lib/image-io.js';
+import { isNative, saveToPhotos, share as nativeShare, openSettings, haptic } from './platform.js';
 import {
   JPEG_TYPE, RENDER_SHARE, ENCODE_CEILING, encodeEstimateMs, previewFit,
-  shareRoute, shareOutcome, swipeCloses, sheetOffset,
+  shareRoute, shareOutcome, photosOutcome, nativeShareOutcome, swipeCloses, sheetOffset,
 } from '../lib/export-plan.js';
 
 const SAVED_ONCE_KEY = 'gesso:savedOnce';
@@ -61,7 +62,10 @@ export function openSaveSheet(ed, { captions = null } = {}) {
   resetCard();
   ui.main.hidden = false;
   ui.done.hidden = true;
-  ui.coach.hidden = savedOnce();
+  ui.coach.hidden = isNative || savedOnce();
+  ui.nativeShare.hidden = !isNative;
+  ui.settings.hidden = true;
+  ui.error.hidden = true;
   try {
     drawPreview(ed);
   } catch (err) {
@@ -107,6 +111,8 @@ function dropUnfinished() {
 
 function showJob(j) {
   const { share, label } = ui;
+  ui.nativeShare.disabled = sharing || !j.blob;
+  ui.settings.disabled = sharing;
   if (j.blob) {
     share.disabled = sharing;
     share.setAttribute('data-ready', '');
@@ -147,6 +153,7 @@ function onShareClick() {
     if (!j || j.error) showJob(ensureJob(session.ed, session.captions)); // Try again
     return;
   }
+  if (isNative) { runNativeAction('save'); return; }
   // Everything up to navigator.share stays synchronous: iOS only shares from
   // inside the tap.
   const file = new File([j.blob], exportFileName(new Date()), { type: JPEG_TYPE });
@@ -163,12 +170,13 @@ function onShareClick() {
   }
   sharing = true;
   ui.share.disabled = true;
-  Promise.resolve(pending).then(() => settleShare(j, null), (err) => settleShare(j, err ?? new Error('share failed')));
+  const s = session;
+  Promise.resolve(pending).then(() => settleShare(j, null, s), (err) => settleShare(j, err ?? new Error('share failed'), s));
 }
 
-function settleShare(j, err) {
+function settleShare(j, err, s) {
+  if (!session || session !== s || job !== j) return; // closed/reopened, or a different photo
   sharing = false;
-  if (!session || job !== j) return; // closed, or a different photo by now
   const outcome = shareOutcome(err);
   if (outcome === 'saved') {
     showDone(j);
@@ -181,13 +189,54 @@ function settleShare(j, err) {
   showJob(j);
 }
 
-function showDone(j) {
-  try { localStorage.setItem(SAVED_ONCE_KEY, '1'); } catch { /* private mode: coach again next time */ }
+function showDone(j, { saved = true, message = null } = {}) {
+  if (saved) {
+    try { localStorage.setItem(SAVED_ONCE_KEY, '1'); } catch { /* private mode: coach again next time */ }
+  }
   ui.coach.hidden = true;
   ui.main.hidden = true;
   ui.done.hidden = false;
-  if (session.ed.doc === j.doc) session.ed.markSaved();
+  if (message) ui.success.textContent = message;
+  else ui.success.innerHTML = ui.webSuccess;
+  if (saved && session.ed.doc === j.doc) session.ed.markSaved();
   ui.card.focus({ preventScroll: true });
+}
+
+function runNativeAction(action) {
+  if (!session || sharing || !job?.blob) return;
+  const s = session, j = job;
+  const name = exportFileName(new Date());
+  sharing = true;
+  ui.error.hidden = true;
+  ui.settings.hidden = true;
+  showJob(j);
+  ui.label.textContent = action === 'save' ? 'Saving…' : 'Sharing…';
+  ui.share.setAttribute('aria-busy', 'true');
+  let pending;
+  try { pending = action === 'save' ? saveToPhotos(j.blob, name) : nativeShare(j.blob, name); }
+  catch (err) { pending = Promise.reject(err); }
+  Promise.resolve(pending).then((result) => settleNative(result, null), (err) => settleNative(null, err));
+  function settleNative(result, err) {
+    if (session !== s || job !== j) return;
+    sharing = false;
+    const outcome = action === 'save' ? photosOutcome(result, err) : nativeShareOutcome(result, err);
+    if (outcome === 'saved') {
+      haptic('success');
+      showDone(j, { message: 'Saved to Photos.' });
+    } else if (outcome === 'shared') {
+      showDone(j, { saved: false, message: 'Shared.' });
+    } else {
+      if (outcome !== 'cancelled') {
+        ui.settings.hidden = outcome !== 'denied';
+        ui.error.textContent = outcome === 'denied' ? 'Allow Gesso to add photos in Settings, or use Share.'
+          : outcome === 'restricted' ? 'Saving to Photos is restricted on this iPhone. Use Share to save a copy.'
+          : err?.code === 'timeout' ? 'That took too long. Check Photos before trying again.'
+          : action === 'save' ? 'The photo could not be saved. Try again, or use Share.' : 'The photo could not be shared. Try again.';
+        ui.error.hidden = false;
+      }
+      showJob(j);
+    }
+  }
 }
 
 function savedOnce() {
@@ -330,6 +379,16 @@ function slideOutAndClose() {
 
 function install(root) {
   const $ = (s) => root.querySelector(s);
+  const nativeControl = (tag, id, text) => {
+    const el = root.createElement(tag);
+    el.id = id; el.hidden = true; el.textContent = text;
+    el.className = tag === 'button' ? 'sheet__secondary' : 'sheet__coach';
+    if (tag === 'button') el.type = 'button';
+    else el.setAttribute('role', 'status');
+    // Keep the Safari DOM unchanged; even hidden Settings controls are native UI.
+    if (isNative) $('#sheet-main').insertBefore(el, $('#sheet-main .sheet__foot'));
+    return el;
+  };
   const els = {
     sheet: $('#sheet'),
     scrim: $('#sheet .sheet__scrim'),
@@ -341,6 +400,10 @@ function install(root) {
     fill: $('#share .sheet__progress'),
     label: $('#share-label'),
     coach: $('#sheet-coach'),
+    error: nativeControl('p', 'sheet-error', ''),
+    settings: nativeControl('button', 'sheet-settings', 'Open Settings'),
+    nativeShare: nativeControl('button', 'sheet-share', 'Share…'),
+    success: $('#sheet-done .sheet__success'),
     done: $('#sheet-done'),
     newPhoto: $('#sheet-new'),
     fallback: $('#fallback'),
@@ -348,9 +411,26 @@ function install(root) {
     fallbackClose: $('#fallback-close'),
     returnFocus: null,
   };
+  els.webSuccess = els.success.innerHTML;
   els.card.tabIndex = -1; // focus lands in the dialog, not behind it
 
   els.share.addEventListener('click', onShareClick);
+  els.nativeShare.addEventListener('click', () => runNativeAction('share'));
+  els.settings.addEventListener('click', () => {
+    if (!session || sharing) return;
+    const s = session;
+    sharing = true;
+    showJob(job);
+    openSettings().catch(() => {
+      if (session !== s) return;
+      els.error.textContent = 'Open Settings and allow Gesso to add photos.';
+      els.error.hidden = false;
+    }).finally(() => {
+      if (session !== s) return;
+      sharing = false;
+      showJob(job);
+    });
+  });
   // When the finger came down, not when the click was handled: the export holds
   // the main thread band by band, so a tap made during the guard can be handled
   // well after it.
