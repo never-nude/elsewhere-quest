@@ -12,6 +12,11 @@ which builds on `claude/gesso-ios` (native app draft PR8). Do not work on, merge
 or push `main` without the owner's authorization. Preserve laptop changes before
 fetching/switching. A fetch cannot recover another computer's uncommitted files.
 
+Implementation commit **`aac0716`** is pushed. Studio's review is
+[draft PR #9](https://github.com/never-nude/elsewhere-quest/pull/9), stacked on
+[native foundation PR #8](https://github.com/never-nude/elsewhere-quest/pull/8).
+Continue from the latest branch tip, including this publication record.
+
 Read, in order:
 
 1. Repository `AGENTS.md`, latest entries of `STATUS.md`, and existing laptop

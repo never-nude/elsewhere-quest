@@ -245,7 +245,11 @@ Delivery (local, pushed, merged, deployment verified):
   drafts, private fixture photos, scratch results or separate conversations.
   First obtain the owner's hands-on reaction to tracing, repair and compositing;
   then deepen edge refinement, selection-to-layer, Curves/HSL and painted shadows.
-- Delivery at this record: validated local branch, final app installed and open
-  on the phone; authorized commit/push and stacked draft PR publication follow.
-  PR #8 remains the native foundation. No main merge, web deployment or App Store
-  submission was performed.
+- Delivery: implementation committed as **`aac0716`** and pushed to
+  `origin/codex/gesso-creative-studio`; [draft PR #9](https://github.com/never-nude/elsewhere-quest/pull/9)
+  is stacked on `claude/gesso-ios` / PR #8. The final app is installed and open
+  on the phone. This follow-up publication record is also committed on the same
+  branch. Consult the PR for current remote CI state; the results above were
+  actually run on this Mac/phone. No main merge, web deployment or App Store
+  submission was performed. Other computers can fetch the published branch;
+  their local state remains unverified until inspected there.
