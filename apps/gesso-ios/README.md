@@ -71,6 +71,12 @@ restricted browser entitlement and is not supported by this app.
 
 Use the owner's signing team and paired device shown by Xcode/devicectl:
 
+Read the team ID from the matching Apple Development certificate's **subject OU**.
+The parenthesized identifier in its common-name label can identify the person,
+so it must not be assumed to be the team. Inspect the selected certificate with
+`security find-certificate -c 'Apple Development' -p | openssl x509 -noout -subject`
+and supply its OU as `<team-ID>` below. Keep the team value local.
+
 ```sh
 xcrun devicectl list devices
 xcodebuild -project apps/gesso-ios/Gesso.xcodeproj -scheme Gesso \
@@ -89,11 +95,16 @@ xcrun devicectl device copy from --device <device-ID> \
 Launch without arguments after diagnostics to return to the normal editor.
 Keep provisioning credentials and personal device details out of Git.
 
-The 2026-10-20 signed-device attempt stopped at provisioning: Xcode has no
-signed-in developer account and no matching development profile. The installed
-development certificate alone is insufficient, and the existing local profile
-does not match this app/device. Sign in through Xcode Settings → Accounts, then
-retry the build above. No physical-device install or launch has been performed.
+Validated on 2026-10-23: the signed Debug build, installation and normal launch
+succeed on the paired iPhone 17 Pro running iOS 26.6.2. All nine native XCTest
+cases pass on that phone. The standalone smoke report also passes editor startup,
+an exact 5,242,880-byte transfer, native ping, JPEG worker encoding, secure fixed
+origin and IndexedDB/localStorage across reload; its web hash matches the bundle.
+
+The earlier “No Accounts” diagnosis came from passing the person identifier as
+`DEVELOPMENT_TEAM`. With the certificate's actual subject OU, the existing valid
+profile signs the app successfully. That earlier error did not establish that
+Xcode lacked a signed-in account or a matching profile.
 
 ## Release checks
 

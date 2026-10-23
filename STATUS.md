@@ -154,3 +154,38 @@ Delivery (local, pushed, merged, deployment verified):
   sign-in/profile creation. Existing local profiles were inspected; none can sign
   this bundle for the paired phone. Retry the README commands after sign-in;
   signing credentials, profiles and scratch results do not travel through Git.
+
+## 2026-10-23 — Gesso installed and validated on the paired iPhone
+
+- Task/owner: Codex resumed the authorized device build/install on the owner's
+  Mac, branch `claude/gesso-ios`. Fetched origin; checkout and upstream were clean
+  and matched `d205928`. PR #8 remains open and draft; main is unchanged.
+- Corrected the previous signing diagnosis: the parenthesized identifier in the
+  Apple Development certificate label identifies the person, while its subject
+  OU identifies the developer team. The previous command passed the former as
+  `DEVELOPMENT_TEAM`, causing “No Accounts”/profile errors. The correct OU works
+  with an existing valid profile. Earlier records claiming no usable profile or
+  a required Xcode account sign-in were incorrect; they are preserved above as
+  historical observations and superseded by this correction.
+- Validation actually performed today: signed Debug build succeeds for
+  `quest.elsewhere.gesso`; installed and launched on the connected iPhone 17 Pro
+  running iOS 26.6.2; **9/9 native XCTest cases pass on the physical device**.
+  Standalone `-GessoSmoke` also reports success for editor startup, native ping,
+  an exact 5,242,880-byte POST/GET, JPEG module-worker encoding, secure
+  `gesso://localhost` origin, and IndexedDB/localStorage surviving reload. Report
+  web hash `f70d3afadc2747b0` matches the signed bundle's `web/revision.txt`.
+- Relaunched Gesso without diagnostics so the normal editor is open on the
+  phone. These checks do not access or add anything to the user's Photos library.
+  No app-source change was required; README and handoff now explain correct team
+  selection and the successful device validation. Signing values/profiles/device
+  identifiers remain local, outside Git.
+- Local evidence: `/tmp/gesso-scratch/native-device-20261023.log`,
+  `native-device-install-20261023.log`, `native-device-smoke-20261023.json`,
+  `native-device-tests-20261023.xcresult` and the normal-launch log. These scratch
+  artifacts are not synchronized through the repository.
+- Next: hands-on real-photo/RAW import, Photos permission/save/share, Vision
+  selection quality, haptics, keyboard/insets and background recovery before
+  TestFlight. No merge, web deployment or App Store upload was performed.
+- Delivery: the implemented app is installed on the phone and its implementation
+  remains pushed on `claude/gesso-ios` under draft PR #8. This continuation adds
+  the corrected signing guidance and the physical-device validation record.

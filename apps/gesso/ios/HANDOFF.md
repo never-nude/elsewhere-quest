@@ -12,10 +12,12 @@ sections describe the state before this continuation.
 Implementation is pushed on this branch and available in
 [draft PR #8](https://github.com/never-nude/elsewhere-quest/pull/8).
 
-Device signing currently needs an Apple Developer account signed into Xcode
-Settings → Accounts. The certificate exists, but Xcode reported “No Accounts”
-when asked to create the new bundle's development profile. Simulator validation
-passes; device installation and real photo/RAW/Vision checks remain pending.
+Device continuation (2026-10-23): signed build, installation, standalone smoke
+and all nine native tests now pass on the owner's iPhone 17 Pro. The app was
+reopened normally for hands-on checks. The earlier signing failure used a person
+identifier as the team ID; using the certificate's subject OU resolves it with
+the existing profile. It did not establish a missing Xcode account. Real photo,
+RAW, Photos permission and Vision quality checks remain release validation.
 
 Written by Claude Code (Fable 5.1) on the owner's Mac mini so another agent or model can finish
 this from a clean clone. Branch: `claude/gesso-ios`, cut from `claude/gesso-outline` after PR #7
@@ -77,7 +79,8 @@ The exact prompts are in `design/workflows/gesso-ios-design.js` lines 96–101; 
 Everything needed is present on the Mac mini (checked 2026-10-20): Xcode 27.1 at
 `/Applications/Xcode.app`, the iPhone 17 Pro paired and listed by
 `xcrun devicectl list devices`, and one "Apple Development" signing identity in the keychain
-(`security find-identity -v -p codesigning` shows it with the Team ID in parentheses). The
+(`security find-identity -v -p codesigning` shows the identity; read its certificate's
+subject OU for the team ID, not the common-name parentheses). The
 owner has a paid Apple Developer Program membership.
 
 ```sh
