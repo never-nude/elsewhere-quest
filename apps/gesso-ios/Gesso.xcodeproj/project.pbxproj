@@ -1,0 +1,471 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		053569F13A8642719CFF2ADA /* SchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DD6223EB1DDA28D933134E0 /* SchemeHandler.swift */; };
+		0A2AD57FAE3B016103A309A2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1A4DBD6CB8A534BA256E48A0 /* PrivacyInfo.xcprivacy */; };
+		1B7979A1A1BA44CB33E77599 /* Bridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBE60405CA657E08074530FE /* Bridge.swift */; };
+		2F8DE3941AC28FF7455C2CEC /* DebugSmoke.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF2815127EDE30E6729A65D0 /* DebugSmoke.swift */; };
+		74C59D0F206968E10BF37553 /* NativeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEB20D107A4FA42A5DEE6A1F /* NativeTests.swift */; };
+		B8526B15D60D6D432E798597 /* ImageProcessor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94356CE78570DCE25C65AB0D /* ImageProcessor.swift */; };
+		D4572E9B7F784FEBE5A54BE0 /* TransferRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3285DE24AC3B483EF5B6694 /* TransferRegistry.swift */; };
+		DD18C9B30AB875F597D3D438 /* NativeConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AAB8020934B39E6A277A3DCB /* NativeConfig.swift */; };
+		E571D8E561F521CB95695885 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C522A0F9D63ADB1A72371D4F /* Assets.xcassets */; };
+		E58B8A205BBD7DF92C71F2CD /* GessoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D15A3229F829CAEA466290B /* GessoApp.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		1572DE394FF78D4118216340 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3771C8A4F8D6C987F8FACB4D /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 923D3F8E6D1AF17D7F2BB7A2;
+			remoteInfo = Gesso;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		1A4DBD6CB8A534BA256E48A0 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		4DD6223EB1DDA28D933134E0 /* SchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchemeHandler.swift; sourceTree = "<group>"; };
+		8D15A3229F829CAEA466290B /* GessoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GessoApp.swift; sourceTree = "<group>"; };
+		8F02E80AD12C391AB9589A94 /* GessoTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GessoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		92930C1F8164315CBCB79D2A /* Gesso.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Gesso.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		94356CE78570DCE25C65AB0D /* ImageProcessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageProcessor.swift; sourceTree = "<group>"; };
+		AAB8020934B39E6A277A3DCB /* NativeConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeConfig.swift; sourceTree = "<group>"; };
+		AF2815127EDE30E6729A65D0 /* DebugSmoke.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugSmoke.swift; sourceTree = "<group>"; };
+		B3285DE24AC3B483EF5B6694 /* TransferRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransferRegistry.swift; sourceTree = "<group>"; };
+		BBE60405CA657E08074530FE /* Bridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bridge.swift; sourceTree = "<group>"; };
+		C522A0F9D63ADB1A72371D4F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		DEB20D107A4FA42A5DEE6A1F /* NativeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTests.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		11483E4762FD3F8D32EF39E9 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				C522A0F9D63ADB1A72371D4F /* Assets.xcassets */,
+				1A4DBD6CB8A534BA256E48A0 /* PrivacyInfo.xcprivacy */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		2778ED4AA2A3DAD5DA36C7AC /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				92930C1F8164315CBCB79D2A /* Gesso.app */,
+				8F02E80AD12C391AB9589A94 /* GessoTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AE97DEF3E4EB7E0DB4BD8285 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				DEB20D107A4FA42A5DEE6A1F /* NativeTests.swift */,
+			);
+			path = Tests;
+			sourceTree = "<group>";
+		};
+		D492D13DDE1B0FCB673E0005 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				BBE60405CA657E08074530FE /* Bridge.swift */,
+				AF2815127EDE30E6729A65D0 /* DebugSmoke.swift */,
+				8D15A3229F829CAEA466290B /* GessoApp.swift */,
+				94356CE78570DCE25C65AB0D /* ImageProcessor.swift */,
+				AAB8020934B39E6A277A3DCB /* NativeConfig.swift */,
+				4DD6223EB1DDA28D933134E0 /* SchemeHandler.swift */,
+				B3285DE24AC3B483EF5B6694 /* TransferRegistry.swift */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		F19C5A585675DB7EA87F14DF = {
+			isa = PBXGroup;
+			children = (
+				11483E4762FD3F8D32EF39E9 /* Resources */,
+				D492D13DDE1B0FCB673E0005 /* Sources */,
+				AE97DEF3E4EB7E0DB4BD8285 /* Tests */,
+				2778ED4AA2A3DAD5DA36C7AC /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		923D3F8E6D1AF17D7F2BB7A2 /* Gesso */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 248F047E8454AD5874877394 /* Build configuration list for PBXNativeTarget "Gesso" */;
+			buildPhases = (
+				BCC821998C54E3D56362917A /* Sources */,
+				B05E4F17445BB14EE8CA0ACC /* Resources */,
+				FF83A0A6EB89DF9DD46E2E16 /* Bundle offline web editor */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Gesso;
+			packageProductDependencies = (
+			);
+			productName = Gesso;
+			productReference = 92930C1F8164315CBCB79D2A /* Gesso.app */;
+			productType = "com.apple.product-type.application";
+		};
+		C46400318CDAD9AD9292D827 /* GessoTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 092233F3BC79B17A0072AF63 /* Build configuration list for PBXNativeTarget "GessoTests" */;
+			buildPhases = (
+				E31BC50C922A8273A9D5B514 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8FA531A4A5DB2F1226479255 /* PBXTargetDependency */,
+			);
+			name = GessoTests;
+			packageProductDependencies = (
+			);
+			productName = GessoTests;
+			productReference = 8F02E80AD12C391AB9589A94 /* GessoTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		3771C8A4F8D6C987F8FACB4D /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					923D3F8E6D1AF17D7F2BB7A2 = {
+						ProvisioningStyle = Automatic;
+					};
+					C46400318CDAD9AD9292D827 = {
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 25CAC114837C2E0E146C66C9 /* Build configuration list for PBXProject "Gesso" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = F19C5A585675DB7EA87F14DF;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2778ED4AA2A3DAD5DA36C7AC /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				923D3F8E6D1AF17D7F2BB7A2 /* Gesso */,
+				C46400318CDAD9AD9292D827 /* GessoTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B05E4F17445BB14EE8CA0ACC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E571D8E561F521CB95695885 /* Assets.xcassets in Resources */,
+				0A2AD57FAE3B016103A309A2 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		FF83A0A6EB89DF9DD46E2E16 /* Bundle offline web editor */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle offline web editor";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/scripts/copy-web.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		BCC821998C54E3D56362917A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1B7979A1A1BA44CB33E77599 /* Bridge.swift in Sources */,
+				2F8DE3941AC28FF7455C2CEC /* DebugSmoke.swift in Sources */,
+				E58B8A205BBD7DF92C71F2CD /* GessoApp.swift in Sources */,
+				B8526B15D60D6D432E798597 /* ImageProcessor.swift in Sources */,
+				DD18C9B30AB875F597D3D438 /* NativeConfig.swift in Sources */,
+				053569F13A8642719CFF2ADA /* SchemeHandler.swift in Sources */,
+				D4572E9B7F784FEBE5A54BE0 /* TransferRegistry.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E31BC50C922A8273A9D5B514 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				74C59D0F206968E10BF37553 /* NativeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		8FA531A4A5DB2F1226479255 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 923D3F8E6D1AF17D7F2BB7A2 /* Gesso */;
+			targetProxy = 1572DE394FF78D4118216340 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		12A8E823EC5C3D8495D0AF2C /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		3669CD42223013A0F5361100 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		5CAA57072F9E1F43DCED7762 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = quest.elsewhere.gesso;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		6DE2985202B2256CBA3902E5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = quest.elsewhere.gesso.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Gesso.app/Gesso";
+			};
+			name = Debug;
+		};
+		77B706643CD745AA6938ED7B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = quest.elsewhere.gesso.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Gesso.app/Gesso";
+			};
+			name = Release;
+		};
+		B0D94540DB518380D5EF58C6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = quest.elsewhere.gesso;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		092233F3BC79B17A0072AF63 /* Build configuration list for PBXNativeTarget "GessoTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6DE2985202B2256CBA3902E5 /* Debug */,
+				77B706643CD745AA6938ED7B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		248F047E8454AD5874877394 /* Build configuration list for PBXNativeTarget "Gesso" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B0D94540DB518380D5EF58C6 /* Debug */,
+				5CAA57072F9E1F43DCED7762 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		25CAC114837C2E0E146C66C9 /* Build configuration list for PBXProject "Gesso" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3669CD42223013A0F5361100 /* Debug */,
+				12A8E823EC5C3D8495D0AF2C /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 3771C8A4F8D6C987F8FACB4D /* Project object */;
+}

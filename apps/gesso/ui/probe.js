@@ -5,6 +5,7 @@
 // big canvas runs last so a crash there keeps the rest on screen.
 
 import { MAX_SIDE, WORK_MAX_PIXELS } from '../lib/image-io.js';
+import { isNative, call, putFile, fetchFile, release, clipboardWrite } from './platform.js';
 
 // 64x64 HEIC (libheif + x265, Main Still Picture, 404 bytes): left half red
 // (231, 40, 30), right half blue (30, 60, 220).
@@ -21,6 +22,8 @@ const info = (value) => ({ status: 'INFO', value });
 const yes = (b) => (b ? 'yes' : 'no');
 
 const CHECKS = [
+  ...(isNative ? [['Native bridge', nativeBridge], ['Origin / secure context', nativeOrigin],
+    ['Bundled module worker', bundledWorker], ['ArrayBuffer POST transfer', nativeTransfer]] : []),
   ['WebGL2', webgl2],
   ['MAX_TEXTURE_SIZE', maxTexture],
   ['RGBA16F framebuffer', () => framebuffer('RGBA16F')],
@@ -69,6 +72,7 @@ export async function runProbe(root = document.body) {
   fallback.setAttribute('aria-label', 'Report');
   page.append(head, list, fallback);
   root.append(page);
+  if (isNative) installKeyboardCheck(doc, page);
 
   const results = [];
   const report = () => [
@@ -84,7 +88,8 @@ export async function runProbe(root = document.body) {
     let ok = false;
     try {
       // first await: still inside the tap, as iOS requires
-      await navigator.clipboard.writeText(text);
+      if (isNative) await clipboardWrite(text);
+      else await navigator.clipboard.writeText(text);
       ok = true;
     } catch {
       // No clipboard API (an http:// address is not a secure context). iOS will not
@@ -305,6 +310,7 @@ async function heicDecode() {
 // ------------------------------------------------------------------ platform
 
 async function shareFiles() {
+  if (isNative) return info('PhotoKit Save to Photos and native Share (test from the editor)');
   const hasShare = typeof navigator.share === 'function';
   const jpeg = await twoTone(16, 16, 'image/jpeg');
   const file = new File([jpeg], 'gesso-probe.jpg', { type: 'image/jpeg' });
@@ -315,6 +321,7 @@ async function shareFiles() {
 }
 
 async function storagePersist() {
+  if (isNative) return info('App-owned persistent WKWebsiteDataStore; tested by the IndexedDB row');
   const s = navigator.storage;
   if (!s?.persist) return info('persist() missing');
   const before = await s.persisted?.();
@@ -415,8 +422,60 @@ function coalesced() {
 }
 
 function displayMode() {
+  if (isNative) return info('native app (bundled offline shell, no service worker)');
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   return info(standalone ? 'standalone (Home Screen app)' : 'browser tab');
+}
+
+async function nativeBridge() {
+  const p = await call('ping');
+  return p?.api === 1 ? pass(`${p.app} (${p.build}) · web ${p.web} · ${p.os}`) : fail('API mismatch');
+}
+
+function nativeOrigin() {
+  const origin = `${location.protocol}//${location.host}`;
+  const value = `${origin} · secure context ${yes(globalThis.isSecureContext)}`;
+  return origin === 'gesso://localhost' ? pass(value) : fail(value);
+}
+
+async function nativeTransfer() {
+  const bytes = new Uint8Array(1024 * 1024);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = (i * 31 + 17) & 255;
+  const ref = await putFile(new Blob([bytes], { type: 'application/octet-stream' }), 'probe.bin');
+  try {
+    const file = await fetchFile(ref);
+    const got = new Uint8Array(await file.arrayBuffer());
+    return got.length === bytes.length && got.every((v, i) => v === bytes[i])
+      ? pass('1 MiB ArrayBuffer POST + GET, byte-exact') : fail('transfer bytes changed');
+  } finally { await release(ref.url); }
+}
+
+function bundledWorker() {
+  return new Promise((resolve) => {
+    let worker;
+    const timer = setTimeout(() => done(fail('module worker timed out')), 8000);
+    function done(result) { clearTimeout(timer); worker?.terminate(); resolve(result); }
+    try {
+      worker = new Worker(new URL('../workers/export-worker.js', import.meta.url), { type: 'module' });
+      worker.onmessage = ({ data }) => done(data.type === 'blob' && data.blob?.type === 'image/jpeg'
+        ? pass(`JPEG ${data.blob.size} bytes through the bundled worker`) : fail(data.message || 'worker returned no JPEG'));
+      worker.onerror = (e) => done(fail(e.message || 'worker failed to load'));
+      const buffer = new Uint8ClampedArray(64 * 48 * 4).fill(255).buffer;
+      worker.postMessage({ type: 'encode', buffer, w: 64, h: 48, quality: 0.9 }, [buffer]);
+    } catch (err) { done(fail(err.message)); }
+  });
+}
+
+function installKeyboardCheck(doc, page) {
+  const label = el(doc, 'label', 'probe__meta', 'Keyboard check: tap and type, then dismiss. ');
+  const input = el(doc, 'input');
+  input.type = 'text'; input.placeholder = 'Test keyboard'; input.style.fontSize = '17px';
+  const result = el(doc, 'p', 'probe__meta');
+  const baseline = innerHeight;
+  const update = () => { result.textContent = `window ${innerHeight} · visualViewport ${Math.round(visualViewport?.height ?? innerHeight)} · launch ${baseline}`; };
+  input.addEventListener('focus', update); input.addEventListener('blur', update);
+  globalThis.visualViewport?.addEventListener('resize', update);
+  label.append(input); page.append(label, result); update();
 }
 
 function screenSize() {

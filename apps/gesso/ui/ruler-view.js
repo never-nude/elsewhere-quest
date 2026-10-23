@@ -1,9 +1,10 @@
 // The ruler: the one amount control in every tool. Ticks slide under a fixed
 // needle; the drag is relative (touching never makes the value jump), right always
-// means more, and it sticks briefly at the default with a needle flash instead of
-// a haptic tick. Double-tap or "Reset" returns to the default.
+// means more, and it sticks briefly at the default with a needle flash and a
+// native haptic tick. Double-tap or "Reset" returns to the default.
 
 import { stepValue, formatValue, valueText, nudge } from '../lib/ruler.js';
+import { haptic } from './platform.js';
 
 const DOUBLE_TAP_MS = 320;
 const TAP_SLOP = 6;
@@ -84,7 +85,7 @@ export function createRulerView(container, { onStart, onChange, onEnd, onReset, 
     drag.x = e.clientX;
     drag.t = e.timeStamp;
     detent = r.detentState;
-    if (r.ticked) flash();
+    if (r.ticked) { flash(); haptic('tick'); }
     if (r.value !== value) {
       value = r.value;
       draw();

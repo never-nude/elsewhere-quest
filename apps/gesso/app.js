@@ -18,6 +18,7 @@ import light from './ui/tools/light.js';
 import color from './ui/tools/color.js';
 import remove from './ui/tools/remove.js';
 import text from './ui/tools/text.js';
+import { isNative, pickPhoto } from './ui/platform.js';
 
 const $ = (s) => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -86,7 +87,7 @@ async function main() {
   });
 
   if (!renderer.ok) {
-    fatal('Gesso needs WebGL, which this browser (or Lockdown Mode) has turned off.');
+    fatal(isNative ? 'Gesso needs WebGL, which Lockdown Mode may have turned off.' : 'Gesso needs WebGL, which this browser (or Lockdown Mode) has turned off.');
     return;
   }
 
@@ -94,6 +95,26 @@ async function main() {
   // still opening (up to 3 s if IndexedDB hangs) is kept for when the editor is ready.
   const fileInput = $('#file');
   let earlyFile = null;
+  let editor = null;
+  let receiveFile = (file) => { earlyFile = file; };
+  let picking = false;
+  // Labels and every programmatic chooser route through this input. Cancelling
+  // its click suppresses WebKit's picker without changing the Safari paths.
+  fileInput.addEventListener('click', (e) => {
+    if (!isNative) return;
+    e.preventDefault();
+    if (picking) return;
+    picking = true;
+    pickPhoto({ maxPixels: workCap(), input: fileInput }).then((file) => {
+      if (file) receiveFile(file);
+    }).catch((err) => {
+      console.warn('photo picker failed', err);
+      if (err?.code === 'cancelled') return;
+      const message = err?.code === 'busy' ? 'Finish the open sheet, then choose a photo.' : "This photo couldn't be opened. Please choose it again.";
+      if (editor?.committed) editor.toast(message, 4000);
+      else $('#hint').textContent = message;
+    }).finally(() => { picking = false; });
+  }, true);
   const keepEarly = () => { earlyFile = fileInput.files?.[0] ?? earlyFile; fileInput.value = ''; };
   fileInput.addEventListener('change', keepEarly);
   // The label needs no JS to open the picker from a tap; as a button (index.html) it
@@ -108,7 +129,6 @@ async function main() {
   if (!store.available) $('#hint').textContent = "Edits won't be kept if you leave Gesso.";
 
   const tools = { home, crop, light, color, remove, text };
-  let editor = null;
   const autosave = createAutosave(store, () => editor, { debounceMs: 300 });
   const hints = createHints(() => editor);
 
@@ -131,6 +151,7 @@ async function main() {
 
   // ---- import ------------------------------------------------------------------
   fileInput.removeEventListener('change', keepEarly);
+  receiveFile = importFile;
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files?.[0];
     fileInput.value = '';
@@ -146,8 +167,10 @@ async function main() {
     $('#busy span').textContent = 'Opening…';
     try {
       let decoded;
+      let sourceFile = file;
       try {
         decoded = await decodeForEditing(file, { maxPixels: workCap() });
+        sourceFile = decoded.sourceFile ?? file;
         renderer.loadSource(decoded.bitmap);
       } catch (err) {
         decoded?.bitmap?.close?.();
@@ -157,15 +180,15 @@ async function main() {
         if (err?.unsupported || renderer.lost || workCap() <= WORK_FALLBACK_PIXELS) throw err;
         // Out of memory or GPU trouble at full size: step down for good, once the
         // smaller size has worked.
-        decoded = await decodeForEditing(file, { maxPixels: WORK_FALLBACK_PIXELS });
+        decoded = await decodeForEditing(sourceFile, { maxPixels: WORK_FALLBACK_PIXELS });
         renderer.loadSource(decoded.bitmap);
         stepDownWorkCap();
       }
       decoded.bitmap.close();
-      currentFile = file;
+      currentFile = decoded.sourceFile ?? sourceFile;
       const id = `d${Date.now().toString(36)}`;
       editor.begin({ id, info: { type: decoded.type, natW: decoded.natW, natH: decoded.natH, name: file.name }, now: Date.now() });
-      autosave.startDraft(id, file); // never rejects; the original is stored in the background
+      autosave.startDraft(id, currentFile); // normalized RAW pixels are the restorable source
       if (decoded.downscaled) {
         const mp = Math.round((renderer.size.width * renderer.size.height) / 1e5) / 10;
         editor.panel.showTip(`Editing at ${mp} MP`);
@@ -266,13 +289,13 @@ async function main() {
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   let hideInstall = false;
   try { hideInstall = localStorage.getItem('gesso:hideInstall') === '1'; } catch { /* ignore */ }
-  if (!standalone && !hideInstall) $('#install').hidden = false;
+  if (!isNative && !standalone && !hideInstall) $('#install').hidden = false;
   $('#install-hide').addEventListener('click', () => {
     $('#install').hidden = true;
     try { localStorage.setItem('gesso:hideInstall', '1'); } catch { /* ignore */ }
   });
 
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  if (!isNative && 'serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('./sw.js').then((reg) => {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') reg.update().catch(() => {});
@@ -281,12 +304,13 @@ async function main() {
   }
   // openStore() asks for persistent storage (store.persistent).
 
+  const flush = () => { editor.commitTyping(); return autosave.flush(); };
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') { editor.commitTyping(); autosave.flush(); }
+    if (document.visibilityState === 'hidden') flush();
   });
-  window.addEventListener('pagehide', () => { editor.commitTyping(); autosave.flush(); });
+  window.addEventListener('pagehide', flush);
 
-  window.gesso = { editor, renderer, importFile }; // handy for the on-device probe and tests
+  window.gesso = { editor, renderer, importFile, flush }; // native lifecycle, probe and tests
 }
 
 function hasEdits(ed) {

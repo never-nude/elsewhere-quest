@@ -23,6 +23,8 @@ import { buildCostMap, createLasso, transformPolygon, polygonArea, polygonRecord
 import { DEFAULT_AMOUNT, entryFromRuler, rulerFromEntry, outlineLabel, isOutlineEntry, traceAnchors, newEntryId } from '../../lib/outline-paint.js';
 import { rulerSpec, dialChip, rulerEdit, photoDragEnabled, enablePhotoDrag, createPhotoScrub } from './dials.js';
 import { createMagnifier, drawTrace } from '../magnifier.js';
+import { createSubjectLift } from '../subject.js';
+import { subjectLiftAvailable, haptic } from '../platform.js';
 
 const DIALS = ['brightness', 'contrast', 'highlights', 'shadows'];
 const BRUSH_PT = 48; // on-screen brush diameter
@@ -66,6 +68,7 @@ let adjusting = null;
 let rulerDrag = null;
 
 const clamp100 = (v) => Math.max(-100, Math.min(100, Math.round(v)));
+const subject = createSubjectLift();
 
 function nudge(ed, changes, label) {
   let next = ed.committed;
@@ -81,6 +84,7 @@ export default {
   get claimsHold() { return selected === 'outline'; },
 
   open(ed, opts = {}) {
+    subject.cancel();
     selected = opts.dial && DIALS.includes(opts.dial) ? opts.dial : 'brightness';
     lastDial = selected;
     stroke = null;
@@ -90,6 +94,7 @@ export default {
   },
 
   close(ed) {
+    subject.cancel();
     stroke = null;
     ring = null;
     dropRulerDrag(ed); // Done or Cancel under the other hand, the ruler still held
@@ -104,6 +109,7 @@ export default {
   // or taken the loop the held ruler was setting off the top — or put a loop
   // at another amount (or direction) on top, which the next loop then takes.
   onHistory(ed) {
+    subject.cancel();
     rulerDragLost(ed);
     follow(ed);
     if (selected === 'outline') scheduleCostMap(ed);
@@ -117,7 +123,7 @@ export default {
     const n = ed.doc.paint.length;
     return {
       title: 'Light',
-      hint: outline ? 'Loop around it. The line snaps to edges.' : painting ? 'Drag on the photo to paint light.' : 'Tap Auto, or pick a dial and drag.',
+      hint: subject.pending ? 'Finding the subject…' : outline ? (subjectLiftAvailable() ? 'Tap it, or loop around it. The line snaps to edges.' : 'Loop around it. The line snaps to edges.') : painting ? 'Drag on the photo to paint light.' : 'Tap Auto, or pick a dial and drag.',
       cancel: true,
       done: true,
       quick: [
@@ -141,6 +147,7 @@ export default {
   },
 
   onQuick(ed, id) {
+    subject.cancel(ed);
     if (id === 'auto') {
       const stats = analyze(ed.readOutput({ maxSide: 512 }));
       const L = autoLight(stats);
@@ -159,6 +166,7 @@ export default {
   },
 
   onDial(ed, id) {
+    subject.cancel(ed);
     // Outline is a switch: tapping it again turns it off (back to the dial).
     const next = id === 'outline' && selected === 'outline' ? lastDial : id;
     select(ed, next);
@@ -166,12 +174,14 @@ export default {
   },
 
   onSegment(ed, id) {
+    subject.cancel(ed);
     paintMode = id;
     // The next loop's direction follows the segment; the amount stays.
     if (selected === 'outline') amount = id === 'darken' ? -Math.abs(amount) : Math.abs(amount);
   },
 
   onRuler(ed, phase, value) {
+    subject.cancel(ed);
     if (selected === 'outline') return amountRuler(ed, phase, value);
     if (phase === 'end') {
       strokeCount++;
@@ -189,6 +199,7 @@ export default {
   },
 
   onGesture(ed, g) {
+    if (['tap', 'drag-start', 'hold-start', 'pinch-start', 'drag-cancel'].includes(g.type)) subject.cancel(ed);
     if (selected === 'outline') return traceGesture(ed, g);
     if (selected === 'paint') return paintGesture(ed, g);
     if (g.type === 'drag-start') {
@@ -304,6 +315,9 @@ function toAnalysis(ed, x, y, kx, ky) {
 
 function traceGesture(ed, g) {
   switch (g.type) {
+    case 'tap':
+      if (typeof g.target === 'string' && g.target.startsWith('caption:')) return false;
+      return subjectLiftAvailable() ? subject.tap(ed, g.x, g.y, { tool: 'light', commit: commitOutline, isCurrent: () => selected === 'outline' }) : false;
     case 'drag-start':
     case 'hold-start': // claimsHold: a still finger starts the loop too
       return startTrace(ed, g);
@@ -392,6 +406,12 @@ function finishTrace(ed, t) {
   // A tap-sized loop, or a line out and back, encloses nothing worth a step.
   const areaPt = (polygonArea(poly) / (kx * ky)) * ed.view.scale ** 2;
   if (areaPt < TINY_PT2) return true;
+  const toSource = multiply(outputToSource(st.crop, st.source.w, st.source.h), [1 / kx, 0, 0, 1 / ky, 0, 0]);
+  return commitOutline(ed, polygonRecord(transformPolygon(poly, toSource)));
+}
+
+function commitOutline(ed, polyS) {
+  const st = ed.committed;
   // The segment names the step (the ruler's sign agrees, except at 0). At 0 a
   // loop would paint nothing: no step while the ruler shows that 0; a 0 no
   // ruler shows any more (its loop undone, the chip off and on) is nothing to
@@ -399,12 +419,12 @@ function finishTrace(ed, t) {
   if (!amount && !adjustable(ed)) amount = paintMode === 'darken' ? -DEFAULT_AMOUNT : DEFAULT_AMOUNT;
   const { mode, amount: a } = entryFromRuler(amount, paintMode);
   if (a === 0) return true;
-  const toSource = multiply(outputToSource(st.crop, st.source.w, st.source.h), [1 / kx, 0, 0, 1 / ky, 0, 0]);
   const id = newEntryId();
-  const entry = { kind: 'outline', mode, poly: polygonRecord(transformPolygon(poly, toSource)), amount: a };
+  const entry = { kind: 'outline', mode, poly: polyS, amount: a };
   ed.pools = { ...ed.pools, strokes: { ...ed.pools.strokes, [id]: entry } };
   adjusting = mode === 'erase' ? null : entry.poly;
   ed.commit({ ...st, paint: [...st.paint, id] }, outlineLabel(mode));
+  haptic('medium');
   if (mode !== 'erase') ed.hint('outline-done', { tool: 'light' });
   return true;
 }

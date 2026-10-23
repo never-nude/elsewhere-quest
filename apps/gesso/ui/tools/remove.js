@@ -38,6 +38,8 @@ import {
 } from '../../lib/remove-plan.js';
 import { createHealClient } from '../heal-client.js';
 import { createMagnifier, drawTrace } from '../magnifier.js';
+import { createSubjectLift } from '../subject.js';
+import { subjectLiftAvailable, haptic } from '../platform.js';
 
 const SPEC = RULERS.removeSize;
 const CORAL = 'rgba(255, 77, 109, 0.45)';
@@ -81,6 +83,7 @@ let shimmerTimer = 0;
 let shimmerMask = ''; // the mask #shimmer has now (set only on change: it can be long)
 
 const client = () => (heal ??= createHealClient());
+const subject = createSubjectLift();
 
 export default {
   id: 'remove',
@@ -90,6 +93,7 @@ export default {
   get claimsHold() { return dial === 'outline'; },
 
   open(ed) {
+    subject.cancel();
     size = DEFAULT_SIZE;
     dial = 'size';
     stroke = null;
@@ -106,6 +110,7 @@ export default {
   },
 
   close(ed, { cancel } = {}) {
+    subject.cancel();
     if (cancel) dropSession(ed.session);
     stroke = null;
     ringDrag = null;
@@ -119,6 +124,7 @@ export default {
   // An Undo or Redo under a fill still computing makes that fill moot (it would be
   // dropped on landing): stop it now so the next fill doesn't wait behind it.
   onHistory(ed) {
+    subject.cancel();
     if (running && ed.committed?.remove !== running.under) heal?.cancel();
     if (dial === 'outline') scheduleCostMap(ed); // the photo under the loop may have changed
   },
@@ -137,7 +143,7 @@ export default {
     const filling = outline && jobs.some((j) => j.kind === 'outline');
     return {
       title: 'Remove',
-      hint: filling ? 'Filling inside the outline…' : outline ? 'Loop around it. The line snaps to edges.' : 'Tap a spot, or rub over something.',
+      hint: subject.pending ? 'Finding the subject…' : filling ? 'Filling inside the outline…' : outline ? (subjectLiftAvailable() ? 'Tap it, or loop around it. The line snaps to edges.' : 'Loop around it. The line snaps to edges.') : 'Tap a spot, or rub over something.',
       cancel: true,
       done: true,
       quick: [
@@ -161,6 +167,7 @@ export default {
   },
 
   onQuick(ed, id) {
+    subject.cancel(ed);
     if (Object.hasOwn(PRESETS, id)) {
       size = PRESETS[id];
       setDial(ed, 'size');
@@ -171,6 +178,7 @@ export default {
   },
 
   onDial(ed, id) {
+    subject.cancel(ed);
     // Outline is a switch: tapping it again turns it off (back to the brush).
     if (id === 'outline') setDial(ed, dial === 'outline' ? 'size' : 'outline');
     else if (id === 'size' || id === 'source') setDial(ed, id);
@@ -178,6 +186,7 @@ export default {
   },
 
   onRuler(ed, phase, value) {
+    subject.cancel(ed);
     if (phase === 'start') sizing = true;
     else if (phase === 'reset') { size = SPEC.def; sizing = false; }
     else {
@@ -207,8 +216,12 @@ export default {
   },
 
   onGesture(ed, g) {
+    if (['tap', 'drag-start', 'hold-start', 'pinch-start', 'drag-cancel'].includes(g.type)) subject.cancel(ed);
     switch (g.type) {
       case 'tap':
+        if (g.target !== 'ring' && dial === 'outline' && subjectLiftAvailable()) {
+          return subject.tap(ed, g.x, g.y, { tool: 'remove', commit: commitOutline, isCurrent: () => dial === 'outline' });
+        }
         return g.target === 'ring' ? true : tap(ed, g.x, g.y);
       case 'drag-start':
       case 'hold-start': // only while Outline is on (claimsHold): a still finger starts the loop too
@@ -413,12 +426,18 @@ function finishTrace(ed, t) {
   // Kept at 0.1 px, exactly as the pool entry stores it, so a retry after a
   // relaunch rasterises the very same pixels.
   const polyS = Float32Array.from(polygonRecord(transformPolygon(poly, toSource)));
+  return commitOutline(ed, polyS);
+}
+
+function commitOutline(ed, polygon) {
+  const polyS = Float32Array.from(polygon);
   const { width: W, height: H } = ed.renderer.size;
   const box = outlineBox(polyS, W, H);
   if (!box) return true;
   if (exceedsAreaCap(box, W, H)) {
     // The finger can't be stopped mid-loop like a rub, so the cap is judged on lift.
     ed.panel.showTip(CAP_TIP);
+    haptic('warning');
     return true;
   }
   const job = { kind: 'outline', poly: polyS, seed: 1, attempt: 0 };
@@ -845,6 +864,7 @@ async function land(ed, tile, rec, { under, gen, replace = false, label } = {}) 
   // A fill that lands after Done is still Remove's step, whatever tool is open, and
   // goes in under that tool's session so its Cancel keeps it.
   ed.commitBelow((s) => (s.remove === under ? { ...s, remove } : s), label, { tool: 'remove', session: running?.job.session });
+  if (rec.kind === 'outline') haptic('medium');
   return true;
 }
 

@@ -23,11 +23,12 @@ deploy step strips `design/`.
   the quick row with a backdrop segment (Studio, Dusk/Charcoal, Blur, Photo…),
   subject cut along the outline with a soft edge and a contact shadow. Steps
   7–8 in `mockups/story-coffee-12-steps.jpg`.
-- Dedicated iOS app: owner wants one. Recommended shape (pending the owner's
-  A/B answer): a SwiftUI shell around a WKWebView running Gesso from the
-  bundle, with native bridges for PhotoKit import/save, HEIC/ProRAW decode,
-  haptics, and Vision subject lift (tap-to-select feeding the Outline mask
-  path). A full native rewrite is option B. Xcode work happens on the Mac.
+- Dedicated iOS app: owner chose option A, the SwiftUI/WKWebView shell around
+  the bundled web editor with PhotoKit import/save, RAW decode, sharing,
+  haptics and Vision subject lift through Outline. Bundle ID
+  `quest.elsewhere.gesso`, project at `apps/gesso-ios/`, permanent origin
+  `gesso://localhost` (confirmed 2026-10-20). The synthesized design and exact
+  bridge contract are in `../ios/DESIGN.md` and `../ios/BRIDGE.md`.
 
 ## Review record
 `review/` holds the three verdict summaries from the final adversarial review

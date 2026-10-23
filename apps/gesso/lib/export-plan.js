@@ -142,6 +142,22 @@ export function shareOutcome(error) {
   return 'failed';
 }
 
+// PhotoKit confirms a write; a share only confirms the activity it completed.
+// A Files/AirDrop completion must leave the unsaved-edit guard in place.
+export function photosOutcome(result, error = null) {
+  if (error?.code === 'cancelled') return 'cancelled';
+  const reason = error?.code ?? result?.reason;
+  if (reason === 'denied' || reason === 'restricted') return reason;
+  return !error && result?.saved === true ? 'saved' : 'failed';
+}
+
+export function nativeShareOutcome(result, error = null) {
+  if (error) return error.code === 'cancelled' ? 'cancelled' : 'failed';
+  if (result?.completed === false) return 'cancelled';
+  if (result?.completed !== true) return 'failed';
+  return result.activity === 'com.apple.UIKit.activity.SaveToCameraRoll' ? 'saved' : 'shared';
+}
+
 // The preview canvas: the output fitted inside boxW x boxH CSS px (never larger
 // than the output itself), and the pixel side to render it at for this DPR.
 export function previewFit(outW, outH, boxW, boxH, dpr = 1) {

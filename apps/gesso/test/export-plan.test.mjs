@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   JPEG_TYPE, JPEG_QUALITY, RENDER_SHARE, ENCODE_CEILING, bandMatrix, bandRendered, renderProgress, encodeEstimateMs,
-  coverRect, clipToBand, bandRaster, compositeOver, shareRoute, shareOutcome, previewFit,
+  coverRect, clipToBand, bandRaster, compositeOver, shareRoute, shareOutcome, photosOutcome, nativeShareOutcome, previewFit,
   swipeCloses, sheetOffset, SWIPE_CLOSE_PT, SWIPE_FLICK_MIN_PT,
 } from '../lib/export-plan.js';
 import { bandPlan } from '../lib/image-io.js';
@@ -180,6 +180,29 @@ test('shareOutcome: resolved saves, AbortError cancels, anything else falls back
   assert.equal(shareOutcome(notAllowed), 'failed');
   assert.equal(shareOutcome(new TypeError('files unsupported')), 'failed');
   assert.equal(shareOutcome('weird'), 'failed');
+});
+
+test('native Photos only marks a confirmed write saved and preserves actionable denials', () => {
+  assert.equal(photosOutcome({ saved: true }), 'saved');
+  assert.equal(photosOutcome({ saved: false, reason: 'denied' }), 'denied');
+  assert.equal(photosOutcome({ saved: false, reason: 'restricted' }), 'restricted');
+  assert.equal(photosOutcome({ saved: false, reason: 'failed' }), 'failed');
+  assert.equal(photosOutcome(null, { code: 'denied' }), 'denied');
+  assert.equal(photosOutcome(null, { code: 'cancelled' }), 'cancelled');
+  assert.equal(photosOutcome({ saved: true }, { code: 'timeout' }), 'failed', 'an error never confirms a save');
+  for (const malformed of [null, {}, { saved: 1 }, { saved: 'true' }]) assert.equal(photosOutcome(malformed), 'failed');
+});
+
+test('native share distinguishes Photos, other activities, cancellation and failure', () => {
+  assert.equal(nativeShareOutcome({ completed: true, activity: 'com.apple.UIKit.activity.SaveToCameraRoll' }), 'saved');
+  for (const activity of ['com.apple.UIKit.activity.AirDrop', 'com.apple.DocumentManagerUICore.SaveToFiles', null]) {
+    assert.equal(nativeShareOutcome({ completed: true, activity }), 'shared');
+  }
+  assert.equal(nativeShareOutcome({ completed: false, activity: null }), 'cancelled');
+  assert.equal(nativeShareOutcome(null, { code: 'cancelled' }), 'cancelled');
+  assert.equal(nativeShareOutcome(null, { code: 'failed' }), 'failed');
+  assert.equal(nativeShareOutcome({ completed: true }, { code: 'timeout' }), 'failed');
+  assert.equal(nativeShareOutcome({ completed: 'true' }), 'failed');
 });
 
 test('previewFit fits the output in the box, never upscales, and renders at DPR', () => {
