@@ -169,9 +169,16 @@ test('the platform module is inert without a bridge and its web picker uses the 
   assert.equal(platform.isNative, false);
   assert.equal(platform.native, null);
   assert.equal(platform.subjectLiftAvailable(), false);
+  assert.equal(platform.subjectMatteAvailable(), false);
   let clicked = 0;
   assert.equal(await platform.pickPhoto({ input: { click: () => clicked++ } }), null);
   assert.equal(clicked, 1);
   platform.haptic('success');
   assert.deepEqual(await platform.subjectAt(null, 0, 0), { found: false });
+  assert.deepEqual(await platform.subjectMatte(null), { found: false });
+});
+
+test('optional subject matte has the same bounded Vision timeout as outlines', () => {
+  assert.equal(TIMEOUTS['subject.matte'], 25000);
+  assert.equal(TIMEOUTS['subject.mask'], 25000);
 });

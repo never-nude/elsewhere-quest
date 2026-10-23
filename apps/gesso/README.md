@@ -3,6 +3,32 @@
 A simple, Photoshop-style photo editor for iPhone. Everything stays on your
 device.
 
+## Creative Studio
+
+The owner's October 23 feedback changes Gesso's direction toward photo artwork
+and compositing. The new `/gesso/studio/` experience is the native app's normal
+workspace; the original correction editor described below remains at `/gesso/`.
+The [product brief and forum research](design/creative-studio.md) explain the
+nine capabilities to develop in depth and what has been deferred.
+
+Studio's first workflow combines independent image layers, movable/rotatable
+objects, magnetic outline selection, editable masks, Reveal/Hide brushes, local
+light/color, opacity/blending and shadows. Lifting a thumb **pauses** an outline;
+touch again to continue and use **Close outline** to finish. Native subject
+selection seeds a soft grayscale matte rather than an exterior polygon.
+
+Projects autosave separately with layer recipes, immutable masks and history.
+Files handed to Studio are retained; native RAW imports are already developed
+working PNGs, rather than the camera's original RAW file. Studio works and exports at
+up to **2048 pixels on the long edge**, with at most eight image layers. Full
+resolution multi-layer export, Curves/HSL, paint/text layers, advanced edge
+refinement and generation remain follow-up work. The old correction editor's
+larger single-photo output limit does not apply to Studio.
+
+For the browser preview, serve `apps/` and visit
+`http://127.0.0.1:4174/gesso/studio/`. For real Canvas2D/IndexedDB and interaction
+checks, run `node e2e/studio.mjs` after the timing-sensitive legacy suite.
+
 Gesso is the white primer an artist lays down before painting. The app is
 built around one promise, held as an acceptance test rather than a slogan:
 **you know where everything is within two seconds, you finish a real edit
@@ -12,7 +38,7 @@ It lives in this repo as a standalone web app (no shared code with the
 Elsewhere prototype, no dependencies, no build step, no server) and installs
 to the Home Screen like a native app.
 
-## What it does
+## Correction editor
 
 One screen. Five tools and four actions, always visible, always labelled, never
 moving:
@@ -91,7 +117,7 @@ app, so it does not register a service worker. Design and wire contract:
 
 Build and native test instructions live in [`../gesso-ios/README.md`](../gesso-ios/README.md).
 
-## Honesty clauses
+## Correction editor limits and privacy
 
 - Nothing is uploaded. Photos, drafts and history stay in this browser's
   storage on your phone; deleting the Home Screen app deletes them.

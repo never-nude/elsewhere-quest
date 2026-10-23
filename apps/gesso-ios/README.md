@@ -6,7 +6,9 @@ the API documented in [BRIDGE.md](../gesso/ios/BRIDGE.md). Architecture and rele
 choices are in [DESIGN.md](../gesso/ios/DESIGN.md).
 
 The app identifier is `quest.elsewhere.gesso`. Its permanent storage origin is
-`gesso://localhost`, entry `/gesso/`. Changing either requires an explicit migration.
+`gesso://localhost`. Production launches `/gesso/studio/index.html`; `/gesso/` remains the
+legacy editor and DEBUG smoke entry. The legacy IndexedDB draft is preserved.
+Changing the app identifier or origin requires an explicit migration.
 No signing team is committed. The project supports iPhone on iOS 17 or later.
 
 ## Build
@@ -54,6 +56,20 @@ DEBUG launch arguments:
   database and removes that database after checking reload. The runner does not
   access the photo library.
 - `-GessoStubPicker` and `-GessoStubPhotos`: Simulator-only picker/save fixtures.
+
+Native hosts advertise `subject-matte` for soft subject masks. `subject.matte`
+returns a grayscale PNG through the existing issued-file transfer path, preserving
+holes and soft coverage instead of reducing the subject to an exterior polygon.
+The original `subject.mask` outline API remains available.
+The extension was validated on 2026-10-23: eleven Simulator XCTest cases pass,
+including fractional coverage/interior-hole PNG pixels and production Studio
+startup; 37 JS bridge/adapter tests pass. An isolated WKWebView test saves a
+masked layer to IndexedDB, reopens it in a new engine, checks identical exported
+pixels with alpha 128, 0 and 255, and verifies persisted undo/redo history. The
+nonpersistent iOS data store rejects raw Blob/File puts with `UnknownError`;
+the engine's byte-storage fallback passes this test. A real-photo Mac Vision run also
+retained soft coverage and interior background gaps. This does not establish
+full-resolution hair/fur quality on the phone.
 
 The smoke runner and stubs are excluded from Release builds. Unsupported Vision
 inference on the Simulator is a device-validation item.

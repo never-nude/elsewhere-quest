@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+  <meta name="theme-color" content="#171614">
+  <title>Gesso Studio</title>
+  <link rel="icon" href="../icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./studio.css">
+</head>
+<body>
+  <div id="studio">
+    <header class="topbar">
+      <button id="projects" class="project-button" aria-label="Open projects"><span class="wordmark">gesso<span class="wordmark-dot">.</span></span><span id="project-name">Studio</span><span class="chevron">⌄</span></button>
+      <div class="history-buttons">
+        <button id="undo" class="icon-button" aria-label="Undo" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7 4 12l5 5M5 12h10a5 5 0 0 1 5 5"/></svg></button>
+        <button id="redo" class="icon-button" aria-label="Redo" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 7 5 5-5 5M19 12H9a5 5 0 0 0-5 5"/></svg></button>
+      </div>
+      <button id="export" class="export-button" disabled>Export <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3m-4 4 4-4 4 4M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg></button>
+    </header>
+    <p id="storage-warning" class="storage-warning" role="status" hidden></p>
+
+    <main id="stage" aria-label="Composition workspace">
+      <canvas id="artwork" aria-label="Artwork. One finger edits; two fingers move and zoom the canvas." tabindex="0"></canvas>
+      <div id="empty" class="empty-state">
+        <div class="empty-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <p class="eyebrow">YOUR PICTURES. YOUR WORLD.</p>
+        <h1>Make something<br>you can’t photograph.</h1>
+        <p class="empty-copy">Cut something out. Put it somewhere new.<br>Keep changing your mind.</p>
+        <button id="start" class="primary large">Choose a photo <span aria-hidden="true">＋</span></button>
+        <button id="open-projects" class="text-button">Open a project</button>
+      </div>
+      <div id="selection-label" class="selection-label" hidden><span class="target-dot"></span><span id="target-name"></span><button id="fit" aria-label="Fit canvas to screen">Fit</button></div>
+      <div id="busy" class="busy" hidden role="status"><span class="spinner"></span><span id="busy-label">Opening photo…</span></div>
+      <div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+      <canvas id="magnifier" class="magnifier" hidden aria-hidden="true"></canvas>
+    </main>
+
+    <section id="context" class="context" aria-label="Current tool" hidden></section>
+    <nav id="tools" class="tool-dock" aria-label="Tools">
+      <button data-tool="add" aria-label="Add a photo"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg><span>Add</span></button>
+      <button data-tool="select" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17c-5-2-4-9 1-11 5-3 13-1 14 4 1 4-4 7-9 7H8c-2 0-3 2-2 3s3 0 2-2L6 15"/><circle cx="7" cy="6" r="1"/></svg><span>Select</span></button>
+      <button data-tool="move" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18m-12-6 3-3 3 3m-6 12 3 3 3-3M6 9l-3 3 3 3m12-6 3 3-3 3"/></svg><span>Move</span></button>
+      <button data-tool="layers" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 10 5-10 5L2 8l10-5Zm-10 9 10 5 10-5M2 16l10 5 10-5"/></svg><span>Layers</span><span id="layer-count" class="count" hidden>0</span></button>
+    </nav>
+  </div>
+
+  <input id="photo-input" type="file" accept="image/*,.dng,.tif,.tiff" hidden>
+
+  <dialog id="add-sheet" class="sheet compact" aria-labelledby="add-title">
+    <div class="sheet-grip" aria-hidden="true"></div><div class="sheet-heading"><div><p class="eyebrow">BUILD YOUR SCENE</p><h2 id="add-title">Add a photo</h2></div><button class="close-button" data-close aria-label="Close">×</button></div>
+    <button id="add-above" class="choice"><span class="choice-icon">＋</span><span><strong>On top</strong><small>Add a subject, texture, or another picture.</small></span><span aria-hidden="true">↗</span></button>
+    <button id="add-behind" class="choice"><span class="choice-icon">▱</span><span><strong>Behind everything</strong><small>Give your cutout somewhere to go.</small></span><span aria-hidden="true">↗</span></button>
+    <p class="sheet-footnote">Your images stay editable on separate layers.</p>
+  </dialog>
+
+  <dialog id="layers-sheet" class="sheet" aria-labelledby="layers-title">
+    <div class="sheet-grip" aria-hidden="true"></div><div class="sheet-heading"><div><p class="eyebrow">PIECES OF YOUR PICTURE</p><h2 id="layers-title">Layers</h2></div><button class="close-button" data-close aria-label="Close layers">×</button></div>
+    <div id="layer-list" class="layer-list"></div>
+    <div id="layer-properties" class="layer-properties"></div>
+  </dialog>
+
+  <dialog id="projects-sheet" class="sheet" aria-labelledby="projects-title">
+    <div class="sheet-grip" aria-hidden="true"></div><div class="sheet-heading"><div><p class="eyebrow">PICK UP WHERE YOU LEFT OFF</p><h2 id="projects-title">Your studio</h2></div><button class="close-button" data-close aria-label="Close projects">×</button></div>
+    <button id="new-project" class="primary full">New project <span aria-hidden="true">＋</span></button>
+    <div id="project-list" class="project-list"></div>
+    <a class="photo-adjustments" href="../index.html">Photo adjustments <span aria-hidden="true">↗</span></a>
+    <p id="project-storage-note" class="sheet-footnote">Projects save on this device, with layers and masks intact.</p>
+  </dialog>
+
+  <dialog id="export-sheet" class="sheet compact" aria-labelledby="export-title">
+    <div class="sheet-grip" aria-hidden="true"></div><div class="sheet-heading"><div><p class="eyebrow">TAKE IT WITH YOU</p><h2 id="export-title">Export your picture</h2></div><button class="close-button" data-close aria-label="Close export">×</button></div>
+    <div class="format-picker" role="group" aria-label="File format"><button data-format="jpeg" aria-pressed="true">JPEG<small>For Photos and sharing</small></button><button data-format="png" aria-pressed="false">PNG<small>Keeps transparency</small></button></div>
+    <p id="export-info" class="export-info" role="status">Preparing your picture…</p>
+    <button id="save-export" class="primary full" disabled>Save to Photos</button>
+    <button id="share-export" class="secondary full" disabled>Share…</button>
+    <p class="sheet-footnote">Studio exports at up to 2048 px on the long edge. Originals are kept.</p>
+    <p id="export-storage-note" class="sheet-footnote">Your editable project stays here. Export makes a copy.</p>
+  </dialog>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

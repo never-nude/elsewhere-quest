@@ -26,7 +26,7 @@ function png(width, height) {
 }
 
 async function setup(t, { capabilities = ['photos', 'decode', 'subject', 'haptic', 'transfer-post'] } = {}) {
-  const saved = new Map(['__gessoNative', 'webkit', 'fetch', 'document', 'createImageBitmap'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  const saved = new Map(['__gessoNative', 'webkit', 'fetch', 'document', 'createImageBitmap', 'ImageData'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   t.after(() => {
     for (const [key, descriptor] of saved) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);
@@ -76,6 +76,28 @@ async function setup(t, { capabilities = ['photos', 'decode', 'subject', 'haptic
   host.releases = () => host.calls.filter(({ op }) => op === 'xfer.release').map(({ args }) => args.url);
   return host;
 }
+
+function matteCanvas(host) {
+  host.canvases = []; host.decoded = []; host.closed = 0;
+  globalThis.ImageData = class { constructor(data, width, height) { Object.assign(this, { data, width, height }); } };
+  globalThis.document.createElement = (tag) => {
+    assert.equal(tag, 'canvas');
+    const canvas = { width: 0, height: 0,
+      getContext: () => ({ putImageData: (image) => { host.inputImage = image; } }),
+      toBlob(callback, type) { callback(new Blob([png(canvas.width, canvas.height)], { type })); },
+    };
+    host.canvases.push(canvas);
+    return canvas;
+  };
+  globalThis.createImageBitmap = async (file) => {
+    host.decoded.push(file);
+    const bytes = new Uint8Array(await file.arrayBuffer()), view = new DataView(bytes.buffer);
+    return { width: view.getUint32(16), height: view.getUint32(20), close: () => { host.closed++; } };
+  };
+}
+
+const matteImage = () => ({ width: 5, height: 3, data: new Uint8ClampedArray(5 * 3 * 4).fill(255) });
+const matteCapabilities = ['subject', 'subject-matte', 'transfer-post'];
 
 test('native picker cancel does not fetch or decode; common photos keep their bytes and metadata', async (t) => {
   const host = await setup(t), p = host.platform;
@@ -143,6 +165,21 @@ test('native fallback reuploads ordinary files byte-exactly and releases source 
   assert.deepEqual([result.natW, result.natH, result.downscaled], [8000, 6000, true]);
   assert.equal(result.file.type, 'image/png');
   assert.equal(p.nativeInfo(result.file).rendered, true);
+  assert.equal(host.releases().length, 2); assert.equal(host.files.size, 0);
+});
+
+test('native JPEG proxy maxSide bounds a portrait to 1536 by 2048 while retaining its original bytes', async (t) => {
+  const host = await setup(t);
+  host.info = { natW: 3024, natH: 4032, raw: false };
+  const bytes = new Uint8Array([255, 216, 255, 1, 2, 3]);
+  const original = new File([bytes], 'portrait.jpg', { type: 'image/jpeg' });
+  const result = await host.platform.decodeNative(original, { maxPixels: 2048 ** 2, maxSide: 2048 });
+  const upload = host.fetches.find(({ method }) => method === 'POST');
+  assert.deepEqual(new Uint8Array(upload.body), bytes);
+  assert.deepEqual(host.calls.find(({ op }) => op === 'image.decode').args, { url: upload.url, w: 1536, h: 2048 });
+  assert.deepEqual(new Uint8Array(await result.file.arrayBuffer()), png(1536, 2048));
+  assert.deepEqual(new Uint8Array(await original.arrayBuffer()), bytes);
+  assert.deepEqual([result.natW, result.natH, result.downscaled], [3024, 4032, true]);
   assert.equal(host.releases().length, 2); assert.equal(host.files.size, 0);
 });
 
@@ -251,7 +288,105 @@ test('malformed injected capability metadata disables subject UI without throwin
   for (const capabilities of [{}, null, 'subject', 17]) {
     const host = await setup(t, { capabilities });
     assert.equal(host.platform.subjectLiftAvailable(), false);
+    assert.equal(host.platform.subjectMatteAvailable(), false);
   }
+});
+
+test('subject matte is optional and absent capabilities leave web/older hosts untouched', async (t) => {
+  const host = await setup(t);
+  assert.equal(host.platform.subjectMatteAvailable(), false);
+  assert.deepEqual(await host.platform.subjectMatte(null), { found: false });
+  assert.deepEqual(host.calls, []);
+});
+
+test('subject matte keeps soft-coverage PNG bytes and fetches/decodes before releasing either transfer', async (t) => {
+  const host = await setup(t, { capabilities: matteCapabilities }); matteCanvas(host);
+  const image = matteImage(), bytes = new Uint8Array([...png(5, 3), 0, 64, 128, 191, 255, 0]);
+  let input, output;
+  host.hooks['subject.matte'] = (args) => {
+    input = args.url;
+    assert.ok(host.files.has(input));
+    assert.deepEqual([args.x, args.y, args.radius], [2.5, 1.5, 12]);
+    output = host.issue(bytes, { name: 'matte.png', found: true, w: 5, h: 3 });
+    return ok(output);
+  };
+  const decode = globalThis.createImageBitmap;
+  globalThis.createImageBitmap = async (file) => {
+    assert.ok(host.files.has(input), 'analysis stays live while the returned matte is decoded');
+    assert.ok(host.files.has(output.url));
+    return decode(file);
+  };
+  const result = await host.platform.subjectMatte(image);
+  assert.deepEqual([result.found, result.width, result.height, result.blob.type], [true, 5, 3, 'image/png']);
+  assert.deepEqual(new Uint8Array(await result.blob.arrayBuffer()), bytes);
+  assert.equal(host.closed, 1);
+  assert.deepEqual(host.releases(), [output.url, input]);
+  assert.equal(host.files.size, 0);
+  assert.ok(host.canvases.every((canvas) => canvas.width === 0 && canvas.height === 0));
+  assert.equal(host.calls.some(({ args }) => Object.values(args).some((value) => value instanceof ArrayBuffer)), false);
+});
+
+test('subject matte misses and native errors release only the analysis file', async (t) => {
+  const host = await setup(t, { capabilities: matteCapabilities }); matteCanvas(host);
+  host.hooks['subject.matte'] = () => ok({ found: false });
+  assert.deepEqual(await host.platform.subjectMatte(matteImage(), 1, 1), { found: false });
+  assert.equal(host.files.size, 0); assert.equal(host.releases().length, 1);
+  host.hooks['subject.matte'] = () => failure('busy');
+  await assert.rejects(host.platform.subjectMatte(matteImage()), hasCode('busy'));
+  assert.equal(host.files.size, 0); assert.equal(host.releases().length, 2);
+});
+
+test('subject matte validates bounded RGBA input and coordinates before creating a transfer', async (t) => {
+  const host = await setup(t, { capabilities: matteCapabilities }); matteCanvas(host);
+  for (const image of [null, { ...matteImage(), width: 1025 }, { ...matteImage(), height: 0 },
+    { ...matteImage(), data: new Uint8Array(4) }, { ...matteImage(), data: new Float32Array(60) }]) {
+    await assert.rejects(host.platform.subjectMatte(image), hasCode('badArgs'));
+  }
+  for (const [x, y, radius] of [[-1, 0, 12], [0, 3, 12], [NaN, 0, 12], [0, 0, 129], [0, 0, Infinity]]) {
+    await assert.rejects(host.platform.subjectMatte(matteImage(), x, y, { radius }), hasCode('badArgs'));
+  }
+  assert.deepEqual(host.calls, []);
+});
+
+test('malformed subject matte replies release issued output files without fetching them', async (t) => {
+  const host = await setup(t, { capabilities: matteCapabilities }); matteCanvas(host);
+  for (const wrong of [{ found: 1 }, { found: false }, { w: 4 }, { h: 2 }, { type: 'image/jpeg' },
+    { size: -1 }, { size: 8 * 1024 ** 2 + 1 }, { name: '' }]) {
+    let output;
+    host.hooks['subject.matte'] = () => {
+      output = host.issue(png(5, 3), { found: true, w: 5, h: 3 });
+      return ok({ ...output, ...wrong });
+    };
+    await assert.rejects(host.platform.subjectMatte(matteImage()), hasCode('protocol'));
+    assert.ok(host.releases().includes(output.url));
+    assert.equal(host.fetches.some(({ url }) => url === output.url), false);
+    assert.equal(host.files.size, 0);
+  }
+});
+
+test('subject matte rejects foreign output URLs without fetching or releasing outside the fixed origin', async (t) => {
+  const host = await setup(t, { capabilities: matteCapabilities }); matteCanvas(host);
+  host.hooks['subject.matte'] = () => ok({ found: true, w: 5, h: 3, name: 'matte.png', type: 'image/png', size: 33, url: 'file:///private/matte.png' });
+  await assert.rejects(host.platform.subjectMatte(matteImage()), hasCode('badUrl'));
+  assert.ok(host.fetches.every(({ url }) => url.startsWith(NATIVE_ORIGIN)));
+  assert.ok(host.releases().every((url) => url.startsWith(NATIVE_ORIGIN)));
+  assert.equal(host.files.size, 0);
+});
+
+test('subject matte image-header, decode and decoded-size failures release both transfers', async (t) => {
+  const host = await setup(t, { capabilities: matteCapabilities }); matteCanvas(host);
+  const decode = globalThis.createImageBitmap;
+  for (const mode of ['header', 'decode', 'size', 'short']) {
+    host.hooks['subject.matte'] = () => {
+      const output = host.issue(png(mode === 'header' ? 4 : 5, 3), { found: true, w: 5, h: 3 });
+      return ok(mode === 'short' ? { ...output, size: output.size + 1 } : output);
+    };
+    globalThis.createImageBitmap = mode === 'decode' ? async () => { throw new Error('corrupt PNG'); }
+      : mode === 'size' ? async () => ({ width: 4, height: 3, close: () => { host.closed++; } }) : decode;
+    await assert.rejects(host.platform.subjectMatte(matteImage()), hasCode(mode === 'decode' ? 'unreadable' : mode === 'short' ? 'transfer' : 'protocol'));
+    assert.equal(host.files.size, 0);
+  }
+  assert.equal(host.closed, 1, 'wrong-sized decoded bitmap is closed');
 });
 
 test('ambiguous or undefined native envelopes cannot turn an error into success', async () => {

@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 enum NativeConfig {
     static let origin = "gesso://localhost"
     static let entryURL = URL(string: origin + "/gesso/")!
-    static let capabilities = ["photos", "decode", "subject", "haptic", "transfer-post"]
+    static let studioURL = URL(string: origin + "/gesso/studio/index.html")!
+    static let capabilities = ["photos", "decode", "subject", "subject-matte", "haptic", "transfer-post"]
     static var app: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0" }
     static var build: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1" }
     static func metadata(webRevision: String) -> [String: Any] {

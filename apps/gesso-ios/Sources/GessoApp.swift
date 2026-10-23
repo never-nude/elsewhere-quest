@@ -71,12 +71,13 @@ final class EditorViewController: UIViewController, WKNavigationDelegate {
     private var entryURL: URL {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("-GessoProbe") { return URL(string: NativeConfig.origin + "/gesso/?probe=1")! }
+        if ProcessInfo.processInfo.arguments.contains("-GessoSmoke") { return NativeConfig.entryURL }
         #endif
-        return NativeConfig.entryURL
+        return NativeConfig.studioURL
     }
 
     @objc private func flush() {
-        webView?.evaluateJavaScript("window.gesso?.flush?.()", completionHandler: nil)
+        webView?.evaluateJavaScript("window.gessoStudio?.engine?.flush?.() ?? window.gesso?.flush?.()", completionHandler: nil)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

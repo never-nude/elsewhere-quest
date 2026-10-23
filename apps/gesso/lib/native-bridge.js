@@ -4,7 +4,7 @@ export const MAX_TRANSFER_BYTES = 128 * 1024 ** 2;
 export const TIMEOUTS = Object.freeze({
   ping: 2000, 'photo.pick': 300000, 'image.info': 15000, 'image.decode': 60000,
   'xfer.create': 5000, 'xfer.release': 5000, 'photos.save': 300000, share: 300000,
-  'subject.mask': 25000, haptic: 1000, 'settings.open': 5000, 'clipboard.write': 2000,
+  'subject.mask': 25000, 'subject.matte': 25000, haptic: 1000, 'settings.open': 5000, 'clipboard.write': 2000,
 });
 
 export class NativeError extends Error {
