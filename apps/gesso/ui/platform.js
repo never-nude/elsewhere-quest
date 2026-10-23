@@ -1,7 +1,7 @@
 // All native access stays here; the same editor still runs in Safari.
-import { fitWorkingSize, WORK_FALLBACK_PIXELS } from '../lib/image-io.js';
+import { fitWorkingSize, WORK_FALLBACK_PIXELS, readImageInfo } from '../lib/image-io.js';
 import {
-  createNativeBridge, createTransfers, NativeError, imageInfo, subjectResult,
+  createNativeBridge, createTransfers, NativeError, imageInfo, subjectResult, fileRef, within,
 } from '../lib/native-bridge.js';
 
 const bridge = createNativeBridge({
@@ -16,6 +16,7 @@ export const putFile = transfers.putFile;
 export const fetchFile = transfers.fetchFile;
 export const release = transfers.release;
 export const subjectLiftAvailable = () => isNative && Array.isArray(native.capabilities) && native.capabilities.includes('subject');
+export const subjectMatteAvailable = () => isNative && Array.isArray(native.capabilities) && native.capabilities.includes('subject-matte');
 
 export function pickPhoto({ maxPixels, input = globalThis.document?.querySelector('#file') } = {}) {
   if (!isNative) { input?.click(); return Promise.resolve(null); }
@@ -39,8 +40,8 @@ export function pickPhoto({ maxPixels, input = globalThis.document?.querySelecto
   });
 }
 
-async function decodeRef(ref, info, maxPixels) {
-  const fit = fitWorkingSize(info.natW, info.natH, maxPixels);
+async function decodeRef(ref, info, maxPixels, maxSide) {
+  const fit = fitWorkingSize(info.natW, info.natH, maxPixels, maxSide);
   const rendered = await transfers.acceptRef(await call('image.decode', { url: ref.url, w: fit.width, h: fit.height }));
   try {
     if (rendered.w !== fit.width || rendered.h !== fit.height || rendered.type !== 'image/png') {
@@ -53,12 +54,12 @@ async function decodeRef(ref, info, maxPixels) {
   } finally { await transfers.release(rendered.url); }
 }
 
-export async function decodeNative(file, { maxPixels } = {}) {
+export async function decodeNative(file, { maxPixels, maxSide } = {}) {
   if (!isNative) throw new NativeError('web', 'Native decoding unavailable.');
   if (nativeInfo(file)?.rendered) return { file, ...nativeInfo(file) };
   return transfers.withFile(file, file.name || 'photo', async (ref) => {
     const info = imageInfo(await call('image.info', { url: ref.url }));
-    return decodeRef(ref, info, maxPixels);
+    return decodeRef(ref, info, maxPixels, maxSide);
   });
 }
 
@@ -107,6 +108,57 @@ export async function subjectAt(image, x, y, { radius = 12 } = {}) {
   } finally { canvas.width = canvas.height = 0; }
   return transfers.withFile(blob, 'subject.png', async (ref) =>
     subjectResult(await call('subject.mask', { url: ref.url, x, y, radius }), width, height));
+}
+
+export async function subjectMatte(image, x = image?.width / 2, y = image?.height / 2, { radius = 12 } = {}) {
+  if (!subjectMatteAvailable()) return { found: false };
+  const { width, height, data } = image ?? {};
+  if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1 ||
+      width > 1024 || height > 1024 || !(data instanceof Uint8Array || data instanceof Uint8ClampedArray) ||
+      data.length !== width * height * 4 || !Number.isFinite(x) || !Number.isFinite(y) ||
+      x < 0 || x >= width || y < 0 || y >= height || !Number.isFinite(radius) || radius < 0 || radius > 128) {
+    throw new NativeError('badArgs', 'Invalid subject image.');
+  }
+  const canvas = document.createElement('canvas');
+  let blob;
+  try {
+    canvas.width = width; canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new NativeError('memory', "Couldn't prepare the subject image.");
+    context.putImageData(new ImageData(new Uint8ClampedArray(data), width, height), 0, 0);
+    blob = await within(new Promise((resolve) => canvas.toBlob(resolve, 'image/png')), 10000);
+    if (!blob) throw new NativeError('memory', "Couldn't prepare the subject image.");
+  } finally { canvas.width = canvas.height = 0; }
+  return transfers.withFile(blob, 'subject.png', async (input) => {
+    const result = await call('subject.matte', { url: input.url, x, y, radius });
+    try {
+      if (result?.found === false && result.url === undefined) return { found: false };
+      if (result?.found !== true || result.w !== width || result.h !== height || result.type !== 'image/png' ||
+          result.url === input.url || result.size > 8 * 1024 ** 2) throw new NativeError('protocol', 'Invalid subject matte reply.');
+      const ref = fileRef(result);
+      const matte = await transfers.fetchFile(ref);
+      const info = readImageInfo(new Uint8Array(await matte.slice(0, 64).arrayBuffer()));
+      if (info?.type !== 'png' || info.width !== width || info.height !== height) {
+        throw new NativeError('protocol', 'Native subject matte has the wrong image size.');
+      }
+      if (typeof globalThis.createImageBitmap !== 'function') throw new NativeError('unsupported', 'Image decoding is unavailable.');
+      let expired = false, bitmap;
+      const decoding = Promise.resolve().then(() => createImageBitmap(matte)).then((image) => {
+        if (expired) image.close();
+        return image;
+      });
+      try {
+        bitmap = await within(decoding, 10000, { onTimeout: () => { expired = true; } });
+        if (bitmap.width !== width || bitmap.height !== height) throw new NativeError('protocol', 'Native subject matte decoded at the wrong size.');
+      } catch (error) {
+        if (error instanceof NativeError) throw error;
+        throw new NativeError('unreadable', 'Native subject matte could not be decoded.');
+      } finally { bitmap?.close(); }
+      return { found: true, blob: matte, width, height };
+    } finally {
+      try { await transfers.release(result?.url); } catch { /* malformed URLs are never followed */ }
+    }
+  });
 }
 
 let tickAt = -Infinity;

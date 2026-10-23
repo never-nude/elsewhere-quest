@@ -16,6 +16,12 @@ The owner confirmed these permanent choices on 2026-10-20:
 | Origin | `gesso://localhost` |
 | Entry page | `gesso://localhost/gesso/` |
 
+The Creative Studio extension launches production at
+`gesso://localhost/gesso/studio/index.html`, retaining the original entry for
+the legacy editor and DEBUG diagnostics. The fixed origin and legacy IndexedDB
+draft are preserved. Studio's optional `subject-matte` capability returns a soft
+coverage PNG; the original Outline polygon API and behavior below stay compatible.
+
 The origin keys IndexedDB and localStorage; it must stay fixed across updates.
 Safari and app drafts are separate. There is one draft, in the existing `gesso`
 database, with the existing history and pixel tiles. No native parallel draft

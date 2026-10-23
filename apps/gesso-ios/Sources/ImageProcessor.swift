@@ -100,6 +100,83 @@ enum ImageProcessor {
         return ["found": true, "w": cg.width, "h": cg.height, "polygons": rings]
     }
 
+    struct SubjectMatte {
+        let png: Data
+        let width: Int
+        let height: Int
+    }
+
+    static func subjectMatte(url: URL, x: Double, y: Double, radius: Double) throws -> SubjectMatte? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              (1...1024).contains(width), (1...1024).contains(height),
+              (properties[kCGImagePropertyOrientation] as? Int ?? 1) == 1,
+              x.isFinite, y.isFinite, radius.isFinite, x >= 0, y >= 0,
+              x < Double(width), y < Double(height), (0...128).contains(radius),
+              let cg = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) else {
+            throw NativeError("badArgs", "Subject analysis needs an upright image of at most 1024 pixels per side.")
+        }
+        let handler = VNImageRequestHandler(cgImage: cg, orientation: .up)
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        do { try handler.perform([request]) }
+        catch { throw NativeError("unsupported", "Subject detection is unavailable here. Trace a selection instead.") }
+        guard let observation = request.results?.first,
+              let instance = instanceNear(observation.instanceMask, x: x / Double(width), y: y / Double(height),
+                                          radius: radius / Double(max(width, height))) else { return nil }
+        // Keep Vision's full image-sized coverage, including holes and partial edge pixels.
+        let mask = try observation.generateScaledMaskForImage(forInstances: IndexSet(integer: instance), from: handler)
+        guard CVPixelBufferGetWidth(mask) == width, CVPixelBufferGetHeight(mask) == height else {
+            throw NativeError("failed", "Subject detection returned the wrong matte size.")
+        }
+        return SubjectMatte(png: try mattePNG(mask), width: width, height: height)
+    }
+
+    static func mattePNG(_ buffer: CVPixelBuffer) throws -> Data {
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+        let format = CVPixelBufferGetPixelFormatType(buffer)
+        guard (1...1024).contains(width), (1...1024).contains(height),
+              format == kCVPixelFormatType_OneComponent32Float || format == kCVPixelFormatType_OneComponent8 else {
+            throw NativeError("failed", "Unsupported subject matte format.")
+        }
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { throw NativeError("failed", "Could not read the subject matte.") }
+        let stride = CVPixelBufferGetBytesPerRow(buffer)
+        var pixels = Data(count: width * height * 4)
+        pixels.withUnsafeMutableBytes { bytes in
+            let out = bytes.bindMemory(to: UInt8.self)
+            for y in 0..<height {
+                let row = base.advanced(by: y * stride)
+                for x in 0..<width {
+                    let value: UInt8
+                    if format == kCVPixelFormatType_OneComponent32Float {
+                        let sample = row.assumingMemoryBound(to: Float.self)[x]
+                        value = sample.isFinite ? UInt8((min(1, max(0, sample)) * 255).rounded()) : 0
+                    } else { value = row.assumingMemoryBound(to: UInt8.self)[x] }
+                    let i = (y * width + x) * 4
+                    out[i] = value; out[i + 1] = value; out[i + 2] = value; out[i + 3] = 255
+                }
+            }
+        }
+        // sRGB-tagged equal RGB channels preserve coverage bytes through browser canvas decoding.
+        guard let provider = CGDataProvider(data: pixels as CFData),
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+                                  provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent) else {
+            throw NativeError("failed", "Could not create the subject matte.")
+        }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else {
+            throw NativeError("failed", "Could not encode the subject matte.")
+        }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { throw NativeError("failed", "Could not finish the subject matte.") }
+        return data as Data
+    }
+
     private static func instanceNear(_ mask: CVPixelBuffer, x: Double, y: Double, radius: Double) -> Int? {
         CVPixelBufferLockBaseAddress(mask, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(mask, .readOnly) }

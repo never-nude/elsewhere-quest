@@ -83,6 +83,21 @@ final class Bridge: NSObject, WKScriptMessageHandlerWithReply, PHPickerViewContr
                 let file = lease.url
                 return try await Task.detached(priority: .userInitiated) { try ImageProcessor.subject(url: file, x: x, y: y, radius: radius) }.value
             },
+            "subject.matte": { [self] args in
+                let x = try Arguments.number(args, "x"), y = try Arguments.number(args, "y")
+                let radius = args["radius"] == nil ? 12 : try Arguments.number(args, "radius")
+                guard (0...128).contains(radius) else { throw NativeError("badArgs", "Invalid subject radius.") }
+                guard !subjectBusy else { throw NativeError("busy", "Subject detection is already running.") }
+                let lease = try registry.lease(url: Arguments.url(args)); defer { lease.release() }
+                subjectBusy = true; defer { subjectBusy = false }
+                let file = lease.url
+                guard let matte = try await Task.detached(priority: .userInitiated, operation: {
+                    try ImageProcessor.subjectMatte(url: file, x: x, y: y, radius: radius)
+                }).value else { return ["found": false] }
+                var ref = try await registry.importData(matte.png, name: "Gesso-subject-matte.png", type: "image/png")
+                ref["found"] = true; ref["w"] = matte.width; ref["h"] = matte.height
+                return ref
+            },
             "haptic": { [self] args in try haptic(Arguments.string(args, "kind", max: 16)); return [:] as [String: Any] },
             "settings.open": { _ in
                 guard let url = URL(string: UIApplication.openSettingsURLString) else { throw NativeError("failed", "Settings are unavailable.") }

@@ -1,8 +1,11 @@
 # Gesso JS ↔ Swift bridge, API 1
 
 Normative contract for `ui/platform.js` and `apps/gesso-ios/`. The origin is
-`gesso://localhost`, entry `gesso://localhost/gesso/`, bundle ID
-`quest.elsewhere.gesso`. Changing these storage identifiers requires a migration.
+`gesso://localhost`, bundle ID `quest.elsewhere.gesso`. Changing the origin or app
+identifier requires a migration. The legacy entry remains `gesso://localhost/gesso/`.
+The production app launches `/gesso/studio/index.html`; `/gesso/` remains the legacy editor
+and DEBUG smoke entry. Both share the pinned origin without deleting or migrating
+the legacy draft database.
 
 ## Transport and versioning
 
@@ -12,7 +15,7 @@ At document start, page world, main frame only:
 Object.defineProperty(window, '__gessoNative', { value: Object.freeze({
   api: 1, bridge: 'gesso', origin: 'gesso://localhost',
   app: '1.0', build: '1', web: '<bundled revision>',
-  capabilities: ['photos', 'decode', 'subject', 'haptic', 'transfer-post']
+  capabilities: ['photos', 'decode', 'subject', 'subject-matte', 'haptic', 'transfer-post']
 }), writable: false, configurable: false });
 ```
 
@@ -55,6 +58,7 @@ arbitrary path, query, fragment, credential, port or alternate origin is accepte
 | `photos.save` | `{url,name}` | `{saved:true}` or `{saved:false,reason:'denied'\|'restricted'\|'failed',message?}` | 300 s |
 | `share` | `{url,name}` | `{completed:boolean,activity:string\|null}` | 300 s |
 | `subject.mask` | `{url,x,y,radius}` | `{found:false}` or `{found:true,w,h,polygons:number[][]}` | 25 s |
+| `subject.matte` | `{url,x,y,radius}` | `{found:false}` or `FileRef` plus `{found:true,w,h}`; grayscale coverage PNG | 25 s |
 | `haptic` | `{kind}` | `{}` | 1 s |
 | `settings.open` | `{}` | `{}` | 5 s |
 | `clipboard.write` | `{text}` | `{}` | 2 s |
@@ -75,6 +79,18 @@ no duplicate closing point required, exterior rings only, largest area first.
 `w,h` must match the supplied image. No object near the tap returns found:false.
 Unsupported Vision returns an error, including on unsupported Simulator hardware.
 
+`subject.matte` is an optional API 1 extension, advertised by `subject-matte`.
+The input uses the same upright ≤1024px analysis image and top-left x/y/radius
+coordinates. Output `w,h` match that input. The issued PNG contains opaque sRGB
+pixels whose equal red/green/blue bytes represent coverage: 0 hides, 255 keeps,
+and values between retain soft coverage. Its PNG alpha channel is opaque; callers
+read a color channel as the layer mask. Interior holes and disconnected parts of
+the selected instance remain intact. Vision's `generateScaledMaskForImage` supplies
+the matte; no threshold, contour simplification or largest-ring filtering applies.
+Float coverage is quantized to eight bits, and the result is bounded to 8 MiB.
+The existing `subject.mask` polygon operation remains unchanged. Both operations
+share the native busy guard and input-file lease until their work finishes.
+
 Haptic kind: `prepare|tick|light|medium|success|warning|error`; JS throttles tick
 to at least 50 ms and ignores haptic failures. Web haptics resolve without work.
 `clipboard.write` only writes explicitly requested diagnostic text, ≤256 KiB.
@@ -92,7 +108,7 @@ to at least 50 ms and ignores haptic failures. Web haptics resolve without work.
    405. Duplicate upload: 409. Upload timeout: 60 s via AbortController.
 4. GET of a completed issued file returns exact bytes and MIME, no-store,
    Accept-Ranges:none. GET before upload is 404. No directory listing/range mode.
-5. `photos.save`, `share`, `image.decode` and `subject.mask` read issued complete
+5. `photos.save`, `share`, `image.decode`, `subject.mask` and `subject.matte` read issued complete
    files only. They retain their own file lease until work finishes. JS calls
    `xfer.release` in finally; release hides the URL immediately but defers physical
    deletion while a native lease exists. Startup purges all prior-session files.
@@ -113,6 +129,7 @@ settle another call. Native presentation guards/leases last until actual finish.
 
 `ui/platform.js` exports `isNative`, `native`, `call`, `pickPhoto`, `nativeInfo`,
 `decodeNative`, `saveToPhotos`, `share`, `subjectAt`, `subjectLiftAvailable`,
+`subjectMatte`, `subjectMatteAvailable`,
 `haptic`, `openSettings`, `clipboardWrite`, and transfer helpers for diagnostics.
 `pickPhoto({maxPixels,input})` clicks `input` and resolves null on web; native
 returns File|null. `nativeInfo(file)` holds original oriented dimensions and
@@ -123,6 +140,12 @@ normalized draft source; restored PNGs decode through the plain web path.
 Native save/share helpers accept `(blob,name)` and own transfer cleanup.
 `subjectAt(image,x,y,{radius})` accepts `{data,width,height}`, creates a local
 analysis PNG transfer, validates the reply and releases it. Web returns no subject.
+`subjectMatte(image,x,y,{radius=12})` accepts the same RGBA image, with x/y defaulting
+to its center, and resolves `{found:false}` or `{found:true,blob,width,height}`.
+The returned Blob is the grayscale coverage PNG. The adapter keeps the input
+transfer live while fetching and decoding the output, checks PNG dimensions and
+the 8 MiB bound, closes its validation bitmap, and releases both issued files on
+success and failure. A missing capability returns found:false without work.
 Save web fallbacks use prepared File/navigator.share synchronously in the caller;
 no async adapter may consume transient activation before invoking share.
 
@@ -133,7 +156,7 @@ sessions cannot apply an async result. Native install hints are hidden.
 
 ## Swift → JS and probes
 
-`window.gesso?.flush?.()` commits typing and best-effort flushes autosave during
+`window.gessoStudio?.engine?.flush?.() ?? window.gesso?.flush?.()` best-effort flushes the active editor during
 inactive/background/memory-warning transitions. Content-process termination
 reloads the same entry URL. No untrusted text is interpolated into evaluated JS.
 
@@ -143,3 +166,6 @@ and an actual ArrayBuffer POST round trip. Keyboard visualViewport is inspected
 interactively. `-GessoStubPicker` / `-GessoStubPhotos` are DEBUG-only Simulator
 test fixtures; production builds cannot enable them. The existing public web
 probe remains available exactly as before.
+DEBUG `-GessoSmoke` continues to load `/gesso/` for legacy diagnostic compatibility.
+The shared smoke script accepts either `window.gessoStudio` or `window.gesso` and
+reports whether Studio initialized, so native host tests cover the production route.

@@ -9,6 +9,11 @@ const SHELL = [
   './index.html',
   './styles.css',
   './app.js',
+  './studio/index.html',
+  './studio/studio.css',
+  './studio/app.js',
+  './studio/model.js',
+  './studio/engine.js',
   './manifest.webmanifest',
   './icon.svg',
   './icon-maskable.svg',
@@ -101,7 +106,7 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   event.respondWith(caches.open(CACHE).then(async (cache) => (
     (await cache.match(event.request, { ignoreSearch: true }))
-    ?? (event.request.mode === 'navigate' ? await cache.match('./') : undefined)
+    ?? (event.request.mode === 'navigate' ? await cache.match(url.pathname.endsWith('/studio/') ? './studio/index.html' : './') : undefined)
     ?? fetch(event.request)
   )));
 });

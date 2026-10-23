@@ -5,8 +5,8 @@ import Foundation
 enum DebugSmoke {
     static let initialScript = #"""
       const deadline=Date.now()+30000;
-      while(!window.gesso && Date.now()<deadline) await new Promise(r=>setTimeout(r,50));
-      if(!window.gesso) throw Error('Editor did not initialize');
+      while(!window.gessoStudio && !window.gesso && Date.now()<deadline) await new Promise(r=>setTimeout(r,50));
+      if(!window.gessoStudio && !window.gesso) throw Error('Editor did not initialize');
       const bridge=window.webkit.messageHandlers.gesso;
       const ping=await bridge.postMessage({op:'ping',args:{}});
       if(!ping.ok || ping.result.api!==1) throw Error('Native ping rejected');
@@ -39,7 +39,7 @@ enum DebugSmoke {
         request.onerror=()=>reject(request.error);
         request.onsuccess=()=>{const db=request.result;const tx=db.transaction('values','readwrite');tx.objectStore('values').put('kept','key');tx.oncomplete=()=>{db.close();resolve();};tx.onerror=()=>reject(tx.error);};
       });
-      return {editor:true,origin:location.origin,secure:isSecureContext,postBytes:size,moduleJPEG:jpeg,ping:ping.result};
+      return {editor:true,studio:!!window.gessoStudio,origin:location.origin,secure:isSecureContext,postBytes:size,moduleJPEG:jpeg,ping:ping.result};
       """#
 
     static let reloadScript = #"""

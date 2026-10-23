@@ -1,5 +1,10 @@
 # Gesso v1 — design spec
 
+> **2026-10-23 owner direction:** the new [Creative Studio brief](design/creative-studio.md)
+> supersedes this version's product restrictions on layers, masks, selection UI,
+> painting and background replacement. This document still describes the legacy
+> correction editor. Studio is implemented alongside it at `/gesso/studio/`.
+
 > Produced by a design pass (iOS Safari platform research, three competing UX
 > concepts, a UX judge and an engineering judge, then a synthesis), all held to
 > the owner's learnability bar: **know where everything is in 2 seconds, finish a

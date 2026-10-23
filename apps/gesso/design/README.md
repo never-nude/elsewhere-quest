@@ -4,6 +4,14 @@ Artefacts from the design and review sessions, kept here so a new machine or a
 new session starts with the same picture. Nothing in this folder ships: the
 deploy step strips `design/`.
 
+## Current product direction — 2026-10-23
+
+The owner's hands-on feedback changes Gesso from quick photo correction to
+creative photo compositing. [Creative Studio](creative-studio.md) records the
+forum research, nine capability priorities, interaction decisions and acceptance
+workflow. It supersedes the old restrictions on layers, masks, reusable selections
+and the fixed dock. The decisions below describe the original correction editor.
+
 ## Decisions already made (don't relitigate without the owner)
 - Learnability bar: know where everything is in ~2 s, finish a first edit in
   ~1 min, moderately proficient by ~10 min. Targets to design toward, not

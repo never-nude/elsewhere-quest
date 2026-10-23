@@ -189,3 +189,63 @@ Delivery (local, pushed, merged, deployment verified):
 - Delivery: the implemented app is installed on the phone and its implementation
   remains pushed on `claude/gesso-ios` under draft PR #8. This continuation adds
   the corrected signing guidance and the physical-device validation record.
+
+## 2026-10-23 — Gesso Creative Studio and laptop continuation
+
+- Task/owner: Codex on the owner's current Mac, branch
+  `codex/gesso-creative-studio`, based on `claude/gesso-ios` at `372a61b`.
+  The owner wants precise photo artwork and compositing, informed by classic
+  Photoshop, current capabilities, Reddit/forum practice and PsBattles. The
+  owner authorized independent implementation, device installation and branch
+  publication, and plans to continue on the laptop after this step.
+- Research: `apps/gesso/design/creative-studio.md` records ten forum discussions,
+  seven visually reviewed PsBattles results, current product documentation and
+  nine capability priorities. This is qualitative product research, not measured
+  Photoshop tool usage. Layers, masks, selections, adjustments and brushes recur;
+  PsBattles adds part extraction, scale, occlusion, light, shadows and revisability.
+- Implemented first slice: new Studio with up to eight independent image layers,
+  move/scale/rotate, order/visibility/duplicate, opacity/blends, soft alpha masks,
+  native subject matte seed, Reveal/Hide repair, feather, per-layer basic light/
+  color and shadow, multiple persisted projects, Undo/Redo and PNG/JPEG export.
+  Magnetic outline pauses when the thumb lifts and resumes on the next stroke;
+  explicit Close outline finishes it, with two-finger navigation between strokes.
+  Native normal launch opens Studio. Legacy `/gesso/` correction editor and its
+  database remain available. `apps/gesso/lib/lasso.js` is unchanged.
+- Storage/rendering: separate `gesso-studio` database; immutable source/mask
+  assets and history recipes; original import bytes retained (native RAW picker
+  already supplies a developed PNG). Working images and exports have a **2048px
+  maximum long edge**. Full-resolution tiled compositing, Curves/HSL, paint/type
+  layers, reusable selections, advanced matting, perspective/warp and generation
+  remain future work. No PSD interchange or generation provider is implemented.
+- Corrections from runtime checks: WebKit Blob/File IndexedDB failures retry
+  byte-identical ArrayBuffer storage; history restores stage resources before
+  replacing the current image, including rapid redo at the boundary; export
+  snapshots and pending outlines survive navigation correctly. Ricky's real
+  profiled JPEG exposed a WebKit resized ImageBitmap green cast. JPEG/HEIC and
+  profiled PNG now use bounded native ImageIO/sRGB normalization; browser JPEG/
+  profiled PNG use HTMLImage. Masks retain exact alpha on their separate path.
+- Validation actually performed: **673/673 Node tests**; **17/17** isolated
+  legacy strict acceptance (Remove 196ms, Save ready 797ms); **12/12** legacy
+  native-browser checks; **58 grouped Studio browser checks** in Chromium and
+  WebKit (engine, profile/alpha regressions, real interactions and offline entry).
+  Synthetic ICC JPEG/PNG fixtures are self-authored and contain no personal image
+  or vendor profile. Real-photo browser validation checked a two-layer Ricky
+  cutout, transform, Undo and reopen; no page errors. This is not a finished
+  dinosaur artwork or a measured usability comparison with Photoshop.
+- Native validation: Simulator and physical-device suites passed **11/11**.
+  After the color correction, a fresh signed Debug build and **11/11** native
+  cases passed on the connected iPhone; explicit install and normal launch
+  succeeded. Final installed web revision **`ff7396606b9a0171`**. Native decoder
+  checks preserved Ricky's tan/gold color and profiled PNG alpha 0/128/255.
+  Device-specific logs, screenshots and results remain `/tmp/gesso-scratch/`;
+  private photos, signing material and device identifiers are excluded from Git.
+- Next: follow `apps/gesso/ios/LAPTOP-HANDOFF.md` on the laptop. Inspect and
+  preserve its own local work before fetching this branch. The laptop has not
+  been inspected or synchronized. Git does not move signing keys, phone/browser
+  drafts, private fixture photos, scratch results or separate conversations.
+  First obtain the owner's hands-on reaction to tracing, repair and compositing;
+  then deepen edge refinement, selection-to-layer, Curves/HSL and painted shadows.
+- Delivery at this record: validated local branch, final app installed and open
+  on the phone; authorized commit/push and stacked draft PR publication follow.
+  PR #8 remains the native foundation. No main merge, web deployment or App Store
+  submission was performed.

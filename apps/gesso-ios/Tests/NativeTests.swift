@@ -3,6 +3,7 @@ import WebKit
 import UIKit
 import ImageIO
 import CoreImage
+import CoreVideo
 import UniformTypeIdentifiers
 @testable import Gesso
 
@@ -18,6 +19,8 @@ final class NativeTests: XCTestCase {
     func testPinnedIdentityAndArgumentValidation() throws {
         XCTAssertEqual(NativeConfig.origin, "gesso://localhost")
         XCTAssertEqual(NativeConfig.entryURL.absoluteString, "gesso://localhost/gesso/")
+        XCTAssertEqual(NativeConfig.studioURL.absoluteString, "gesso://localhost/gesso/studio/index.html")
+        XCTAssertTrue(NativeConfig.capabilities.contains("subject-matte"))
         XCTAssertThrowsError(try Arguments.integer(["w": true], "w", range: 1...8192))
         XCTAssertThrowsError(try Arguments.integer(["w": 1.5], "w", range: 1...8192))
         XCTAssertThrowsError(try Arguments.number(["x": Double.infinity], "x"))
@@ -115,6 +118,52 @@ final class NativeTests: XCTestCase {
         catch let error as NativeError { XCTAssertEqual(error.code, "unsupported") }
         do { _ = try await bridge.dispatch(op: "image.decode", args: ["w": 8192, "h": 8192]); XCTFail("Oversize decode must reject") }
         catch let error as NativeError { XCTAssertEqual(error.code, "size") }
+        do { _ = try await bridge.dispatch(op: "subject.matte", args: ["x": 0, "y": 0, "radius": 129]); XCTFail("Matte radius must be bounded") }
+        catch let error as NativeError { XCTAssertEqual(error.code, "badArgs") }
+    }
+
+    func testMattePNGPreservesSoftCoverageAndInteriorHole() async throws {
+        var allocated: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, 5, 5, kCVPixelFormatType_OneComponent32Float, nil, &allocated), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(allocated)
+        CVPixelBufferLockBaseAddress(buffer, [])
+        let base = try XCTUnwrap(CVPixelBufferGetBaseAddress(buffer))
+        let stride = CVPixelBufferGetBytesPerRow(buffer)
+        for y in 0..<5 {
+            let row = base.advanced(by: y * stride).assumingMemoryBound(to: Float.self)
+            for x in 0..<5 { row[x] = 1 }
+        }
+        let top = base.assumingMemoryBound(to: Float.self)
+        top[0] = 0.25; top[1] = 0.5; top[2] = 0.75
+        base.advanced(by: 2 * stride).assumingMemoryBound(to: Float.self)[2] = 0
+        base.advanced(by: 4 * stride).assumingMemoryBound(to: Float.self)[4] = 0.1
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        let png = try ImageProcessor.mattePNG(buffer)
+        let registry = try TransferRegistry(directory: directory())
+        let ref = try await registry.importData(png, name: "matte.png", type: "image/png")
+        let url = URL(string: ref["url"] as! String)!
+        let downloaded = try await registry.data(for: url)
+        XCTAssertEqual(downloaded, png)
+        XCTAssertEqual(ref["type"] as? String, "image/png")
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(downloaded as CFData, nil))
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        XCTAssertEqual(image.width, 5); XCTAssertEqual(image.height, 5); XCTAssertEqual(image.bitsPerComponent, 8)
+        let ci = CIImage(cgImage: image), context = CIContext()
+        func coverage(_ x: Int, _ y: Int, expected: Int, file: StaticString = #filePath, line: UInt = #line) {
+            var pixel: [UInt8] = [0, 0, 0, 0]
+            context.render(ci, toBitmap: &pixel, rowBytes: 4, bounds: CGRect(x: x, y: 4 - y, width: 1, height: 1), format: .RGBA8, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+            XCTAssertEqual(Int(pixel[0]), expected, accuracy: 1, file: file, line: line)
+            XCTAssertEqual(pixel[0], pixel[1], file: file, line: line)
+            XCTAssertEqual(pixel[1], pixel[2], file: file, line: line)
+            XCTAssertEqual(pixel[3], 255, file: file, line: line)
+        }
+        coverage(0, 0, expected: 64); coverage(1, 0, expected: 128); coverage(2, 0, expected: 191)
+        coverage(2, 2, expected: 0); coverage(1, 2, expected: 255); coverage(4, 4, expected: 26)
+        let input = registry.directory.appendingPathComponent("analysis.png")
+        try png.write(to: input)
+        XCTAssertThrowsError(try ImageProcessor.subjectMatte(url: input, x: .nan, y: 0, radius: 12))
+        try registry.release(url: url)
+        XCTAssertThrowsError(try registry.lease(url: url))
     }
 
     func testSchemeMIMEPathsAndStoppedTask() async throws {
@@ -215,6 +264,7 @@ final class WebViewSmokeTests: XCTestCase, WKNavigationDelegate {
         await fulfillment(of: [loaded], timeout: 30)
         let result = try await controller.webView.callAsyncJavaScript(DebugSmoke.initialScript, arguments: [:], in: nil, contentWorld: .page) as! [String: Any]
         XCTAssertEqual(result["editor"] as? Bool, true)
+        XCTAssertEqual(result["studio"] as? Bool, true)
         XCTAssertEqual(result["origin"] as? String, NativeConfig.origin)
         XCTAssertEqual(result["postBytes"] as? Int, 5 * 1024 * 1024)
         _ = try await controller.webView.callAsyncJavaScript(DebugSmoke.reloadScript, arguments: [:], in: nil, contentWorld: .page)
@@ -295,5 +345,126 @@ final class WebViewSmokeTests: XCTestCase, WKNavigationDelegate {
         try await navigate(webView)
         let stored = try await webView.callAsyncJavaScript(DebugSmoke.reloadScript, arguments: [:], in: nil, contentWorld: .page) as! [String: Any]
         XCTAssertEqual(stored["localStorage"] as? Bool, true); XCTAssertEqual(stored["indexedDB"] as? Bool, true)
+    }
+
+    func testStudioMaskPixelsAndHistorySurviveIndexedDBReopen() async throws {
+        // This harness has its own nonpersistent store; it cannot touch a user's projects.
+        let root = Bundle.main.resourceURL!.appendingPathComponent("web", isDirectory: true)
+        let webView = try harness(root: root)
+        try await navigate(webView)
+        let result = try await webView.callAsyncJavaScript("""
+          const report = {ok:false,stage:'import',cleanupErrors:[]};
+          let writer = null, reader = null, projectId = null;
+          const surfaces = [];
+          const surface = () => {
+            const value = document.createElement('canvas');
+            value.width = value.height = 128; surfaces.push(value); return value;
+          };
+          const encode = value => new Promise((resolve,reject) => value.toBlob(blob => blob ? resolve(blob) : reject(Error('PNG encoding failed')), 'image/png'));
+          const pixels = async blob => {
+            const image = await createImageBitmap(blob), value = surface();
+            try {
+              value.getContext('2d').drawImage(image,0,0);
+              return value.getContext('2d').getImageData(0,0,128,128).data;
+            } finally { image.close(); }
+          };
+          const alpha = bytes => [bytes[(16*128+16)*4+3],bytes[(64*128+64)*4+3],bytes[(4*128+4)*4+3]];
+          try {
+            const {createStudio} = await import('/gesso/studio/engine.js');
+            const source = surface(), context = source.getContext('2d');
+            context.fillStyle = '#d04020'; context.fillRect(0,0,128,128);
+            const sourceBlob = await encode(source);
+            const file = new File([sourceBlob],'native-studio-test.png',{type:'image/png'});
+            // Diagnostic only: probe raw Blob support separately from the engine's
+            // byte fallback. Delete only this test's uniquely named database.
+            const probeName = 'gesso-native-blob-' + crypto.randomUUID();
+            let probe = null;
+            try {
+              probe = await new Promise((resolve,reject) => {
+                const request = indexedDB.open(probeName,1);
+                request.onupgradeneeded = () => request.result.createObjectStore('files');
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+              });
+              await new Promise((resolve,reject) => {
+                const tx = probe.transaction('files','readwrite');
+                const request = tx.objectStore('files').put(file,'known-file');
+                let requestError = null;
+                request.onerror = () => { requestError = request.error; };
+                tx.oncomplete = () => resolve();
+                tx.onabort = tx.onerror = event => reject(event.target?.error ?? requestError ?? tx.error ?? Error('Raw Blob transaction aborted'));
+              });
+              report.rawBlob = {ok:true};
+            } catch (error) { report.rawBlob = {ok:false,name:error.name,message:error.message}; }
+            finally {
+              probe?.close();
+              await new Promise((resolve,reject) => {
+                const request = indexedDB.deleteDatabase(probeName);
+                request.onsuccess = () => resolve(); request.onerror = () => reject(request.error);
+              });
+            }
+            report.stage = 'createStudio'; writer = await createStudio();
+            report.persistent = writer.persistent;
+            await writer.newProject('Native isolated alpha test'); projectId = writer.project.id;
+            report.stage = 'addPhoto';
+            const layer = await writer.addPhoto(file);
+            report.initialLayerCount = writer.project.layers.length;
+            const mask = surface(), maskContext = mask.getContext('2d');
+            maskContext.fillStyle = 'rgba(255,255,255,'+(128/255)+')'; maskContext.fillRect(0,0,128,128);
+            maskContext.clearRect(48,48,32,32);
+            maskContext.clearRect(0,0,8,8); maskContext.fillStyle = '#fff'; maskContext.fillRect(0,0,8,8);
+            report.stage = 'setMask'; await writer.setMask(layer.id,mask);
+            report.stage = 'firstExport'; const first = await pixels(await writer.exportImage());
+            report.beforeAlpha = alpha(first);
+            report.stage = 'flush'; await writer.flush();
+            report.stage = 'reopen'; reader = await createStudio(); await reader.open(projectId);
+            report.reopenedPersistent = reader.persistent;
+            report.width = reader.project.width; report.height = reader.project.height;
+            report.restoredLayerCount = reader.project.layers.length;
+            report.hasMask = !!reader.project.layers[0].maskId;
+            report.canUndo = reader.canUndo;
+            const restored = await pixels(await reader.exportImage());
+            report.afterAlpha = alpha(restored);
+            report.samePixels = first.length === restored.length && first.every((value,index) => value === restored[index]);
+            report.stage = 'undo'; await reader.undo();
+            report.undoLayerCount = reader.project.layers.length;
+            report.undoHasMask = !!reader.project.layers[0].maskId;
+            report.undoAlpha = alpha(await pixels(await reader.exportImage()));
+            report.canRedo = reader.canRedo;
+            report.stage = 'redo'; await reader.redo();
+            report.redoAlpha = alpha(await pixels(await reader.exportImage()));
+            await reader.flush(); report.ok = true; report.stage = 'complete';
+          } catch (error) {
+            report.error = {name:error.name,message:error.message,writer:writer?.error,reader:reader?.error};
+          } finally {
+            // Both engines may hold a snapshot, so clear each before disposing.
+            for (const engine of [writer,reader]) {
+              if (!engine) continue;
+              try { if (projectId) await engine.removeProject(projectId); }
+              catch (error) { report.cleanupErrors.push(error.message); }
+              engine.dispose();
+            }
+            for (const value of surfaces) value.width = value.height = 0;
+          }
+          return report;
+          """, arguments: [:], in: nil, contentWorld: .page) as! [String: Any]
+        print("Gesso Studio WK storage report: \(result)")
+        XCTAssertEqual(result["ok"] as? Bool, true, "\(result)")
+        XCTAssertEqual(result["persistent"] as? Bool, true)
+        XCTAssertEqual(result["reopenedPersistent"] as? Bool, true)
+        XCTAssertEqual(result["initialLayerCount"] as? Int, 1)
+        XCTAssertEqual(result["restoredLayerCount"] as? Int, 1)
+        XCTAssertEqual(result["width"] as? Int, 128); XCTAssertEqual(result["height"] as? Int, 128)
+        XCTAssertEqual(result["hasMask"] as? Bool, true)
+        XCTAssertEqual(result["samePixels"] as? Bool, true)
+        XCTAssertEqual(result["beforeAlpha"] as? [Int], [128, 0, 255])
+        XCTAssertEqual(result["afterAlpha"] as? [Int], [128, 0, 255])
+        XCTAssertEqual(result["canUndo"] as? Bool, true)
+        XCTAssertEqual(result["undoLayerCount"] as? Int, 1)
+        XCTAssertEqual(result["undoHasMask"] as? Bool, false)
+        XCTAssertEqual(result["undoAlpha"] as? [Int], [255, 255, 255])
+        XCTAssertEqual(result["canRedo"] as? Bool, true)
+        XCTAssertEqual(result["redoAlpha"] as? [Int], [128, 0, 255])
+        XCTAssertEqual(result["cleanupErrors"] as? [String], [])
     }
 }
