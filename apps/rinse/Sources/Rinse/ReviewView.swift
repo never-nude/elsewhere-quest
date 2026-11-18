@@ -164,7 +164,6 @@ struct ReviewView: View {
                 Spacer()
                 Button("Done") {
                     model.finishWash()
-                    ReviewWindow.shared.close()
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)

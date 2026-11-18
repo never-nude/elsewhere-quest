@@ -127,7 +127,7 @@ struct MenuPanel: View {
 
     private func open(settings: Bool = false) {
         // Put the drop-down away before the window comes forward.
-        NSApp.keyWindow?.close()
+        if let panel = NSApp.keyWindow, !ReviewWindow.shared.owns(panel) { panel.close() }
         model.openReview(settings: settings)
     }
 }

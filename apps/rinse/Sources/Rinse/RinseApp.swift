@@ -8,23 +8,50 @@ struct RinseApp: App {
     @State private var model = AppModel.shared
 
     var body: some Scene {
-        MenuBarExtra {
+        @Bindable var model = model
+        // Rinse is an ordinary Dock app. The menu bar drop is an extra, and can be switched off.
+        MenuBarExtra(isInserted: $model.prefs.showMenuBarItem) {
             MenuPanel().environment(model)
         } label: {
             Image(systemName: model.hasResidue ? "drop.fill" : "drop")
-            if model.prefs.showSizeInMenuBar, model.hasResidue {
+            if model.prefs.showAmount, model.hasResidue {
                 Text(ByteFormat.string(model.selectedBytes))
             }
         }
         .menuBarExtraStyle(.window)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { model.openReview(settings: true) }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
+            CommandGroup(replacing: .newItem) {
+                Button("Show Rinse") { model.openReview() }
+                    .keyboardShortcut("0", modifiers: .command)
+                Button("Look Again") { Task { await model.scan() } }
+                    .keyboardShortcut("r", modifiers: .command)
+            }
+        }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Rinse lives in the menu bar: no Dock icon, even when run straight from `swift run`.
-        NSApp.setActivationPolicy(.accessory)
+        // A bare `swift run` binary has no Info.plist to say so, so say it here: Dock icon, menus, windows.
+        NSApp.setActivationPolicy(.regular)
+        MainMenu.installIfMissing()
         AppModel.shared.start()
+        AppModel.shared.openReview()
+    }
+
+    /// Clicking the Dock icon brings the window back.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        AppModel.shared.openReview()
+        return false
+    }
+
+    /// Closing the window leaves Rinse running, so the evening reminder and the Dock badge keep working.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
     }
 }
 

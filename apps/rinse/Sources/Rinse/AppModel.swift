@@ -7,7 +7,21 @@ struct Prefs: Codable, Equatable {
     var ritualEnabled = true
     var ritualHour = 21
     var ritualMinute = 30
-    var showSizeInMenuBar = true
+    /// Show the amount ready to wash on the Dock icon and beside the menu bar drop.
+    var showAmount = true
+    var showMenuBarItem = true
+
+    init() {}
+
+    /// Settings saved by an earlier version may lack newer keys; those keep their defaults.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        ritualEnabled = try c.decodeIfPresent(Bool.self, forKey: .ritualEnabled) ?? ritualEnabled
+        ritualHour = try c.decodeIfPresent(Int.self, forKey: .ritualHour) ?? ritualHour
+        ritualMinute = try c.decodeIfPresent(Int.self, forKey: .ritualMinute) ?? ritualMinute
+        showAmount = try c.decodeIfPresent(Bool.self, forKey: .showAmount) ?? showAmount
+        showMenuBarItem = try c.decodeIfPresent(Bool.self, forKey: .showMenuBarItem) ?? showMenuBarItem
+    }
 }
 
 enum Phase: Equatable {
@@ -58,7 +72,17 @@ final class AppModel {
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.tick() }
         }
+        trackBadge()
         Task { await scan() }
+    }
+
+    /// Keeps the Dock badge equal to the amount ready to wash, for as long as the app runs.
+    private func trackBadge() {
+        withObservationTracking {
+            NSApp.dockTile.badgeLabel = prefs.showAmount && hasResidue ? ByteFormat.string(selectedBytes) : nil
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.trackBadge() }
+        }
     }
 
     /// Runs once a minute: the evening reminder, and an hourly look to keep the menu bar honest.

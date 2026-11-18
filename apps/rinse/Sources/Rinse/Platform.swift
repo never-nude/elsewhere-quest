@@ -103,13 +103,51 @@ final class ReviewWindow {
             made.contentMinSize = NSSize(width: 560, height: 480)
             made.setContentSize(NSSize(width: 720, height: 680))
             made.center()
+            made.setFrameAutosaveName("RinseMainWindow")
             window = made
         }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
 
-    func close() {
-        window?.close()
+    func owns(_ other: NSWindow?) -> Bool {
+        other != nil && other === window
+    }
+}
+
+/// SwiftUI normally builds the menu bar. If it has not, this gives the app the essentials.
+@MainActor
+enum MainMenu {
+    static func installIfMissing() {
+        guard (NSApp.mainMenu?.items.isEmpty ?? true) else { return }
+        let main = NSMenu()
+
+        let app = NSMenu()
+        app.addItem(withTitle: "About Rinse", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.addItem(.separator())
+        app.addItem(withTitle: "Hide Rinse", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        app.addItem(withTitle: "Quit Rinse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        main.addItem(submenu(app, title: "Rinse"))
+
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        main.addItem(submenu(edit, title: "Edit"))
+
+        let window = NSMenu(title: "Window")
+        window.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        main.addItem(submenu(window, title: "Window"))
+
+        NSApp.mainMenu = main
+        NSApp.windowsMenu = window
+    }
+
+    private static func submenu(_ menu: NSMenu, title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.submenu = menu
+        return item
     }
 }

@@ -13,6 +13,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Rinse"
 cp Support/Info.plist "$APP/Contents/Info.plist"
+cp Support/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 codesign --force --sign - "$APP"
 echo "Built $APP"
 
@@ -21,5 +22,5 @@ if [ "${1:-}" = "--install" ]; then
     rm -rf "/Applications/Rinse.app"
     cp -R "$APP" "/Applications/Rinse.app"
     open "/Applications/Rinse.app"
-    echo "Installed to /Applications and opened. Look for the drop in the menu bar."
+    echo "Installed to /Applications and opened. Rinse is in the Dock."
 fi

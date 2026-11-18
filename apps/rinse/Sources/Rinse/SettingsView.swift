@@ -17,7 +17,10 @@ struct SettingsView: View {
                     Toggle("Remind me to rinse", isOn: $model.prefs.ritualEnabled)
                     DatePicker("At", selection: ritualTime, displayedComponents: .hourAndMinute)
                         .disabled(!model.prefs.ritualEnabled)
-                    Toggle("Show the amount in the menu bar", isOn: $model.prefs.showSizeInMenuBar)
+                }
+                Section("Where Rinse shows up") {
+                    Toggle("Show the amount on the Dock icon", isOn: $model.prefs.showAmount)
+                    Toggle("Show a drop in the menu bar", isOn: $model.prefs.showMenuBarItem)
                     Toggle("Open Rinse at login", isOn: $openAtLogin)
                     if let loginError {
                         Text(loginError).font(.caption).foregroundStyle(.secondary)
