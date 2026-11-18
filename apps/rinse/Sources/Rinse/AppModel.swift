@@ -10,6 +10,8 @@ struct Prefs: Codable, Equatable {
     /// Show the amount ready to wash on the Dock icon and beside the menu bar drop.
     var showAmount = true
     var showMenuBarItem = true
+    /// Where filed items go. Nil means "Filed Away" in Documents.
+    var archivePath: String?
 
     init() {}
 
@@ -21,16 +23,27 @@ struct Prefs: Codable, Equatable {
         ritualMinute = try c.decodeIfPresent(Int.self, forKey: .ritualMinute) ?? ritualMinute
         showAmount = try c.decodeIfPresent(Bool.self, forKey: .showAmount) ?? showAmount
         showMenuBarItem = try c.decodeIfPresent(Bool.self, forKey: .showMenuBarItem) ?? showMenuBarItem
+        archivePath = try c.decodeIfPresent(String.self, forKey: .archivePath)
     }
 }
 
 enum Phase: Equatable {
-    case review, washing, clean
+    case review, working, clean
 }
 
-/// How much of a category is checked.
-enum Mark {
-    case none, some, all
+/// What one rinse did.
+struct RinseReport {
+    let wash: WashReport
+    let file: FileReport
+    let archive: URL
+
+    var failures: [WashReport.Failure] { wash.failures + file.failures }
+    var didNothing: Bool { wash.washed.isEmpty && file.filed.isEmpty }
+}
+
+extension Residue {
+    /// Caches rebuild themselves, so there is nothing in them worth filing.
+    var canBeFiled: Bool { self != .caches && self != .developer }
 }
 
 @MainActor
@@ -41,14 +54,14 @@ final class AppModel {
     var result: ScanResult?
     var isScanning = false
     var phase: Phase = .review
-    var lastReport: WashReport?
+    var lastReport: RinseReport?
     var rules: Rules
     var prefs: Prefs
     var ledger: Ledger
     var showSettings = false
 
-    /// Where the owner disagreed with the rules: path to checked or not.
-    private var overrides: [String: Bool] = [:]
+    /// Where the owner disagreed with the recommendation: path to what they chose instead.
+    private var overrides: [String: Verdict] = [:]
     @ObservationIgnored private var rescanQueued = false
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private let defaults = UserDefaults.standard
@@ -63,6 +76,11 @@ final class AppModel {
         ledger = Ledger.load(from: Self.ledgerURL)
     }
 
+    /// Where filed items go.
+    var archive: URL {
+        prefs.archivePath.map { URL(fileURLWithPath: $0) } ?? Locations.defaultArchive(home: home)
+    }
+
     // MARK: - Lifecycle
 
     func start() {
@@ -73,27 +91,44 @@ final class AppModel {
             Task { @MainActor in await self?.tick() }
         }
         trackBadge()
+        trackSettings()
         Task { await scan() }
     }
 
     /// Keeps the Dock badge equal to the amount ready to wash, for as long as the app runs.
     private func trackBadge() {
         withObservationTracking {
-            NSApp.dockTile.badgeLabel = prefs.showAmount && hasResidue ? ByteFormat.string(selectedBytes) : nil
+            NSApp.dockTile.badgeLabel = prefs.showAmount && hasResidue ? ByteFormat.string(washBytes) : nil
         } onChange: { [weak self] in
             Task { @MainActor in self?.trackBadge() }
         }
     }
 
-    /// Runs once a minute: the evening reminder, and an hourly look to keep the menu bar honest.
+    /// Saves the rules and preferences whenever anything changes them, from any window or menu.
+    private func trackSettings() {
+        withObservationTracking {
+            _ = rules
+            _ = prefs
+        } onChange: { [weak self] in
+            Task { @MainActor in
+                self?.saveSettings()
+                self?.trackSettings()
+            }
+        }
+    }
+
+    /// Runs once a minute: the evening reminder, and an hourly look to keep the numbers honest.
     private func tick() async {
         let now = Date()
         if prefs.ritualEnabled, ritualIsDue(now) {
             defaults.set(Self.dayKey(now), forKey: "lastRitualDay")
             await scan()
-            if selectedBytes > 0 { Notifier.shared.announce(bytes: selectedBytes) }
-        } else if !ReviewWindow.shared.isVisible,
+            if washBytes > 0 || !fileFindings.isEmpty {
+                Notifier.shared.announce(bytes: washBytes, toFile: fileFindings.count)
+            }
+        } else if !(NSApp.isActive && ReviewWindow.shared.isVisible), phase == .review,
                   now.timeIntervalSince(result?.scannedAt ?? .distantPast) > 3600 {
+            // Never under the owner's hands: only while they are looking elsewhere.
             await scan()
         }
     }
@@ -112,83 +147,97 @@ final class AppModel {
 
     // MARK: - Scanning
 
+    /// Looks again. Returns once a pass that started after this call has finished.
     func scan() async {
         if isScanning {
             rescanQueued = true
+            while isScanning { try? await Task.sleep(nanoseconds: 200_000_000) }
             return
         }
         isScanning = true
         repeat {
             rescanQueued = false
             let scanner = Scanner(
-                locations: Locations(home: home, screenshotFolder: Platform.screenshotFolder()),
-                rules: rules, now: Date())
-            result = await Task.detached(priority: .utility) { scanner.scan() }.value
+                locations: Locations(home: home, screenshotFolder: Platform.screenshotFolder(), archive: archive),
+                rules: rules, now: Date(), usage: { Platform.usage($0) })
+            let fresh = await Task.detached(priority: .utility) { scanner.scan() }.value
+            // The owner may have hidden something while the pass was running.
+            let ignored = rules.ignored
+            result = ScanResult(findings: fresh.findings.filter { !ignored.contains($0.id) }, scannedAt: fresh.scannedAt)
         } while rescanQueued
         isScanning = false
     }
 
-    // MARK: - Selection
+    // MARK: - Choices
 
-    var selectedFindings: [Finding] { (result?.findings ?? []).filter(isSelected) }
-    var selectedBytes: Int64 { selectedFindings.reduce(0) { $0 + $1.bytes } }
-    var hasResidue: Bool { selectedBytes > 0 }
+    /// What will happen to an item: the recommendation, unless the owner chose otherwise.
+    func action(for finding: Finding) -> Verdict { overrides[finding.id] ?? finding.verdict }
 
-    func isSelected(_ finding: Finding) -> Bool { overrides[finding.id] ?? finding.suggested }
-
-    func setSelected(_ finding: Finding, _ on: Bool) { overrides[finding.id] = on }
-
-    func mark(for category: Residue) -> Mark {
-        let all = result?.findings(in: category) ?? []
-        let checked = all.filter(isSelected).count
-        return checked == 0 ? .none : checked == all.count ? .all : .some
+    func setAction(_ finding: Finding, _ action: Verdict) {
+        overrides[finding.id] = action == .file && !finding.category.canBeFiled ? .leave : action
     }
 
-    /// Clicking a category's box checks everything, unless everything already is.
-    func toggle(_ category: Residue) {
-        let on = mark(for: category) != .all
-        for finding in result?.findings(in: category) ?? [] { overrides[finding.id] = on }
+    /// Sets every item Rinse recommended one thing for to the same action.
+    func setAll(recommended verdict: Verdict, to action: Verdict) {
+        for finding in result?.findings(recommended: verdict) ?? [] { setAction(finding, action) }
     }
+
+    var washFindings: [Finding] { (result?.findings ?? []).filter { action(for: $0) == .wash } }
+    var fileFindings: [Finding] { (result?.findings ?? []).filter { action(for: $0) == .file } }
+    var washBytes: Int64 { washFindings.reduce(0) { $0 + $1.bytes } }
+    var hasResidue: Bool { washBytes > 0 }
+    var hasWork: Bool { !washFindings.isEmpty || !fileFindings.isEmpty }
 
     /// "Never show this again."
     func ignore(_ finding: Finding) {
         rules.ignored.insert(finding.id)
         overrides[finding.id] = nil
-        if let current = result {
-            result = ScanResult(findings: current.findings.filter { $0.id != finding.id }, scannedAt: current.scannedAt)
-        }
-        saveSettings()
+        drop([finding.id])
     }
 
-    // MARK: - Washing
+    private func drop(_ ids: Set<String>) {
+        guard let current = result else { return }
+        result = ScanResult(findings: current.findings.filter { !ids.contains($0.id) }, scannedAt: current.scannedAt)
+    }
 
-    func wash() async {
-        let chosen = selectedFindings
-        guard !chosen.isEmpty, phase != .washing else { return }
-        phase = .washing
-        let home = self.home
+    // MARK: - Rinsing
+
+    /// Washes what is marked to go and files what is marked to keep.
+    func rinse() async {
+        let toWash = washFindings, toFile = fileFindings
+        guard !toWash.isEmpty || !toFile.isEmpty, phase != .working else { return }
+        phase = .working
+        let home = self.home, archive = self.archive
         let report = await Task.detached(priority: .userInitiated) {
-            Washer.wash(chosen, home: home, trasher: SystemTrasher())
+            RinseReport(
+                wash: Washer.wash(toWash, home: home, trasher: SystemTrasher()),
+                file: Filer.file(toFile, home: home, archive: archive),
+                archive: archive)
         }.value
-        ledger.record(bytes: report.bytes, count: report.washed.count, at: Date())
+        ledger.record(bytes: report.wash.bytes, count: report.wash.washed.count, at: Date())
         try? ledger.save(to: Self.ledgerURL)
-        for finding in chosen { overrides[finding.id] = nil }
+        for finding in toWash + toFile { overrides[finding.id] = nil }
+        // Take what moved off the list now, so the numbers are right while the next look runs.
+        drop(Set(report.wash.washed.map(\.id) + report.file.filed.map(\.id)))
         lastReport = report
         phase = .clean
         await scan()
     }
 
-    func finishWash() {
+    func finishRinse() {
         phase = .review
         lastReport = nil
     }
 
     // MARK: - Windows
 
+    /// Brings the window forward. It never throws away what is on screen.
     func openReview(settings: Bool = false) {
-        if phase == .clean { finishWash() }
-        showSettings = settings
+        if settings { showSettings = true }
         ReviewWindow.shared.show(model: self)
+        if phase == .review, Date().timeIntervalSince(result?.scannedAt ?? .distantPast) > 300 {
+            Task { await scan() }
+        }
     }
 
     // MARK: - Persistence

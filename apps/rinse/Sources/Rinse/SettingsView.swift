@@ -1,3 +1,4 @@
+import AppKit
 import RinseCore
 import SwiftUI
 
@@ -19,14 +20,25 @@ struct SettingsView: View {
                         .disabled(!model.prefs.ritualEnabled)
                 }
                 Section("Where Rinse shows up") {
-                    Toggle("Show the amount on the Dock icon", isOn: $model.prefs.showAmount)
+                    Toggle("Show the amount on the Dock icon and in the menu bar", isOn: $model.prefs.showAmount)
                     Toggle("Show a drop in the menu bar", isOn: $model.prefs.showMenuBarItem)
                     Toggle("Open Rinse at login", isOn: $openAtLogin)
                     if let loginError {
                         Text(loginError).font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                Section("Check these for me") {
+                Section("Filing folder") {
+                    LabeledContent(model.archive.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
+                        Button("Choose…") { chooseArchive() }
+                        if model.prefs.archivePath != nil {
+                            Button("Use Default") { model.prefs.archivePath = nil }
+                        }
+                    }
+                    Text("Things worth keeping move here, sorted by kind and month. Choose a folder on another disk and filing frees space too.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Section("Count as dormant") {
                     Stepper("Screenshots older than \(days(model.rules.screenshotDays))",
                             value: $model.rules.screenshotDays, in: 0...90)
                     Stepper("Screen recordings older than \(days(model.rules.recordingDays))",
@@ -41,7 +53,7 @@ struct SettingsView: View {
                         }
                     }
                 }
-                Section("Show these, but leave them unchecked") {
+                Section("Also weigh up") {
                     Stepper("Downloads untouched for \(days(model.rules.staleDownloadDays))",
                             value: $model.rules.staleDownloadDays, in: 7...365, step: 7)
                     Stepper("Big files idle for \(days(model.rules.bigFileIdleDays))",
@@ -75,8 +87,6 @@ struct SettingsView: View {
             .padding(12)
         }
         .frame(width: 480, height: 620)
-        .onChange(of: model.rules) { model.saveSettings() }
-        .onChange(of: model.prefs) { model.saveSettings() }
         .onChange(of: openAtLogin) { _, on in
             guard on != LoginItem.isEnabled else { return }
             loginError = LoginItem.set(on)
@@ -85,6 +95,16 @@ struct SettingsView: View {
         .onDisappear {
             Task { await model.scan() }
         }
+    }
+
+    private func chooseArchive() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.prompt = "File Here"
+        panel.message = "Choose where Rinse files things away."
+        if panel.runModal() == .OK, let url = panel.url { model.prefs.archivePath = url.path }
     }
 
     private func days(_ count: Int) -> String {

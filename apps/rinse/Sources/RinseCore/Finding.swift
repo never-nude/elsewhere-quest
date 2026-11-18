@@ -11,21 +11,22 @@ public struct Finding: Identifiable, Hashable, Sendable {
     public let bytes: Int64
     public let lastTouched: Date
     public let isDirectory: Bool
-    /// True when the rules are confident enough to pre-check it.
-    public let suggested: Bool
-    /// A short human reason, such as "12 days old".
-    public let reason: String
+    /// What Rinse recommends, how sure it is, and why.
+    public let assessment: Assessment
+
+    public var verdict: Verdict { assessment.verdict }
+    /// A short human line, such as "Taken 12 days ago · never opened".
+    public var reason: String { assessment.reasons.joined(separator: " · ") }
 
     public init(url: URL, name: String, category: Residue, bytes: Int64, lastTouched: Date,
-                isDirectory: Bool, suggested: Bool, reason: String) {
+                isDirectory: Bool, assessment: Assessment) {
         self.url = url
         self.name = name
         self.category = category
         self.bytes = bytes
         self.lastTouched = lastTouched
         self.isDirectory = isDirectory
-        self.suggested = suggested
-        self.reason = reason
+        self.assessment = assessment
     }
 }
 
@@ -39,7 +40,15 @@ public struct ScanResult: Sendable {
     }
 
     public var totalBytes: Int64 { findings.reduce(0) { $0 + $1.bytes } }
-    public var suggestedBytes: Int64 { findings.filter(\.suggested).reduce(0) { $0 + $1.bytes } }
+    /// Space the recommended washes would give back.
+    public var washBytes: Int64 { findings(recommended: .wash).reduce(0) { $0 + $1.bytes } }
+
+    /// Findings Rinse recommends one thing for: surest first, then biggest.
+    public func findings(recommended verdict: Verdict) -> [Finding] {
+        findings.filter { $0.verdict == verdict }.sorted {
+            ($0.assessment.confidence, $0.bytes) > ($1.assessment.confidence, $1.bytes)
+        }
+    }
 
     /// Categories that have at least one finding, in display order.
     public var categories: [Residue] {

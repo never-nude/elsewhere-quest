@@ -15,7 +15,7 @@ struct MenuPanel: View {
             Button {
                 open()
             } label: {
-                Text(model.hasResidue ? "Start the Rinse" : "Look It Over")
+                Text(model.hasWork ? "Start the Rinse" : "Look It Over")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
@@ -46,12 +46,14 @@ struct MenuPanel: View {
 
     private var headline: String {
         if model.result == nil { return "Looking…" }
-        return model.hasResidue ? ByteFormat.string(model.selectedBytes) : "All clear"
+        return model.hasResidue ? ByteFormat.string(model.washBytes) : "All clear"
     }
 
     private var subhead: String {
         guard let result = model.result else { return "Checking the usual corners" }
-        if model.hasResidue { return "ready to wash off" }
+        let filing = model.fileFindings.count
+        if model.hasResidue { return filing > 0 ? "ready to wash off, \(filing) to file" : "ready to wash off" }
+        if filing > 0 { return "\(filing) \(filing == 1 ? "thing" : "things") to file away" }
         if result.totalBytes > 0 { return "\(ByteFormat.string(result.totalBytes)) more if you want to dig" }
         return "Nothing to wash off"
     }
@@ -106,12 +108,6 @@ struct MenuPanel: View {
                 Image(systemName: "gearshape")
             }
             .help("Settings")
-            Button {
-                NSApp.terminate(nil)
-            } label: {
-                Image(systemName: "power")
-            }
-            .help("Quit Rinse")
         }
         .buttonStyle(.borderless)
     }

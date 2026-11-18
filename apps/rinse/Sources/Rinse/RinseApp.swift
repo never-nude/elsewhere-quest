@@ -15,7 +15,7 @@ struct RinseApp: App {
         } label: {
             Image(systemName: model.hasResidue ? "drop.fill" : "drop")
             if model.prefs.showAmount, model.hasResidue {
-                Text(ByteFormat.string(model.selectedBytes))
+                Text(ByteFormat.string(model.washBytes))
             }
         }
         .menuBarExtraStyle(.window)
@@ -40,7 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         MainMenu.installIfMissing()
         AppModel.shared.start()
-        AppModel.shared.openReview()
+        // Opened by hand, the window comes forward. Started at login, Rinse stays quietly in the Dock.
+        if !Platform.wasLaunchedAtLogin() { AppModel.shared.openReview() }
     }
 
     /// Clicking the Dock icon brings the window back.

@@ -47,8 +47,23 @@ final class FakeHome {
         XCTAssertEqual(utimes(target.path, &times), 0)
     }
 
+    /// Names the tests want treated as downloaded from the web, or as never opened.
+    var downloaded: Set<String> = []
+    var neverOpened: Set<String> = []
+    var opened: Set<String> = []
+    var archive: URL?
+
     func scan(_ rules: Rules = Rules(), screenshotFolder: URL? = nil) -> ScanResult {
-        Scanner(locations: Locations(home: url, screenshotFolder: screenshotFolder), rules: rules, now: now).scan()
+        let (downloaded, neverOpened, opened) = (self.downloaded, self.neverOpened, self.opened)
+        return Scanner(
+            locations: Locations(home: url, screenshotFolder: screenshotFolder, archive: archive),
+            rules: rules, now: now,
+            usage: { url in
+                if neverOpened.contains(url.lastPathComponent) { return Usage(lastOpened: nil) }
+                if opened.contains(url.lastPathComponent) { return Usage(lastOpened: Date(timeIntervalSince1970: 1)) }
+                return nil
+            },
+            hasOrigin: { downloaded.contains($0.lastPathComponent) }).scan()
     }
 }
 
@@ -67,6 +82,8 @@ final class ScannerTests: XCTestCase {
     override func setUpWithError() throws { home = try FakeHome() }
     override func tearDown() { home = nil }
 
+    private func folder_verdict(_ result: ScanResult) -> Verdict? { find(result, "Old Project")?.verdict }
+
     private func find(_ result: ScanResult, _ name: String) -> Finding? {
         result.findings.first { $0.url.lastPathComponent == name }
     }
@@ -79,10 +96,11 @@ final class ScannerTests: XCTestCase {
 
         let old = try XCTUnwrap(find(result, "Screenshot 2026-11-01 at 9.41.00 AM.png"))
         XCTAssertEqual(old.category, .screenshots)
-        XCTAssertTrue(old.suggested)
+        XCTAssertEqual(old.verdict, .wash)
         XCTAssertEqual(old.reason, "Taken 12 days ago")
         let fresh = try XCTUnwrap(find(result, "Screenshot 2026-11-18 at 8.00.00 AM.png"))
-        XCTAssertFalse(fresh.suggested)
+        XCTAssertEqual(fresh.verdict, .leave)
+        XCTAssertEqual(fresh.reason, "Taken today · still recent")
         XCTAssertNil(find(result, "holiday.png"), "an ordinary picture is not a screenshot")
     }
 
@@ -104,11 +122,12 @@ final class ScannerTests: XCTestCase {
     func testInstallersAreClaimedOnceAndNotAlsoListedAsStaleDownloads() throws {
         try home.file("Downloads/Xcode_26.dmg", daysOld: 45)
         try home.file("Downloads/tool.pkg", daysOld: 1)
+        home.downloaded = ["Xcode_26.dmg", "tool.pkg"]
         let result = home.scan()
         XCTAssertEqual(result.findings.filter { $0.url.lastPathComponent == "Xcode_26.dmg" }.count, 1)
         XCTAssertEqual(find(result, "Xcode_26.dmg")?.category, .installers)
-        XCTAssertEqual(find(result, "Xcode_26.dmg")?.suggested, true)
-        XCTAssertEqual(find(result, "tool.pkg")?.suggested, false, "a one-day-old installer may not have been run yet")
+        XCTAssertEqual(find(result, "Xcode_26.dmg")?.verdict, .wash)
+        XCTAssertEqual(find(result, "tool.pkg")?.verdict, .leave, "a one-day-old installer may not have been run yet")
     }
 
     func testStaleDownloadsAreListedButNeverPreChecked() throws {
@@ -120,7 +139,8 @@ final class ScannerTests: XCTestCase {
 
         let pdf = try XCTUnwrap(find(result, "tax-return.pdf"))
         XCTAssertEqual(pdf.category, .staleDownloads)
-        XCTAssertFalse(pdf.suggested)
+        XCTAssertEqual(pdf.verdict, .file, "a document is filed, never washed")
+        XCTAssertEqual(folder_verdict(result), .file)
         let folder = try XCTUnwrap(find(result, "Old Project"))
         XCTAssertTrue(folder.isDirectory)
         XCTAssertGreaterThanOrEqual(folder.bytes, 50_000, "a folder counts everything inside it")
@@ -140,8 +160,8 @@ final class ScannerTests: XCTestCase {
 
         XCTAssertNil(find(result, "com.apple.Safari"))
         XCTAssertNil(find(result, "com.tiny.app"))
-        XCTAssertEqual(find(result, "com.spotify.client")?.suggested, true)
-        XCTAssertEqual(find(result, "com.medium.app")?.suggested, false)
+        XCTAssertEqual(find(result, "com.spotify.client")?.verdict, .wash)
+        XCTAssertEqual(find(result, "com.medium.app")?.verdict, .leave)
         XCTAssertEqual(find(result, "com.spotify.client")?.category, .caches)
     }
 
@@ -154,14 +174,24 @@ final class ScannerTests: XCTestCase {
         try home.file("Library/Developer/Xcode/DerivedData/Live-def/Build/x.o", kilobytes: 100)
         try home.file(".npm/_cacache/content/blob", kilobytes: 500)
         try home.file(".cache/pip/wheel", kilobytes: 500)
+        try home.file(".cache/somemodels/weights.bin", kilobytes: 500)
+        try home.file(".cache/huggingface/token", kilobytes: 500)
+        // Xcode writes deep inside a build folder, so the folder's own date says nothing.
+        try home.file("Library/Developer/Xcode/DerivedData/Daily-ghi/Logs/Build/today.xcactivitylog", kilobytes: 100)
+        home.age(home.url.appendingPathComponent("Library/Developer/Xcode/DerivedData/Daily-ghi"), days: 40)
+        home.age(home.url.appendingPathComponent("Library/Developer/Xcode/DerivedData/Daily-ghi/Logs"), days: 40)
         let result = home.scan(rules)
 
-        XCTAssertEqual(find(result, "Old-abc")?.suggested, true)
-        XCTAssertEqual(find(result, "Live-def")?.suggested, false)
+        XCTAssertEqual(find(result, "Old-abc")?.verdict, .wash)
+        XCTAssertEqual(find(result, "Live-def")?.verdict, .leave)
+        XCTAssertEqual(find(result, "Daily-ghi")?.verdict, .leave, "built today, whatever the top folder says")
+        XCTAssertEqual(find(result, "pip")?.verdict, .wash)
+        XCTAssertEqual(find(result, "somemodels")?.verdict, .leave, "an unknown tool folder is never pre-chosen")
+        XCTAssertNil(find(result, "huggingface"), "model and login stores are not listed at all")
         let npm = try XCTUnwrap(find(result, "_cacache"))
         XCTAssertEqual(npm.name, "npm cache")
         XCTAssertEqual(npm.category, .developer)
-        XCTAssertTrue(npm.suggested)
+        XCTAssertEqual(npm.verdict, .wash)
         XCTAssertEqual(find(result, "pip")?.category, .developer)
     }
 
@@ -176,7 +206,7 @@ final class ScannerTests: XCTestCase {
 
         let render = try XCTUnwrap(find(result, "render.mov"))
         XCTAssertEqual(render.category, .bigIdle)
-        XCTAssertFalse(render.suggested)
+        XCTAssertEqual(render.verdict, .leave, "same disk: moving it would free nothing")
         XCTAssertNil(find(result, "small.txt"))
         XCTAssertNil(find(result, "active.psd"))
         XCTAssertNil(find(result, "clip.mov"), "a library or project bundle is one document")
@@ -204,8 +234,160 @@ final class ScannerTests: XCTestCase {
         let result = home.scan()
         XCTAssertEqual(result.categories, [.screenshots])
         XCTAssertGreaterThanOrEqual(result.totalBytes, 200_000)
-        XCTAssertLessThan(result.suggestedBytes, result.totalBytes)
+        XCTAssertLessThan(result.washBytes, result.totalBytes)
+        XCTAssertGreaterThan(result.washBytes, 0)
         XCTAssertEqual(result.bytes(in: .screenshots), result.totalBytes)
+    }
+}
+
+extension ScannerTests {
+    func testADiskImageWithNoDownloadRecordIsNeverWashed() throws {
+        try home.file("Desktop/Taxes.dmg", daysOld: 45)
+        try home.file("Downloads/Installer.dmg", daysOld: 45)
+        home.downloaded = ["Installer.dmg"]
+        let result = home.scan()
+        XCTAssertEqual(find(result, "Installer.dmg")?.verdict, .wash)
+        let own = try XCTUnwrap(find(result, "Taxes.dmg"))
+        XCTAssertEqual(own.verdict, .file)
+        XCTAssertTrue(own.reason.contains("may be your own"))
+    }
+
+    func testOpenedScreenshotsAreFiledAndUnopenedOnesGo() throws {
+        try home.file("Desktop/Screenshot used.png", daysOld: 30)
+        try home.file("Desktop/Screenshot unused.png", daysOld: 30)
+        home.opened = ["Screenshot used.png"]
+        home.neverOpened = ["Screenshot unused.png"]
+        let result = home.scan()
+        XCTAssertEqual(find(result, "Screenshot used.png")?.verdict, .file)
+        XCTAssertEqual(find(result, "Screenshot unused.png")?.verdict, .wash)
+        XCTAssertEqual(find(result, "Screenshot unused.png")?.reason, "Taken 30 days ago · never opened")
+    }
+
+    func testDownloadsSplitByWhatTheyAre() throws {
+        try home.file("Downloads/project.zip", daysOld: 90)
+        try home.file("Downloads/statement.pdf", daysOld: 90)
+        try home.file("Downloads/clip.mov", daysOld: 90)
+        home.downloaded = ["project.zip", "statement.pdf", "clip.mov"]
+        home.neverOpened = ["statement.pdf"]
+        let result = home.scan()
+        XCTAssertEqual(find(result, "project.zip")?.verdict, .wash)
+        XCTAssertEqual(find(result, "statement.pdf")?.verdict, .file, "a document stays yours even if it could be fetched again")
+        XCTAssertEqual(find(result, "clip.mov")?.verdict, .file)
+    }
+
+    func testTheFilingFolderIsNeverScanned() throws {
+        home.archive = home.url.appendingPathComponent("Downloads/Filed")
+        try home.file("Downloads/Filed/Screenshots/2025-01/Screenshot old.png", daysOld: 300)
+        home.age(home.url.appendingPathComponent("Downloads/Filed"), days: 300)
+        var rules = Rules()
+        rules.bigFileBytes = 1
+        XCTAssertTrue(home.scan(rules).findings.isEmpty)
+    }
+
+    func testRecommendationsComeSurestFirst() throws {
+        try home.file("Desktop/Screenshot a.png", daysOld: 8)
+        try home.file("Desktop/Screenshot b.png", daysOld: 300)
+        let washes = home.scan().findings(recommended: .wash)
+        XCTAssertEqual(washes.map(\.url.lastPathComponent), ["Screenshot b.png", "Screenshot a.png"])
+        XCTAssertGreaterThan(washes[0].assessment.confidence, washes[1].assessment.confidence)
+    }
+}
+
+final class JudgeTests: XCTestCase {
+    private func judge(_ kind: Residue, _ name: String = "x", idle: Int = 0, limit: Judge.Limit = .age(days: 7),
+                       bytes: Int64 = 0, origin: Bool = false, usage: Usage? = nil, directory: Bool = false,
+                       otherDisk: Bool = false) -> Assessment {
+        Judge.assess(Judge.Evidence(kind: kind, name: name, isDirectory: directory, bytes: bytes, idleDays: idle,
+                                    limit: limit, hasOrigin: origin, usage: usage, filingFreesSpace: otherDisk))
+    }
+
+    func testNothingIsRecommendedBeforeItsLimit() {
+        for kind in Residue.allCases {
+            XCTAssertEqual(judge(kind, idle: 6, limit: .age(days: 7), origin: true).verdict, .leave, "\(kind)")
+        }
+        XCTAssertEqual(judge(.caches, limit: .size(bytes: 100), bytes: 99).verdict, .leave)
+        XCTAssertEqual(judge(.caches, limit: .size(bytes: 100), bytes: 100).verdict, .wash)
+    }
+
+    func testConfidenceGrowsWithIdleTimeAndStaysInRange() {
+        var last = 0
+        for idle in [7, 14, 30, 90, 400, 4000] {
+            let a = judge(.screenshots, idle: idle)
+            XCTAssertEqual(a.verdict, .wash)
+            XCTAssertGreaterThanOrEqual(a.confidence, last)
+            XCTAssertTrue((0...100).contains(a.confidence))
+            last = a.confidence
+        }
+        XCTAssertGreaterThan(last, judge(.screenshots, idle: 7).confidence)
+    }
+
+    func testYourOwnThingsAreFiledNotWashed() {
+        XCTAssertEqual(judge(.staleDownloads, "thesis.pages", idle: 400, limit: .age(days: 30)).verdict, .file)
+        XCTAssertEqual(judge(.staleDownloads, "Project", idle: 400, limit: .age(days: 30), directory: true).verdict, .file)
+        XCTAssertEqual(judge(.staleDownloads, "photo.heic", idle: 400, limit: .age(days: 30), origin: true,
+                             usage: Usage(lastOpened: nil)).verdict, .file)
+        XCTAssertEqual(judge(.staleDownloads, "unknown.xyz", idle: 400, limit: .age(days: 30), origin: true).verdict, .file)
+        XCTAssertEqual(judge(.staleDownloads, "bundle.zip", idle: 400, limit: .age(days: 30)).verdict, .wash)
+    }
+
+    func testBigIdleFilesAreOnlyFiledWhenThatFreesSpace() {
+        XCTAssertEqual(judge(.bigIdle, "render.mov", idle: 400, limit: .age(days: 60)).verdict, .leave)
+        XCTAssertEqual(judge(.bigIdle, "render.mov", idle: 400, limit: .age(days: 60), otherDisk: true).verdict, .file)
+        XCTAssertEqual(judge(.bigIdle, "ubuntu.iso", idle: 400, limit: .age(days: 60), origin: true).verdict, .wash)
+    }
+
+    func testRenamedCapturesAndUnknownToolDataAreProtected() {
+        var e = Judge.Evidence(kind: .screenshots, name: "Passport receipt.png", idleDays: 400, limit: .age(days: 7))
+        e.renamed = true
+        XCTAssertEqual(Judge.assess(e).verdict, .file)
+        var tool = Judge.Evidence(kind: .developer, name: "models", bytes: 1_000_000_000, idleDays: 0, limit: .size(bytes: 100))
+        tool.regenerable = false
+        XCTAssertEqual(Judge.assess(tool).verdict, .leave)
+    }
+}
+
+final class FilerTests: XCTestCase {
+    func testFilingSortsByKindAndMonthAndNeverOverwrites() throws {
+        let home = try FakeHome()
+        let archive = home.url.appendingPathComponent("Documents/Filed Away")
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        try home.file("Downloads/statement.pdf", daysOld: 90)
+        let first = home.scan().findings
+        XCTAssertEqual(first.map(\.verdict), [.file])
+        let month = Filer.folder(for: first[0], archive: archive, calendar: utc)
+        XCTAssertEqual(month.deletingLastPathComponent().lastPathComponent, "Stale downloads")
+        XCTAssertEqual(month.lastPathComponent.count, 7)
+
+        let one = Filer.file(first, home: home.url, archive: archive, calendar: utc)
+        XCTAssertEqual(one.filed.map(\.destination.lastPathComponent), ["statement.pdf"])
+        XCTAssertTrue(one.failures.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: first[0].url.path))
+
+        try home.file("Downloads/statement.pdf", daysOld: 90)
+        let two = Filer.file(home.scan().findings, home: home.url, archive: archive, calendar: utc)
+        XCTAssertEqual(two.filed.map(\.destination.lastPathComponent), ["statement 2.pdf"])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: month.path).sorted(), ["statement 2.pdf", "statement.pdf"])
+        XCTAssertTrue(home.scan().findings.isEmpty, "filed items are out of Rinse's sight")
+    }
+
+    func testFilingRefusesCachesProtectedPlacesAndItself() throws {
+        let home = try FakeHome()
+        let archive = try home.folder("Documents/Filed Away")
+        func finding(_ url: URL, _ kind: Residue) -> Finding {
+            Finding(url: url, name: url.lastPathComponent, category: kind, bytes: 1, lastTouched: Date(),
+                    isDirectory: true, assessment: Assessment(verdict: .file, confidence: 100, reasons: []))
+        }
+        let cache = try home.folder("Library/Caches/com.some.app")
+        let documents = home.url.appendingPathComponent("Documents")
+        let inside = try home.folder("Documents/Filed Away/Screenshots")
+        let report = Filer.file(
+            [finding(cache, .caches), finding(documents, .bigIdle), finding(inside, .bigIdle), finding(archive, .bigIdle)],
+            home: home.url, archive: archive)
+        XCTAssertTrue(report.filed.isEmpty)
+        XCTAssertEqual(report.failures.count, 4)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: inside.path))
     }
 }
 
@@ -216,6 +398,7 @@ final class WasherTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: bin) }
         let shot = try home.file("Desktop/Screenshot a.png", daysOld: 30)
         try home.file("Downloads/app.dmg", daysOld: 30)
+        home.downloaded = ["app.dmg"]
         let scan = home.scan()
         XCTAssertEqual(scan.findings.count, 2)
 
@@ -233,7 +416,7 @@ final class WasherTests: XCTestCase {
         let home = try FakeHome()
         let desktop = try home.folder("Desktop")
         let finding = Finding(url: desktop, name: "Desktop", category: .bigIdle, bytes: 1, lastTouched: Date(),
-                              isDirectory: true, suggested: true, reason: "")
+                              isDirectory: true, assessment: Assessment(verdict: .wash, confidence: 100, reasons: []))
         let report = Washer.wash([finding], home: home.url, trasher: FolderTrasher(bin: home.url.appendingPathComponent("x")))
         XCTAssertTrue(report.washed.isEmpty)
         XCTAssertEqual(report.failures.count, 1)

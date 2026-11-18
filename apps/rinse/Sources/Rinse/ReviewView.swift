@@ -2,10 +2,11 @@ import AppKit
 import RinseCore
 import SwiftUI
 
-/// The rinse itself: look over what was found, then wash.
+/// The rinse itself: Rinse's recommendations, the owner's corrections, then one button.
 struct ReviewView: View {
     @Environment(AppModel.self) private var model
-    @State private var collapsed: Set<Residue> = []
+    @State private var collapsed: Set<Verdict> = [.leave]
+    @State private var showingHow = false
 
     var body: some View {
         @Bindable var model = model
@@ -16,7 +17,7 @@ struct ReviewView: View {
             Divider()
             footer
         }
-        .frame(minWidth: 560, minHeight: 480)
+        .frame(minWidth: 620, minHeight: 480)
         .tint(.water)
         .sheet(isPresented: $model.showSettings) {
             SettingsView().environment(self.model)
@@ -41,6 +42,13 @@ struct ReviewView: View {
             if model.isScanning {
                 ProgressView().controlSize(.small)
             }
+            Button {
+                showingHow = true
+            } label: {
+                Image(systemName: "questionmark.circle")
+            }
+            .help("How Rinse decides")
+            .popover(isPresented: $showingHow, arrowEdge: .bottom) { HowItDecides() }
             Button {
                 Task { await model.scan() }
             } label: {
@@ -92,68 +100,67 @@ struct ReviewView: View {
         }
     }
 
+    /// One section per recommendation, so the question "what should go?" is answered by where a row sits.
     private func list(_ result: ScanResult) -> some View {
         List {
-            ForEach(result.categories) { category in
-                Section {
-                    if !collapsed.contains(category) {
-                        ForEach(result.findings(in: category)) { finding in
-                            FindingRow(finding: finding)
+            ForEach(Verdict.allCases) { verdict in
+                let rows = result.findings(recommended: verdict)
+                if !rows.isEmpty {
+                    Section {
+                        if !collapsed.contains(verdict) {
+                            ForEach(rows) { finding in
+                                FindingRow(finding: finding)
+                            }
                         }
+                    } header: {
+                        sectionHeader(verdict, rows: rows)
                     }
-                } header: {
-                    categoryHeader(category, result: result)
                 }
             }
         }
         .listStyle(.inset)
-        .disabled(model.phase == .washing)
+        .disabled(model.phase == .working)
     }
 
-    private func categoryHeader(_ category: Residue, result: ScanResult) -> some View {
+    private func sectionHeader(_ verdict: Verdict, rows: [Finding]) -> some View {
         HStack(spacing: 10) {
-            Button {
-                model.toggle(category)
-            } label: {
-                Image(systemName: markSymbol(model.mark(for: category)))
-                    .font(.system(size: 15))
-                    .foregroundStyle(model.mark(for: category) == .none ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.water))
-            }
-            .buttonStyle(.plain)
-            .help("Check or uncheck all of these")
-            Image(systemName: category.symbol)
-                .frame(width: 20)
-                .foregroundStyle(.secondary)
+            Image(systemName: verdict.symbol)
+                .font(.system(size: 16))
+                .frame(width: 22)
+                .foregroundStyle(verdict == .leave ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.water))
             VStack(alignment: .leading, spacing: 1) {
-                Text(category.title)
+                Text("\(verdict.title)  ·  \(rows.count)")
                     .font(.headline)
                     .foregroundStyle(.primary)
-                Text(category.blurb)
+                Text(verdict.blurb)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Text(ByteFormat.string(result.bytes(in: category)))
+            Text(ByteFormat.string(rows.reduce(0) { $0 + $1.bytes }))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
-            Button {
-                if collapsed.contains(category) { collapsed.remove(category) } else { collapsed.insert(category) }
+            Menu {
+                Button("Wash All of These") { model.setAll(recommended: verdict, to: .wash) }
+                Button("File All of These") { model.setAll(recommended: verdict, to: .file) }
+                Button("Leave All of These") { model.setAll(recommended: verdict, to: .leave) }
             } label: {
-                Image(systemName: collapsed.contains(category) ? "chevron.right" : "chevron.down")
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Change all of these at once")
+            Button {
+                if collapsed.contains(verdict) { collapsed.remove(verdict) } else { collapsed.insert(verdict) }
+            } label: {
+                Image(systemName: collapsed.contains(verdict) ? "chevron.right" : "chevron.down")
                     .frame(width: 16)
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
         }
         .padding(.vertical, 4)
-    }
-
-    private func markSymbol(_ mark: Mark) -> String {
-        switch mark {
-        case .none: return "square"
-        case .some: return "minus.square.fill"
-        case .all: return "checkmark.square.fill"
-        }
     }
 
     // MARK: - Footer
@@ -163,33 +170,42 @@ struct ReviewView: View {
             if model.phase == .clean {
                 Spacer()
                 Button("Done") {
-                    model.finishWash()
+                    model.finishRinse()
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
             } else {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(model.selectedFindings.count) checked")
-                    Text("Everything goes to the Trash, so you can still put it back.")
+                    Text("\(model.washFindings.count) to wash  ·  \(model.fileFindings.count) to file")
+                    Text("Washed items go to the Trash. Filed items move to “\(model.archive.lastPathComponent)”.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if model.phase == .washing {
+                if model.phase == .working {
                     ProgressView().controlSize(.small)
                 }
-                Button(model.hasResidue ? "Wash Off \(ByteFormat.string(model.selectedBytes))" : "Nothing Checked") {
-                    Task { await model.wash() }
+                Button(buttonTitle) {
+                    Task { await model.rinse() }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
-                .disabled(model.selectedFindings.isEmpty || model.phase == .washing)
+                .disabled(!model.hasWork || model.phase == .working)
             }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
+    }
+
+    private var buttonTitle: String {
+        let wash = model.washFindings.count, file = model.fileFindings.count
+        let amount = ByteFormat.string(model.washBytes)
+        if wash > 0, file > 0 { return "Wash \(amount) and File \(file)" }
+        if wash > 0 { return "Wash Off \(amount)" }
+        if file > 0 { return "File Away \(file)" }
+        return "Nothing Chosen"
     }
 }
 
@@ -198,12 +214,8 @@ private struct FindingRow: View {
     let finding: Finding
 
     var body: some View {
+        let action = model.action(for: finding)
         HStack(spacing: 10) {
-            Toggle("", isOn: Binding(
-                get: { model.isSelected(finding) },
-                set: { model.setSelected(finding, $0) }))
-                .toggleStyle(.checkbox)
-                .labelsHidden()
             Image(nsImage: NSWorkspace.shared.icon(forFile: finding.url.path))
                 .resizable()
                 .frame(width: 24, height: 24)
@@ -211,16 +223,38 @@ private struct FindingRow: View {
                 Text(finding.name)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(finding.reason)
+                Text(finding.reason.prefix(1).uppercased() + finding.reason.dropFirst())
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
             Spacer()
+            if finding.verdict != .leave {
+                Text("\(finding.assessment.confidence)%")
+                    .font(.caption.monospacedDigit().weight(.medium))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.water.opacity(0.08 + 0.22 * Double(finding.assessment.confidence) / 100), in: Capsule())
+                    .help("How sure Rinse is of its recommendation")
+            }
             Text(ByteFormat.string(finding.bytes))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
+                .frame(minWidth: 62, alignment: .trailing)
+            Picker("", selection: Binding(
+                get: { model.action(for: finding) },
+                set: { model.setAction(finding, $0) })) {
+                ForEach(Verdict.allCases.filter { $0 != .file || finding.category.canBeFiled }) { choice in
+                    Image(systemName: choice.symbol).tag(choice)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: finding.category.canBeFiled ? 108 : 74)
+            .help("Wash it, file it away, or leave it")
         }
         .padding(.vertical, 2)
+        .opacity(action == .leave ? 0.6 : 1)
         .contentShape(Rectangle())
         .help(finding.url.path)
         .contextMenu {
@@ -238,9 +272,48 @@ private struct FindingRow: View {
     }
 }
 
-/// After the wash: what went, what would not, and the option to make it final.
+/// The metric, in plain words.
+private struct HowItDecides: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("How Rinse decides")
+                .font(.headline)
+            Text("Every item is measured two ways.")
+            point("arrow.triangle.2.circlepath", "Replaceable",
+                  "Could you get it again without effort? A cache rebuilds itself and an installer downloads again. A document, a photo or a folder of your files does not.")
+            point("moon.zzz", "Dormant",
+                  "How long since anything touched it, against the limit for its kind. A screenshot is dormant after a week; a download after a month.")
+            Divider()
+            point("drop.fill", "Can go", "Dormant and replaceable.")
+            point("archivebox.fill", "File away", "Dormant, but yours: it moves to your filing folder instead of the Trash.")
+            point("pause.circle", "Leave for now", "Not dormant yet, or Rinse cannot tell what it is.")
+            Text("The percentage is how sure Rinse is. You can overrule any row with the three buttons at its right.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(width: 340)
+    }
+
+    private func point(_ symbol: String, _ title: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: symbol)
+                .frame(width: 20)
+                .foregroundStyle(Color.water)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).fontWeight(.medium)
+                Text(text)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// After the rinse: what went, what was filed, what would not move, and the option to make it final.
 private struct CleanView: View {
-    let report: WashReport
+    let report: RinseReport
     @State private var trashMessage: String?
     @State private var confirmingEmpty = false
 
@@ -249,7 +322,7 @@ private struct CleanView: View {
             Image(systemName: "drop.fill")
                 .font(.system(size: 56))
                 .foregroundStyle(.waterGradient)
-            Text(report.washed.isEmpty ? "Nothing moved" : "\(ByteFormat.string(report.bytes)) washed off")
+            Text(headline)
                 .font(.system(size: 30, weight: .semibold, design: .rounded))
             Text(caption)
                 .foregroundStyle(.secondary)
@@ -270,12 +343,19 @@ private struct CleanView: View {
                 }
                 .frame(maxWidth: 420)
             }
-            if !report.washed.isEmpty {
-                Button("Empty the Trash…") {
-                    confirmingEmpty = true
+            HStack(spacing: 10) {
+                if !report.file.filed.isEmpty {
+                    Button("Show Filed Items") {
+                        NSWorkspace.shared.activateFileViewerSelecting(report.file.filed.prefix(50).map(\.destination))
+                    }
                 }
-                .padding(.top, 6)
+                if !report.wash.washed.isEmpty {
+                    Button("Empty the Trash…") {
+                        confirmingEmpty = true
+                    }
+                }
             }
+            .padding(.top, 6)
             if let trashMessage {
                 Text(trashMessage)
                     .font(.caption)
@@ -293,9 +373,22 @@ private struct CleanView: View {
         }
     }
 
+    private var headline: String {
+        if report.didNothing { return "Nothing moved" }
+        if report.wash.washed.isEmpty { return "\(report.file.filed.count) filed away" }
+        return "\(ByteFormat.string(report.wash.bytes)) washed off"
+    }
+
     private var caption: String {
-        if report.washed.isEmpty { return "None of the checked items could be moved." }
-        let count = report.washed.count
-        return "\(count) \(count == 1 ? "item is" : "items are") in the Trash.\nThe space comes back when the Trash is emptied."
+        if report.didNothing { return "None of the chosen items could be moved." }
+        var lines: [String] = []
+        let washed = report.wash.washed.count, filed = report.file.filed.count
+        if washed > 0 {
+            lines.append("\(washed) \(washed == 1 ? "item is" : "items are") in the Trash. The space comes back when the Trash is emptied.")
+        }
+        if filed > 0 {
+            lines.append("\(filed) \(filed == 1 ? "item is" : "items are") filed in “\(report.archive.lastPathComponent)”, by kind and month.")
+        }
+        return lines.joined(separator: "\n")
     }
 }

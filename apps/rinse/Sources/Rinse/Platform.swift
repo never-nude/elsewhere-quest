@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import RinseCore
 import ServiceManagement
 import SwiftUI
@@ -17,6 +18,22 @@ enum Platform {
         let value = CFPreferencesCopyAppValue("location" as CFString, "com.apple.screencapture" as CFString)
         guard let raw = value as? String, !raw.isEmpty else { return nil }
         return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
+    }
+
+    /// Whether Spotlight has ever seen the file opened. Nil when Spotlight does not know the file.
+    static func usage(_ url: URL) -> Usage? {
+        guard let item = MDItemCreateWithURL(kCFAllocatorDefault, url as CFURL),
+              MDItemCopyAttribute(item, kMDItemContentType) != nil else { return nil }
+        return Usage(lastOpened: MDItemCopyAttribute(item, kMDItemLastUsedDate) as? Date)
+    }
+
+    /// True when macOS started the app as a login item, rather than the owner opening it.
+    @MainActor
+    static func wasLaunchedAtLogin() -> Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              event.eventID == AEEventID(kAEOpenApplication) else { return false }
+        return event.paramDescriptor(forKeyword: AEKeyword(keyAEPropData))?.enumCodeValue
+            == OSType(keyAELaunchedAsLogInItem)
     }
 
     /// Asks Finder to empty the Trash. This is the only step that cannot be undone.
@@ -59,11 +76,14 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    func announce(bytes: Int64) {
+    func announce(bytes: Int64, toFile: Int) {
         guard isAvailable else { return }
         let content = UNMutableNotificationContent()
         content.title = "Time to rinse"
-        content.body = "\(ByteFormat.string(bytes)) of residue is ready to wash off."
+        var parts: [String] = []
+        if bytes > 0 { parts.append("\(ByteFormat.string(bytes)) ready to wash off") }
+        if toFile > 0 { parts.append("\(toFile) \(toFile == 1 ? "thing" : "things") to file away") }
+        content.body = parts.joined(separator: ", ") + "."
         content.sound = .default
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "rinse.ritual", content: content, trigger: nil))
@@ -100,8 +120,8 @@ final class ReviewWindow {
             made.title = "Rinse"
             made.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             made.isReleasedWhenClosed = false
-            made.contentMinSize = NSSize(width: 560, height: 480)
-            made.setContentSize(NSSize(width: 720, height: 680))
+            made.contentMinSize = NSSize(width: 620, height: 480)
+            made.setContentSize(NSSize(width: 780, height: 700))
             made.center()
             made.setFrameAutosaveName("RinseMainWindow")
             window = made

@@ -16,6 +16,8 @@ struct FileStat {
     let modified: Date
     let accessed: Date
     let created: Date
+    /// The disk it lives on.
+    let device: UInt64
 
     /// The most recent sign of life.
     var lastTouched: Date { max(modified, max(accessed, created)) }
@@ -27,6 +29,7 @@ struct FileStat {
         isDirectory = kind == S_IFDIR
         isRegular = kind == S_IFREG
         bytes = Int64(st.st_blocks) * 512
+        device = UInt64(truncatingIfNeeded: st.st_dev)
         #if canImport(Darwin)
         modified = Date(st.st_mtimespec)
         accessed = Date(st.st_atimespec)
@@ -48,6 +51,26 @@ struct FileStat {
             if let st = FileStat(path: path + "/" + relative) { total += st.bytes }
         }
         return total
+    }
+
+    /// The disk a path is on, or would be on once created: the nearest folder that exists decides.
+    static func device(ofNearestExisting url: URL) -> UInt64? {
+        var current = url.standardizedFileURL
+        while true {
+            if let st = FileStat(path: current.path) { return st.device }
+            let parent = current.deletingLastPathComponent()
+            if parent.path == current.path { return nil }
+            current = parent
+        }
+    }
+
+    /// True when macOS recorded where the file was downloaded from, so it can be fetched again.
+    static func hasOrigin(_ path: String) -> Bool {
+        #if canImport(Darwin)
+        return getxattr(path, "com.apple.metadata:kMDItemWhereFroms", nil, 0, 0, XATTR_NOFOLLOW) >= 0
+        #else
+        return false
+        #endif
     }
 
     /// True when macOS itself tagged the file as a screen capture.

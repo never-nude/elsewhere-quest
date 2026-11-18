@@ -5,10 +5,17 @@ public struct Locations: Equatable, Sendable {
     public var home: URL
     /// Where macOS saves screenshots when the owner moved it off the Desktop.
     public var screenshotFolder: URL?
+    /// Where filed items go. Rinse never looks inside it.
+    public var archive: URL
 
-    public init(home: URL, screenshotFolder: URL? = nil) {
+    public init(home: URL, screenshotFolder: URL? = nil, archive: URL? = nil) {
         self.home = home
         self.screenshotFolder = screenshotFolder
+        self.archive = archive ?? Locations.defaultArchive(home: home)
+    }
+
+    public static func defaultArchive(home: URL) -> URL {
+        home.appendingPathComponent("Documents/Filed Away")
     }
 }
 
@@ -17,12 +24,28 @@ public struct Scanner: Sendable {
     public let locations: Locations
     public let rules: Rules
     public let now: Date
+    /// Asks the system whether a file was ever opened. Nil when it cannot say.
+    public let usage: @Sendable (URL) -> Usage?
+    /// Says whether macOS recorded where a file was downloaded from.
+    public let hasOrigin: @Sendable (URL) -> Bool
 
-    public init(locations: Locations, rules: Rules = Rules(), now: Date = Date()) {
+    public init(locations: Locations, rules: Rules = Rules(), now: Date = Date(),
+                usage: @escaping @Sendable (URL) -> Usage? = { _ in nil },
+                hasOrigin: (@Sendable (URL) -> Bool)? = nil) {
         self.locations = locations
         self.rules = rules
         self.now = now
+        self.usage = usage
+        self.hasOrigin = hasOrigin ?? { FileStat.hasOrigin($0.path) }
     }
+
+    /// Tool folders in `~/.cache` known to hold nothing but a cache.
+    static let pureCaches: Set<String> = [
+        "pip", "uv", "yarn", "pnpm", "go-build", "pre-commit", "node-gyp", "Homebrew", "typescript",
+        "puppeteer", "ms-playwright", "deno", "bazel", "ccache", "sccache", "electron", "cypress",
+    ]
+    /// Tool folders in `~/.cache` that hold models or logins. Rinse does not list them.
+    static let notCaches: Set<String> = ["huggingface", "torch", "whisper", "lm-studio", "ollama", "gcloud"]
 
     static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "tiff", "gif", "pdf"]
     static let movieExtensions: Set<String> = ["mov", "mp4", "m4v"]
@@ -35,7 +58,10 @@ public struct Scanner: Sendable {
     ]
 
     public func scan() -> ScanResult {
-        var collector = Collector(rules: rules)
+        let filingFreesSpace = FileStat.device(ofNearestExisting: locations.archive)
+            != FileStat.device(ofNearestExisting: locations.home)
+        var collector = Collector(rules: rules, now: now, usage: usage, hasOrigin: hasOrigin,
+                                  filingFreesSpace: filingFreesSpace)
         if isOn(.screenshots) || isOn(.recordings) { scanCaptures(&collector) }
         if isOn(.installers) { scanInstallers(&collector) }
         if isOn(.caches) { scanCaches(&collector) }
@@ -53,20 +79,23 @@ public struct Scanner: Sendable {
         for item in folders.flatMap(children) where item.stat.isRegular {
             let ext = Self.fileExtension(item.name)
             let marked = FileStat.isMarkedScreenCapture(item.url.path)
-            let age = days(since: item.stat.lastTouched)
             if isOn(.screenshots), Self.imageExtensions.contains(ext), marked || Self.isScreenshotName(item.name) {
-                out.add(item, .screenshots, suggested: age >= rules.screenshotDays, reason: "Taken " + ago(item.stat.lastTouched))
+                out.add(item, .screenshots, limit: .age(days: rules.screenshotDays),
+                        lead: "Taken " + ago(item.stat.lastTouched), askUsage: true,
+                        renamed: !Self.isScreenshotName(item.name))
             } else if isOn(.recordings), Self.movieExtensions.contains(ext), marked || Self.isRecordingName(item.name) {
-                out.add(item, .recordings, suggested: age >= rules.recordingDays, reason: "Recorded " + ago(item.stat.lastTouched))
+                out.add(item, .recordings, limit: .age(days: rules.recordingDays),
+                        lead: "Recorded " + ago(item.stat.lastTouched), askUsage: true,
+                        renamed: !Self.isRecordingName(item.name))
             }
         }
     }
 
     private func scanInstallers(_ out: inout Collector) {
         for item in [home("Downloads"), home("Desktop")].flatMap(children)
-        where Self.installerExtensions.contains(Self.fileExtension(item.name)) {
-            let age = days(since: item.stat.lastTouched)
-            out.add(item, .installers, suggested: age >= rules.installerDays, reason: "Downloaded " + ago(item.stat.lastTouched))
+        where item.stat.isRegular && Self.installerExtensions.contains(Self.fileExtension(item.name)) {
+            out.add(item, .installers, limit: .age(days: rules.installerDays),
+                    lead: "Last touched " + ago(item.stat.lastTouched))
         }
     }
 
@@ -77,21 +106,24 @@ public struct Scanner: Sendable {
         where !item.name.hasPrefix("com.apple.") && !skipped.contains(item.name) {
             let bytes = FileStat.treeBytes(item.url.path)
             guard bytes >= rules.cacheListBytes else { continue }
-            out.add(item, .caches, bytes: bytes, suggested: bytes >= rules.cacheSuggestBytes, reason: "Rebuilds on demand")
+            out.add(item, .caches, bytes: bytes, limit: .size(bytes: rules.cacheSuggestBytes), lead: "App cache")
         }
     }
 
     private func scanDeveloper(_ out: inout Collector) {
         for item in children(home("Library/Developer/Xcode/DerivedData")) where item.stat.isDirectory {
-            let age = days(since: item.stat.lastTouched)
-            out.add(item, .developer, bytes: FileStat.treeBytes(item.url.path),
-                    suggested: age >= rules.buildDays, reason: "Xcode build, last used " + ago(item.stat.lastTouched))
+            // The folder's own dates do not move when Xcode builds; these inner ones do.
+            let touched = (["info.plist", "Logs/Build", "Build/Intermediates.noindex", "Index.noindex"]
+                .compactMap { FileStat(path: item.url.appendingPathComponent($0).path)?.lastTouched }
+                + [item.stat.lastTouched]).max() ?? item.stat.lastTouched
+            out.add(item, .developer, bytes: FileStat.treeBytes(item.url.path), limit: .age(days: rules.buildDays),
+                    lead: "Xcode build, last used " + ago(touched), touched: touched)
         }
         for folder in ["iOS DeviceSupport", "watchOS DeviceSupport", "tvOS DeviceSupport"] {
             for item in children(home("Library/Developer/Xcode/" + folder)) where item.stat.isDirectory {
-                let age = days(since: item.stat.lastTouched)
                 out.add(item, .developer, bytes: FileStat.treeBytes(item.url.path),
-                        suggested: age >= rules.deviceSupportDays, reason: "Device symbols, last used " + ago(item.stat.lastTouched))
+                        limit: .age(days: rules.deviceSupportDays),
+                        lead: "Device symbols, last used " + ago(item.stat.lastTouched))
             }
         }
         let wholeFolders: [(path: String, label: String)] = [
@@ -106,12 +138,14 @@ public struct Scanner: Sendable {
             let bytes = FileStat.treeBytes(url.path)
             guard bytes >= rules.cacheListBytes else { continue }
             out.add(Item(url: url, name: folder.label, stat: stat), .developer, bytes: bytes,
-                    suggested: bytes >= rules.cacheSuggestBytes, reason: "Refills as you work")
+                    limit: .size(bytes: rules.cacheSuggestBytes), lead: "Tool cache")
         }
-        for item in children(home(".cache"), includeHidden: true) where item.stat.isDirectory {
+        for item in children(home(".cache"), includeHidden: true)
+        where item.stat.isDirectory && !Self.notCaches.contains(item.name) {
             let bytes = FileStat.treeBytes(item.url.path)
             guard bytes >= rules.cacheListBytes else { continue }
-            out.add(item, .developer, bytes: bytes, suggested: bytes >= rules.cacheSuggestBytes, reason: "Tool cache, refills as you work")
+            out.add(item, .developer, bytes: bytes, limit: .size(bytes: rules.cacheSuggestBytes), lead: "Tool cache",
+                    regenerable: Self.pureCaches.contains(item.name))
         }
     }
 
@@ -119,7 +153,8 @@ public struct Scanner: Sendable {
         for item in children(home("Downloads")) {
             guard days(since: item.stat.lastTouched) >= rules.staleDownloadDays else { continue }
             out.add(item, .staleDownloads, bytes: FileStat.treeBytes(item.url.path),
-                    suggested: false, reason: "Untouched since " + ago(item.stat.lastTouched))
+                    limit: .age(days: rules.staleDownloadDays),
+                    lead: "Untouched since " + ago(item.stat.lastTouched), askUsage: true)
         }
     }
 
@@ -131,13 +166,14 @@ public struct Scanner: Sendable {
                 guard let stat = FileStat(path: url.path) else { continue }
                 if stat.isDirectory {
                     let isPackage = Self.packageExtensions.contains(Self.fileExtension(url.lastPathComponent))
-                    if isPackage || out.claims(url.path) { walker.skipDescendants() }
+                    if isPackage || out.claims(url.path) || url.path == locations.archive.path { walker.skipDescendants() }
                     continue
                 }
                 guard stat.isRegular, stat.bytes >= rules.bigFileBytes,
                       days(since: stat.lastTouched) >= rules.bigFileIdleDays else { continue }
                 out.add(Item(url: url, name: url.lastPathComponent, stat: stat), .bigIdle,
-                        suggested: false, reason: "Idle since " + ago(stat.lastTouched))
+                        limit: .age(days: rules.bigFileIdleDays),
+                        lead: "Idle since " + ago(stat.lastTouched), askUsage: true)
             }
         }
     }
@@ -162,7 +198,7 @@ public struct Scanner: Sendable {
         return names.sorted().compactMap { name in
             if !includeHidden && name.hasPrefix(".") { return nil }
             let url = folder.appendingPathComponent(name)
-            guard let stat = FileStat(path: url.path) else { return nil }
+            guard url.path != locations.archive.path, let stat = FileStat(path: url.path) else { return nil }
             return Item(url: url, name: name, stat: stat)
         }
     }
@@ -200,23 +236,50 @@ public struct Scanner: Sendable {
     }
 }
 
-/// Gathers findings so that each path is listed once, under the first category that claims it.
+/// Gathers findings so that each path is listed once, under the first category that claims it,
+/// and asks the Judge what to recommend for each.
 private struct Collector {
     let rules: Rules
+    let now: Date
+    let usage: @Sendable (URL) -> Usage?
+    let hasOrigin: @Sendable (URL) -> Bool
+    let filingFreesSpace: Bool
     private(set) var findings: [Finding] = []
     private var claimed: Set<String> = []
 
-    init(rules: Rules) { self.rules = rules }
+    init(rules: Rules, now: Date, usage: @escaping @Sendable (URL) -> Usage?,
+         hasOrigin: @escaping @Sendable (URL) -> Bool, filingFreesSpace: Bool) {
+        self.rules = rules
+        self.now = now
+        self.usage = usage
+        self.hasOrigin = hasOrigin
+        self.filingFreesSpace = filingFreesSpace
+    }
 
     func claims(_ path: String) -> Bool { claimed.contains(path) || rules.ignored.contains(path) }
 
-    mutating func add(_ item: Scanner.Item, _ category: Residue, bytes: Int64? = nil, suggested: Bool, reason: String) {
+    /// `lead` opens the reason line, for example "Taken 12 days ago".
+    mutating func add(_ item: Scanner.Item, _ category: Residue, bytes: Int64? = nil, limit: Judge.Limit,
+                      lead: String, askUsage: Bool = false, renamed: Bool = false, regenerable: Bool = true,
+                      touched: Date? = nil) {
         let path = item.url.path
         guard !claims(path) else { return }
         claimed.insert(path)
+        let size = bytes ?? item.stat.bytes
+        let lastTouched = touched ?? item.stat.lastTouched
+        var evidence = Judge.Evidence(
+            kind: category, name: item.url.lastPathComponent, isDirectory: item.stat.isDirectory, bytes: size,
+            idleDays: max(0, Int(now.timeIntervalSince(lastTouched) / 86_400)), limit: limit,
+            hasOrigin: item.stat.isDirectory ? false : hasOrigin(item.url),
+            usage: askUsage && !item.stat.isDirectory ? usage(item.url) : nil,
+            filingFreesSpace: filingFreesSpace)
+        evidence.renamed = renamed
+        evidence.regenerable = regenerable
+        let judged = Judge.assess(evidence)
         findings.append(Finding(
-            url: item.url, name: item.name, category: category, bytes: bytes ?? item.stat.bytes,
-            lastTouched: item.stat.lastTouched, isDirectory: item.stat.isDirectory,
-            suggested: suggested, reason: reason))
+            url: item.url, name: item.name, category: category, bytes: size,
+            lastTouched: lastTouched, isDirectory: item.stat.isDirectory,
+            assessment: Assessment(verdict: judged.verdict, confidence: judged.confidence,
+                                   reasons: [lead] + judged.reasons)))
     }
 }
