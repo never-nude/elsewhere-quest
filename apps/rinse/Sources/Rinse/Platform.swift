@@ -20,11 +20,12 @@ enum Platform {
         return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath)
     }
 
-    /// Whether Spotlight has ever seen the file opened. Nil when Spotlight does not know the file.
+    /// When Spotlight last saw the file opened, if it ever did. No record is not proof of no use
+    /// (Quick Look and dragging into a chat leave none), so that case reports nothing.
     static func usage(_ url: URL) -> Usage? {
         guard let item = MDItemCreateWithURL(kCFAllocatorDefault, url as CFURL),
-              MDItemCopyAttribute(item, kMDItemContentType) != nil else { return nil }
-        return Usage(lastOpened: MDItemCopyAttribute(item, kMDItemLastUsedDate) as? Date)
+              let opened = MDItemCopyAttribute(item, kMDItemLastUsedDate) as? Date else { return nil }
+        return Usage(lastOpened: opened)
     }
 
     /// True when macOS started the app as a login item, rather than the owner opening it.
@@ -124,6 +125,10 @@ final class ReviewWindow {
             made.setContentSize(NSSize(width: 780, height: 700))
             made.center()
             made.setFrameAutosaveName("RinseMainWindow")
+            // Closing the window on the report puts the report away, so the next look starts fresh.
+            NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: made, queue: .main) { _ in
+                MainActor.assumeIsolated { model.finishRinse() }
+            }
             window = made
         }
         NSApp.activate(ignoringOtherApps: true)

@@ -37,9 +37,9 @@ public enum Verdict: String, Codable, CaseIterable, Sendable, Identifiable {
     }
 }
 
-/// Whether a file has ever been opened, when the system can tell.
+/// A record that a file was opened. The absence of a record proves nothing: Quick Look,
+/// dragging into a chat and an app's own Open command leave none.
 public struct Usage: Equatable, Sendable {
-    /// Nil means it has never been opened.
     public let lastOpened: Date?
     public init(lastOpened: Date?) { self.lastOpened = lastOpened }
 }
@@ -79,9 +79,9 @@ public enum Judge {
         /// Days since anything touched it.
         public var idleDays: Int
         public var limit: Limit
-        /// True when macOS recorded where it was downloaded from.
+        /// True when macOS recorded that it was downloaded from a web address.
         public var hasOrigin: Bool
-        /// Nil when the system cannot say whether it was ever opened.
+        /// Set only when the system has a record of it being opened.
         public var usage: Usage?
         /// True when the filing folder is on another disk, so filing gives space back.
         public var filingFreesSpace: Bool
@@ -136,7 +136,7 @@ public enum Judge {
             case .age: why = "still recent"
             case .size: why = "small"
             }
-            return Assessment(verdict: .leave, confidence: percent(1 - dormant), reasons: reasons + [why])
+            return Assessment(verdict: .leave, confidence: percent(1 - dormant), reasons: [why])
         }
         if replaceable >= replaceableLine {
             return Assessment(verdict: .wash, confidence: percent(0.55 * replaceable + 0.45 * dormant), reasons: reasons)
@@ -157,37 +157,26 @@ public enum Judge {
         case .installers:
             // Without a download record it may be a disk image the owner made, so it is never washed.
             guard e.hasOrigin else { return (0.45, ["no download record, so it may be your own"]) }
-            return (0.95, ["an installer", "can be downloaded again"])
+            return (0.95, ["an installer", "downloaded from the web"])
         case .screenshots, .recordings:
             if e.renamed { return (0.3, ["you renamed it"]) }
-            let isShot = e.kind == .screenshots
-            guard let usage = e.usage else { return (isShot ? 0.7 : 0.5, []) }
-            if usage.lastOpened == nil { return (isShot ? 0.75 : 0.65, ["never opened"]) }
-            return (isShot ? 0.35 : 0.3, ["you have opened it"])
+            if e.usage?.lastOpened != nil { return (0.3, ["you have opened it"]) }
+            // A screenshot left under its default name with no sign of use is the one thing Rinse
+            // lets go without proof of a second copy. A recording is bigger and more deliberate.
+            if e.kind == .screenshots { return (0.7, ["no record of you opening it"]) }
+            return (0.5, [])
         case .staleDownloads, .bigIdle:
             if e.isDirectory { return (0.2, ["a folder of your files"]) }
-            var score = 0.4
-            var reasons: [String] = []
             let ext = Scanner.fileExtension(e.name)
             if disposable.contains(ext) {
-                score = 0.85
-                reasons.append("an archive or installer")
-            } else if documents.contains(ext) {
-                score = 0.25
-                reasons.append("a document")
-            } else if media.contains(ext) {
-                score = 0.25
-                reasons.append("a photo, video or sound file")
+                // Only an archive that came from the web can go; one you made may be the only copy.
+                guard e.hasOrigin else { return (0.45, ["an archive with no download record, so it may be your own"]) }
+                return (0.9, ["an archive or installer", "downloaded from the web"])
             }
-            if e.hasOrigin {
-                score += 0.1
-                reasons.append("can be downloaded again")
-            }
-            if let usage = e.usage, usage.lastOpened == nil {
-                score += 0.1
-                reasons.append("never opened")
-            }
-            return (min(score, 1), reasons)
+            if documents.contains(ext) { return (0.25, ["a document"]) }
+            if media.contains(ext) { return (0.25, ["a photo, video or sound file"]) }
+            // Rinse does not know what this is, and nothing about how it arrived changes that.
+            return (0.4, [])
         }
     }
 
@@ -195,7 +184,8 @@ public enum Judge {
     static func dormancy(_ e: Evidence) -> Double {
         switch e.limit {
         case .age(let days):
-            let idle = Double(max(0, e.idleDays)), limit = Double(max(0, days))
+            // At least a day: nothing made a moment ago is ever dormant.
+            let idle = Double(max(0, e.idleDays)), limit = Double(max(1, days))
             if idle < limit { return 0.5 * idle / limit }
             return 0.5 + 0.5 * min(1, (idle - limit) / (3 * limit + 7))
         case .size(let bytes):

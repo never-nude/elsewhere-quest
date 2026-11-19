@@ -60,8 +60,9 @@ final class AppModel {
     var ledger: Ledger
     var showSettings = false
 
-    /// Where the owner disagreed with the recommendation: path to what they chose instead.
-    private var overrides: [String: Verdict] = [:]
+    /// Where the owner disagreed with the recommendation: path to what they chose instead,
+    /// and the recommendation they were disagreeing with. If that changes, the choice no longer applies.
+    private var overrides: [String: (choice: Verdict, against: Verdict)] = [:]
     @ObservationIgnored private var rescanQueued = false
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private let defaults = UserDefaults.standard
@@ -76,9 +77,10 @@ final class AppModel {
         ledger = Ledger.load(from: Self.ledgerURL)
     }
 
-    /// Where filed items go.
+    /// Where filed items go: the chosen folder, or a "Filed Away" folder inside it when Rinse scans that place.
     var archive: URL {
-        prefs.archivePath.map { URL(fileURLWithPath: $0) } ?? Locations.defaultArchive(home: home)
+        Locations.filingFolder(chosen: prefs.archivePath.map { URL(fileURLWithPath: $0) }, home: home,
+                               screenshotFolder: Platform.screenshotFolder())
     }
 
     // MARK: - Lifecycle
@@ -164,6 +166,9 @@ final class AppModel {
             // The owner may have hidden something while the pass was running.
             let ignored = rules.ignored
             result = ScanResult(findings: fresh.findings.filter { !ignored.contains($0.id) }, scannedAt: fresh.scannedAt)
+            // A choice only stands while the item is still there and still recommended the same way.
+            let current = Dictionary(uniqueKeysWithValues: fresh.findings.map { ($0.id, $0.verdict) })
+            overrides = overrides.filter { current[$0.key] == $0.value.against }
         } while rescanQueued
         isScanning = false
     }
@@ -171,10 +176,14 @@ final class AppModel {
     // MARK: - Choices
 
     /// What will happen to an item: the recommendation, unless the owner chose otherwise.
-    func action(for finding: Finding) -> Verdict { overrides[finding.id] ?? finding.verdict }
+    func action(for finding: Finding) -> Verdict {
+        guard let override = overrides[finding.id], override.against == finding.verdict else { return finding.verdict }
+        return override.choice
+    }
 
     func setAction(_ finding: Finding, _ action: Verdict) {
-        overrides[finding.id] = action == .file && !finding.category.canBeFiled ? .leave : action
+        let choice = action == .file && !finding.category.canBeFiled ? .leave : action
+        overrides[finding.id] = choice == finding.verdict ? nil : (choice, finding.verdict)
     }
 
     /// Sets every item Rinse recommended one thing for to the same action.
@@ -210,21 +219,25 @@ final class AppModel {
         let home = self.home, archive = self.archive
         let report = await Task.detached(priority: .userInitiated) {
             RinseReport(
-                wash: Washer.wash(toWash, home: home, trasher: SystemTrasher()),
+                wash: Washer.wash(toWash, home: home, archive: archive, trasher: SystemTrasher()),
                 file: Filer.file(toFile, home: home, archive: archive),
                 archive: archive)
         }.value
         ledger.record(bytes: report.wash.bytes, count: report.wash.washed.count, at: Date())
         try? ledger.save(to: Self.ledgerURL)
-        for finding in toWash + toFile { overrides[finding.id] = nil }
+        // Only what really moved is forgotten. A choice about something that would not move still stands.
+        let moved = Set(report.wash.washed.map(\.id) + report.file.filed.map(\.id))
+        for id in moved { overrides[id] = nil }
         // Take what moved off the list now, so the numbers are right while the next look runs.
-        drop(Set(report.wash.washed.map(\.id) + report.file.filed.map(\.id)))
+        drop(moved)
         lastReport = report
         phase = .clean
         await scan()
     }
 
+    /// Puts the report away. Safe to call at any time; it does nothing while a rinse is running.
     func finishRinse() {
+        guard phase == .clean else { return }
         phase = .review
         lastReport = nil
     }

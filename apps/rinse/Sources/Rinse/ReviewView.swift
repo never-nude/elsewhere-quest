@@ -284,9 +284,9 @@ private struct HowItDecides: View {
             point("moon.zzz", "Dormant",
                   "How long since anything touched it, against the limit for its kind. A screenshot is dormant after a week; a download after a month.")
             Divider()
-            point("drop.fill", "Can go", "Dormant and replaceable.")
+            point("drop.fill", "Can go", "Dormant, and there is evidence it is replaceable: it rebuilds, or it was downloaded from the web.")
             point("archivebox.fill", "File away", "Dormant, but yours: it moves to your filing folder instead of the Trash.")
-            point("pause.circle", "Leave for now", "Not dormant yet, or Rinse cannot tell what it is.")
+            point("pause.circle", "Leave for now", "Not dormant yet, or moving it would gain nothing.")
             Text("The percentage is how sure Rinse is. You can overrule any row with the three buttons at its right.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

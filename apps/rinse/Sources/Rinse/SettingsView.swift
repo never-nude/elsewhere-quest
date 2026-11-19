@@ -40,13 +40,13 @@ struct SettingsView: View {
                 }
                 Section("Count as dormant") {
                     Stepper("Screenshots older than \(days(model.rules.screenshotDays))",
-                            value: $model.rules.screenshotDays, in: 0...90)
+                            value: $model.rules.screenshotDays, in: 1...90)
                     Stepper("Screen recordings older than \(days(model.rules.recordingDays))",
-                            value: $model.rules.recordingDays, in: 0...90)
+                            value: $model.rules.recordingDays, in: 1...90)
                     Stepper("Installers older than \(days(model.rules.installerDays))",
-                            value: $model.rules.installerDays, in: 0...90)
+                            value: $model.rules.installerDays, in: 1...90)
                     Stepper("Xcode builds unused for \(days(model.rules.buildDays))",
-                            value: $model.rules.buildDays, in: 0...90)
+                            value: $model.rules.buildDays, in: 1...90)
                     Picker("Caches larger than", selection: $model.rules.cacheSuggestBytes) {
                         ForEach([50, 100, 250, 500, 1000], id: \.self) { size in
                             Text("\(size) MB").tag(Int64(size) * Self.megabyte)

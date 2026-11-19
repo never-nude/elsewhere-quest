@@ -11,7 +11,27 @@ public struct Locations: Equatable, Sendable {
     public init(home: URL, screenshotFolder: URL? = nil, archive: URL? = nil) {
         self.home = home
         self.screenshotFolder = screenshotFolder
-        self.archive = archive ?? Locations.defaultArchive(home: home)
+        self.archive = Locations.filingFolder(chosen: archive, home: home, screenshotFolder: screenshotFolder)
+    }
+
+    /// The folders Rinse looks through. The filing folder must never be one of them, or contain one.
+    static func scanRoots(home: URL, screenshotFolder: URL?) -> [URL] {
+        ["Desktop", "Downloads", "Movies", "Documents"].map(home.appendingPathComponent)
+            + (screenshotFolder.map { [$0] } ?? [])
+    }
+
+    /// The folder filing really uses. If the owner picked a place Rinse scans (Documents, say),
+    /// or one that contains such a place, a "Filed Away" folder inside it is used instead,
+    /// so that filed things are never scanned again.
+    public static func filingFolder(chosen: URL?, home: URL, screenshotFolder: URL? = nil) -> URL {
+        guard let chosen else { return defaultArchive(home: home) }
+        let path = chosen.standardizedFileURL.path
+        let guarded = [home] + scanRoots(home: home, screenshotFolder: screenshotFolder)
+        let clashes = guarded.contains { root in
+            let rootPath = root.standardizedFileURL.path
+            return rootPath == path || rootPath.hasPrefix(path == "/" ? "/" : path + "/")
+        }
+        return clashes ? chosen.appendingPathComponent("Filed Away") : chosen.standardizedFileURL
     }
 
     public static func defaultArchive(home: URL) -> URL {
@@ -151,10 +171,17 @@ public struct Scanner: Sendable {
 
     private func scanStaleDownloads(_ out: inout Collector) {
         for item in children(home("Downloads")) {
-            guard days(since: item.stat.lastTouched) >= rules.staleDownloadDays else { continue }
-            out.add(item, .staleDownloads, bytes: FileStat.treeBytes(item.url.path),
+            // Links and other oddities are not the owner's files; an app run from Downloads is in use.
+            guard item.stat.isRegular || item.stat.isDirectory,
+                  !(item.stat.isDirectory && Self.fileExtension(item.name) == "app"),
+                  item.url.standardizedFileURL.path != locations.screenshotFolder?.standardizedFileURL.path,
+                  days(since: item.stat.lastTouched) >= rules.staleDownloadDays else { continue }
+            // A folder is as fresh as the newest thing inside it.
+            let summary = FileStat.treeSummary(item.url.path)
+            guard days(since: summary.newest) >= rules.staleDownloadDays else { continue }
+            out.add(item, .staleDownloads, bytes: summary.bytes,
                     limit: .age(days: rules.staleDownloadDays),
-                    lead: "Untouched since " + ago(item.stat.lastTouched), askUsage: true)
+                    lead: "Untouched since " + ago(summary.newest), askUsage: true, touched: summary.newest)
         }
     }
 
@@ -204,7 +231,7 @@ public struct Scanner: Sendable {
         return names.sorted().compactMap { name in
             if !includeHidden && name.hasPrefix(".") { return nil }
             let url = folder.appendingPathComponent(name)
-            guard !isArchive(url), let stat = FileStat(path: url.path) else { return nil }
+            guard !isArchive(url), !holdsArchive(url), let stat = FileStat(path: url.path) else { return nil }
             return Item(url: url, name: name, stat: stat)
         }
     }
@@ -212,6 +239,11 @@ public struct Scanner: Sendable {
     /// True for the filing folder itself, however its path is spelled.
     private func isArchive(_ url: URL) -> Bool {
         url.standardizedFileURL.path == locations.archive.standardizedFileURL.path
+    }
+
+    /// True for a folder with the filing folder somewhere inside it. Such a folder is never a finding.
+    private func holdsArchive(_ url: URL) -> Bool {
+        locations.archive.standardizedFileURL.path.hasPrefix(url.standardizedFileURL.path + "/")
     }
 
     private func days(since date: Date) -> Int {

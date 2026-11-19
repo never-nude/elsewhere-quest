@@ -6,28 +6,34 @@ A macOS app that keeps a pulse on the residue a working day leaves behind, and l
 
 Rinse does not ask you to judge every file. It measures each one two ways and puts it in one of three groups.
 
-- **Replaceable:** could you get it again without effort? A cache rebuilds itself and an installer downloads again. A document, a photo or a folder of your files does not.
-- **Dormant:** how long since anything touched it, against the limit for its kind.
+- **Replaceable:** is there evidence you could get it again? A cache rebuilds itself. An installer or archive that macOS recorded as downloaded from a web address can be fetched again. A document, a photo, a folder of your files, or anything Rinse cannot identify is treated as yours.
+- **Dormant:** how long since anything touched it, against the limit for its kind. A folder is as fresh as the newest thing inside it.
 
 | Group | Means | What happens |
 |---|---|---|
-| **Can go** | dormant and replaceable | moves to the Trash |
-| **File away** | dormant, but yours | moves to your filing folder, as `Kind/2026-11/name` |
-| **Leave for now** | not dormant yet, or Rinse cannot tell what it is | nothing |
+| **Can go** | dormant, with evidence it is replaceable | moves to the Trash |
+| **File away** | dormant, but yours | moves to your filing folder |
+| **Leave for now** | not dormant yet, or moving it would gain nothing | nothing |
 
-Each row shows the reasons ("Taken 30 days ago · never opened") and a percentage for how sure Rinse is. Three buttons on the row overrule it.
+Each row shows the reasons ("Taken 30 days ago · no record of you opening it") and a percentage for how sure Rinse is. Three buttons on the row overrule it.
 
 | Kind | Dormant after | Can go when | Otherwise |
 |---|---|---|---|
-| **Screenshots** | 7 days | never opened, or macOS cannot say | filed if you opened or renamed it |
-| **Screen recordings** | 7 days | never opened | filed |
-| **Installers** (`.dmg`, `.pkg`, `.xip`, `.iso`) | 3 days | macOS has a download record for it | filed: it may be a disk image you made |
+| **Screenshots** | 7 days | still under its default name, with no record of being opened | filed if you opened or renamed it |
+| **Screen recordings** | 7 days | never | filed |
+| **Installers** (`.dmg`, `.pkg`, `.xip`, `.iso`) | 3 days | downloaded from a web address | filed: it may be a disk image you made |
 | **App caches** (`~/Library/Caches`, not Apple's) | 100 MB | always | |
 | **Developer leftovers** | 7 days unused (Xcode builds), 100 MB (tool caches) | Xcode DerivedData and device support; simulator, npm, Gradle, Bun and known `~/.cache` tools | unknown `~/.cache` folders are left; model and login stores are not listed |
-| **Stale downloads** | 30 days | archives and installers | documents, media and folders are filed |
-| **Big and idle** (250 MB+, idle 60 days) | 60 days | downloaded archives and disk images | filed only if the filing folder is on another disk, where that frees space |
+| **Stale downloads** | 30 days | archives and installers downloaded from a web address | everything else is filed |
+| **Big and idle** (250 MB+) | 60 days | archives and disk images downloaded from a web address | filed only if the filing folder is on another disk, where that frees space; otherwise left |
 
-The filing folder is `~/Documents/Filed Away` unless you choose another in Settings. Rinse never looks inside it. The rules live in `Sources/RinseCore/Judge.swift`.
+Screenshots are the one case that goes without proof of a second copy; that is what they are for. If you would rather keep them, raise their limit in Settings or switch the kind off.
+
+**Filing.** The filing folder is `~/Documents/Filed Away` unless you choose another in Settings. Clutter is sorted as `Kind/2026-11/name`. A big file keeps its place, as `Big and idle/Documents/Clients/Acme/name`, so where it came from is not lost. Nothing is overwritten. Rinse never looks inside the filing folder; if you choose a place it scans, such as Documents itself, it files into a `Filed Away` folder there.
+
+**Last check.** Just before anything moves, Rinse looks at it again. If it is gone or was modified after the scan, it stays put and the report says so.
+
+The rules live in `Sources/RinseCore/Judge.swift`.
 
 ## How it behaves
 

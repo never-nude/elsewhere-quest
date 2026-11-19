@@ -43,18 +43,32 @@ public struct WashReport: Sendable {
     public var bytes: Int64 { washed.reduce(0) { $0 + $1.bytes } }
 }
 
+extension SafetyGuard {
+    /// Why an item must not be moved right now, or nil when it may be.
+    /// Checked at the last moment, because the scan that judged it may be hours old.
+    static func objection(to finding: Finding, home: URL, archive: URL?) -> String? {
+        guard canWash(finding.url, home: home) else { return "Rinse does not move this location" }
+        if let archive {
+            let path = finding.url.standardizedFileURL.path, filing = archive.standardizedFileURL.path
+            if path == filing || path.hasPrefix(filing + "/") { return "Already in the filing folder" }
+            if filing.hasPrefix(path + "/") { return "It holds the filing folder" }
+        }
+        guard let now = FileStat(path: finding.url.path) else { return "Already gone" }
+        guard now.isDirectory == finding.isDirectory, now.modified <= finding.lastTouched else {
+            return "Changed since Rinse looked"
+        }
+        return nil
+    }
+}
+
 public enum Washer {
     /// Sends each finding to the Trash. One failure never stops the rest.
-    public static func wash(_ findings: [Finding], home: URL, trasher: Trasher) -> WashReport {
+    public static func wash(_ findings: [Finding], home: URL, archive: URL? = nil, trasher: Trasher) -> WashReport {
         var washed: [Finding] = []
         var failures: [WashReport.Failure] = []
         for finding in findings {
-            guard SafetyGuard.canWash(finding.url, home: home) else {
-                failures.append(.init(finding: finding, message: "Rinse does not move this location"))
-                continue
-            }
-            guard FileManager.default.fileExists(atPath: finding.url.path) else {
-                failures.append(.init(finding: finding, message: "Already gone"))
+            if let objection = SafetyGuard.objection(to: finding, home: home, archive: archive) {
+                failures.append(.init(finding: finding, message: objection))
                 continue
             }
             do {
