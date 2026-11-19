@@ -160,13 +160,19 @@ public struct Scanner: Sendable {
 
     private func scanBigIdle(_ out: inout Collector) {
         for root in ["Desktop", "Downloads", "Movies", "Documents"].map(home) {
-            guard let walker = FileManager.default.enumerator(
-                at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else { continue }
-            while let url = walker.nextObject() as? URL {
+            // Paths are built from the root, so they are spelled the same way as everywhere else in the scan.
+            guard let walker = FileManager.default.enumerator(atPath: root.path) else { continue }
+            while let relative = walker.nextObject() as? String {
+                let url = root.appendingPathComponent(relative)
                 guard let stat = FileStat(path: url.path) else { continue }
+                let name = url.lastPathComponent
+                if name.hasPrefix(".") {
+                    if stat.isDirectory { walker.skipDescendants() }
+                    continue
+                }
                 if stat.isDirectory {
-                    let isPackage = Self.packageExtensions.contains(Self.fileExtension(url.lastPathComponent))
-                    if isPackage || out.claims(url.path) || url.path == locations.archive.path { walker.skipDescendants() }
+                    let isPackage = Self.packageExtensions.contains(Self.fileExtension(name))
+                    if isPackage || out.claims(url.path) || isArchive(url) { walker.skipDescendants() }
                     continue
                 }
                 guard stat.isRegular, stat.bytes >= rules.bigFileBytes,
@@ -198,9 +204,14 @@ public struct Scanner: Sendable {
         return names.sorted().compactMap { name in
             if !includeHidden && name.hasPrefix(".") { return nil }
             let url = folder.appendingPathComponent(name)
-            guard url.path != locations.archive.path, let stat = FileStat(path: url.path) else { return nil }
+            guard !isArchive(url), let stat = FileStat(path: url.path) else { return nil }
             return Item(url: url, name: name, stat: stat)
         }
+    }
+
+    /// True for the filing folder itself, however its path is spelled.
+    private func isArchive(_ url: URL) -> Bool {
+        url.standardizedFileURL.path == locations.archive.standardizedFileURL.path
     }
 
     private func days(since date: Date) -> Int {
