@@ -39,9 +39,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // A bare `swift run` binary has no Info.plist to say so, so say it here: Dock icon, menus, windows.
         NSApp.setActivationPolicy(.regular)
         MainMenu.installIfMissing()
-        AppModel.shared.start()
-        // Opened by hand, the window comes forward. Started at login, Wash stays quietly in the Dock.
-        if !Platform.wasLaunchedAtLogin() { AppModel.shared.openReview() }
+        let launchedAtLogin = Platform.wasLaunchedAtLogin()
+        // Present after launch handling, before requesting notification permission.
+        DispatchQueue.main.async {
+            let model = AppModel.shared
+            if !launchedAtLogin { model.openReview() }
+            model.start()
+        }
     }
 
     /// Clicking the Dock icon brings the window back.

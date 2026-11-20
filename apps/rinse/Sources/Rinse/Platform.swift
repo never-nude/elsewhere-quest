@@ -120,19 +120,27 @@ final class ReviewWindow {
             let made = NSWindow(contentViewController: hosting)
             made.title = "Wash"
             made.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            made.collectionBehavior = .moveToActiveSpace
             made.isReleasedWhenClosed = false
             made.contentMinSize = NSSize(width: 620, height: 480)
             made.setContentSize(NSSize(width: 780, height: 700))
             made.center()
-            made.setFrameAutosaveName("RinseMainWindow")
+            made.setFrameAutosaveName("WashMainWindow")
             // Closing the window on the report puts the report away, so the next look starts fresh.
             NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: made, queue: .main) { _ in
                 MainActor.assumeIsolated { model.finishRinse() }
             }
             window = made
         }
+        guard let window else { return }
+        let titleBarCenter = CGPoint(x: window.frame.midX, y: window.frame.maxY - 15)
+        if !NSScreen.screens.contains(where: { $0.visibleFrame.contains(titleBarCenter) }) {
+            window.center()
+        }
+        if NSApp.isHidden { NSApp.unhide(nil) }
+        if window.isMiniaturized { window.deminiaturize(nil) }
         NSApp.activate(ignoringOtherApps: true)
-        window?.makeKeyAndOrderFront(nil)
+        window.makeKeyAndOrderFront(nil)
     }
 
     func owns(_ other: NSWindow?) -> Bool {

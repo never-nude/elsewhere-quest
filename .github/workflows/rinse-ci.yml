@@ -29,8 +29,7 @@ jobs:
             if pgrep -x Wash >/dev/null; then break; fi
             sleep 1
           done
-          sleep 3
-          pgrep -x Wash
+          swift scripts/check-review-window.swift "$(pgrep -x Wash)"
       - name: Package the tested app
         run: ditto -c -k --keepParent build/Wash.app build/Wash-macOS.zip
       - uses: actions/upload-artifact@v4
