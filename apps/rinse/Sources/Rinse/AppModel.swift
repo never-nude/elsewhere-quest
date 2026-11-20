@@ -215,11 +215,13 @@ final class AppModel {
         let home = self.home, archive = self.archive
         // What is open or in the Dock right now, not when the list was made.
         let inUse = Platform.appsInUse(), runningIDs = Platform.runningBundleIDs()
+        let protected = Platform.screenshotFolder().map { [$0] } ?? []
         let report = await Task.detached(priority: .userInitiated) {
             RinseReport(
                 wash: Washer.wash(toWash, home: home, archive: archive, inUse: inUse, runningIDs: runningIDs,
-                                  trasher: SystemTrasher()),
-                file: Filer.file(toFile, home: home, archive: archive),
+                                  protected: protected, trasher: SystemTrasher()),
+                file: Filer.file(toFile, home: home, archive: archive, inUse: inUse, runningIDs: runningIDs,
+                                 protected: protected),
                 archive: archive)
         }.value
         ledger.record(bytes: report.wash.bytes, count: report.wash.washed.count, at: Date())

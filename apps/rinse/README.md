@@ -13,22 +13,23 @@ Rinse does not ask you to judge every file. First it looks for things that are *
 | **Older build of an app** (`Atrium Pose Preview 7`) | same bundle identifier, name and executable as a newer build beside it or in Applications; newer means a higher version (a release beats its betas), or the same version built later. Skipped for template identifiers like `com.example.*`, for an app that is open (even from Downloads), and for a build you opened more recently than the newer one | the newest build |
 | **Spent installer** (`Install Atrium Pose.dmg`, `Atrium-Pose-Installer.zip`) | a disk image, package, installer app, or a zip that holds one, whose name says install, installer or setup, and an app of that name is in Applications. Launch scripts (`.command`, `.sh`) only in Downloads. Never in Documents | the installed app |
 | **Exact copy of a folder** (`Daybreak 2`) | side by side in Downloads or on the Desktop, byte for byte the same throughout | the one without “copy”, “(1)” or “ 2” in its name, else the oldest |
-| **Exact copy of a file** (`Daybreak (1).zip`, `invoice.pdf` already filed in Documents, `Report copy.pdf`) | byte for byte the same; the copy that goes is loose in Downloads or on the Desktop, or is a “copy” of its twin in the same folder | the filed one in Documents first, then the plainest name, then the oldest |
+| **Exact copy of a file** (`Daybreak (1).zip`, `invoice.pdf` already filed in Documents, `Report copy.pdf`) | byte for byte the same; the copy that goes is loose in Downloads or on the Desktop, or is named as a copy of its twin in the same folder (`Report copy.pdf`, `Report (1).pdf`, `Report 2.pdf` beside `Report.pdf`; never one member of a numbered set like `walk 1.png` / `walk 2.png`) | the filed one in Documents first, then the plainest name, then the oldest |
 | **Unfinished download** (`.crdownload`, `.download`, `.part`) | untouched for a day | nothing: it never finished |
 
 Then two kinds of debris with nothing in them:
 
 | | Can go when |
 |---|---|
-| **Empty folder** | nothing inside but other empty folders, and nothing in it changed for 7 days. Only the top-most folder of a nest is listed. Never Downloads, Documents or the Desktop themselves, the screenshot folder, the filing folder, a Finder-tagged folder, or a folder in Documents named after an installed app (Zoom and friends expect theirs). |
-| **Dead file** | a link or Finder alias whose target is gone (not one pointing at a disk that is unplugged); a `._name` leftover from a USB drive whose `name` is gone; an Office `~$` lock file a day old while Office is closed; a zero-byte file untouched for 7 days. |
+| **Empty folder** | nothing inside but other empty folders, and nothing in it changed for 7 days. Only the top-most folder of a nest is listed. Never Downloads, Documents or the Desktop themselves, the filing folder, a folder in Documents named after an installed app (Zoom and friends expect theirs), and never a folder that is or holds the screenshot folder or a Finder-tagged folder. |
+| **Dead file** | a link or Finder alias whose target is gone (not one pointing at an unplugged disk, and not one Rinse is simply not allowed to look through, like iCloud or another app's data); a `._name` leftover from a USB drive whose `name` is gone; an Office `~$` lock file a day old while Office is closed; a zero-byte file untouched for 7 days, but only loose in Downloads or on the Desktop, and never a code file or marker like `__init__.py`. |
 
-All of this covers Downloads, Documents and the Desktop at every depth (plus the screenshot folder, if it is elsewhere), but never goes inside a git project (its files belong together), an app or other package, a hidden folder, a dependency folder like `node_modules`, or the filing folder. Duplicate *files* inside organised folders are left alone on purpose: the same logo in two client folders is two folders that each need it. Nothing changed in the last ten minutes is touched (it may still be downloading or unpacking). An app that is running or kept in the Dock is never touched, and Applications is only read, never changed.
+All of this covers Downloads, Documents and the Desktop at every depth (plus the screenshot folder, if it is elsewhere), but never goes inside a code project (git or any other version control, or a folder with a build file or Python environment at its top: its files belong together), a folder a sync client keeps in step (Dropbox, Google Drive, Syncthing), an app or other package, a hidden folder, a dependency folder like `node_modules`, or the filing folder. If Documents itself is under version control, Rinse leaves all of it. Duplicate *files* inside organised folders are left alone on purpose: the same logo in two client folders is two folders that each need it. Nothing changed in the last ten minutes is touched (it may still be downloading or unpacking). An app that is running or kept in the Dock is never touched, and Applications is only read, never changed.
 
 **The last check.** When you press the button, every item is checked again before anything moves, against what is on disk at that moment:
 - the proof is run again: an archive's checksums against its unpacked copy, a duplicate's bytes against its twin, an old build against the newer app;
 - a folder must not have changed anywhere inside, not only its own date;
-- an app that is open or in the Dock right now stays;
+- an app that is open or in the Dock right now stays, and so does a folder holding one; this applies to filing as well as washing;
+- the screenshot folder, and any folder holding it, never moves;
 - the copy that stays must still exist, must not be going in the same rinse, and must not have anything inside it going either. Rinse follows a chain (an archive unpacked as an old build, which a newer build replaces) and refuses if nothing would be left standing.
 
 Anything that fails stays where it is, and the report says why.
@@ -57,7 +58,7 @@ Each row shows the reasons ("Taken 30 days ago · no record of you opening it") 
 | **App caches** (`~/Library/Caches`, not Apple's) | 100 MB | always | |
 | **Developer leftovers** | 7 days unused (Xcode builds), 100 MB (tool caches) | Xcode DerivedData and device support; simulator, npm, Gradle, Bun and known `~/.cache` tools | unknown `~/.cache` folders are left; model and login stores are not listed |
 | **Project build folders** | 14 days since anything in the project changed | always, if recreatable and ignored by git | left while the project is in use |
-| **Idle in Downloads and on the Desktop** | 30 days (a folder: since anything in it changed) | archives and installers downloaded from a web address | everything else is filed, as `From Downloads/2026-11/…` or `From Desktop/2026-11/…`; code projects on the Desktop are left |
+| **Idle in Downloads and on the Desktop** | 30 days (a folder: since anything in it changed) | archives and installers downloaded from a web address | everything else is filed, as `From Downloads/2026-11/…` or `From Desktop/2026-11/…`; code projects, synced folders, folders holding an app and the screenshot folder are left |
 | **Big and idle** (250 MB+) | 60 days | archives and disk images downloaded from a web address | filed only if the filing folder is on another disk, where that frees space; otherwise left |
 
 Screenshots are the one case that goes without proof of a second copy; that is what they are for. If you would rather keep them, raise their limit in Settings or switch the kind off.

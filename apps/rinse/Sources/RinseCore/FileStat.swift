@@ -213,6 +213,16 @@ struct FileStat {
         return names
     }
 
+    enum Reachability { case exists, missing, unreadable }
+
+    /// Whether something is at a path, following links. Only "no such file" counts as missing:
+    /// a path Rinse is not allowed to look at is not proof that nothing is there.
+    static func reachability(_ path: String) -> Reachability {
+        var st = stat()
+        if stat(path, &st) == 0 { return .exists }
+        return errno == ENOENT || errno == ENOTDIR ? .missing : .unreadable
+    }
+
     /// True when the owner gave it a Finder tag (a colour or a name).
     static func hasTags(_ path: String) -> Bool {
         #if canImport(Darwin)

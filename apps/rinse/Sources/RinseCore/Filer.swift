@@ -13,8 +13,11 @@ public struct FileReport: Sendable {
 
 /// Moves items into the filing folder. Nothing is ever overwritten.
 public enum Filer {
-    public static func file(_ findings: [Finding], home: URL, archive: URL,
+    public static func file(_ findings: [Finding], home: URL, archive: URL, inUse: Set<String> = [],
+                            runningIDs: Set<String> = [], protected: [URL] = [],
                             calendar: Calendar = .current) -> FileReport {
+        let inUse = Set(inUse.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
+        let protected = Set(protected.map { $0.standardizedFileURL.path })
         var filed: [FileReport.Filed] = []
         var failures: [WashReport.Failure] = []
         for finding in findings {
@@ -24,7 +27,8 @@ public enum Filer {
                 fail("Only things that are yours get filed")
                 continue
             }
-            if let objection = SafetyGuard.objection(to: finding, home: home, archive: archive) {
+            if let objection = SafetyGuard.objection(to: finding, home: home, archive: archive, inUse: inUse,
+                                                     runningIDs: runningIDs, protected: protected) {
                 fail(objection)
                 continue
             }

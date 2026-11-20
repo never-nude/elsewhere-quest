@@ -1223,6 +1223,134 @@ final class LastCheckTests: XCTestCase {
     }
 }
 
+/// The findings of the fourth review, on the whole-folder sweep.
+final class SweepSafetyTests: XCTestCase {
+    var home: FakeHome!
+    var bin: URL!
+
+    override func setUpWithError() throws {
+        home = try FakeHome()
+        bin = FileManager.default.temporaryDirectory.appendingPathComponent("rinse-bin-\(UUID())")
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: bin)
+        home = nil
+    }
+
+    private func find(_ result: ScanResult, _ name: String) -> Finding? {
+        result.findings.first { $0.url.lastPathComponent == name }
+    }
+
+    private func folder(_ relative: String, daysOld: Int) throws {
+        try FileManager.default.createDirectory(at: home.url.appendingPathComponent(relative), withIntermediateDirectories: true)
+        let parts = relative.split(separator: "/")
+        for depth in stride(from: parts.count, through: 2, by: -1) {
+            home.age(home.url.appendingPathComponent(parts.prefix(depth).joined(separator: "/")), days: daysOld)
+        }
+    }
+
+    func testAnEmptyNestHoldingTheScreenshotFolderStays() throws {
+        try folder("Documents/Captures/Screenshots", daysOld: 30)
+        try folder("Documents/Old/Empty", daysOld: 30)
+        let shots = home.url.appendingPathComponent("Documents/Captures/Screenshots")
+        let empties = home.scan(screenshotFolder: shots).findings.filter { $0.category == .empty }
+        XCTAssertEqual(empties.map(\.name), ["Old"])
+        // And at the moment of moving, whatever the list says.
+        let forced = Finding(url: home.url.appendingPathComponent("Documents/Captures"), name: "Captures", category: .empty,
+                             bytes: 0, lastTouched: home.now, isDirectory: true,
+                             assessment: Assessment(verdict: .wash, confidence: 90, reasons: []))
+        let report = Washer.wash([forced], home: home.url, protected: [shots], trasher: FolderTrasher(bin: bin))
+        XCTAssertEqual(report.failures.map(\.message), ["It holds your screenshot folder"])
+    }
+
+    func testEmptyFilesInsideFoldersAreLeftAlone() throws {
+        try home.write("Documents/Code/tool/src/tool/__init__.py", Data(), daysOld: 30)
+        try home.write("Documents/Code/tool/src/tool/py.typed", Data(), daysOld: 30)
+        try home.write("Desktop/Call Dana re lease.txt", Data(), daysOld: 30)      // a note whose name is the note…
+        try home.write("Desktop/Notes/idea.md", Data(), daysOld: 30)
+        try home.write("Downloads/blank.txt", Data(), daysOld: 30)                 // …but loose in Downloads, clutter
+        try home.write("Downloads/__init__.py", Data(), daysOld: 30)
+        home.ageTree("Documents/Code", days: 30)
+        home.ageTree("Desktop/Notes", days: 30)
+        let dead = Set(home.scan().findings.filter { $0.category == .dead }.map(\.name))
+        XCTAssertEqual(dead, ["blank.txt", "Call Dana re lease.txt"])
+    }
+
+    func testAProjectWithoutGitIsNotCleanedInsideOrFiled() throws {
+        try home.write("Desktop/taxes-script/main.py", .noise(300), daysOld: 40)
+        try home.write("Desktop/taxes-script/requirements.txt", Data("requests".utf8), daysOld: 40)
+        try home.write("Desktop/taxes-script/env/pyvenv.cfg", Data("home = /usr/bin".utf8), daysOld: 40)
+        try home.write("Desktop/taxes-script/out/old.txt", Data(), daysOld: 40)
+        home.ageTree("Desktop/taxes-script", days: 40)
+        XCTAssertTrue(home.scan().findings.isEmpty, "\(home.scan().findings.map(\.name))")
+    }
+
+    func testAVersionedDocumentsFolderIsLeftWhole() throws {
+        try home.write("Documents/.git/HEAD", Data("x".utf8), daysOld: 30)
+        try folder("Documents/notes/empty", daysOld: 30)
+        try home.write("Documents/notes/pkg/__init__.py", Data(), daysOld: 30)
+        XCTAssertTrue(home.scan().findings.filter { [.empty, .dead, .redundant].contains($0.category) }.isEmpty)
+    }
+
+    func testNumberedSetsAreNotCopiesOfEachOther() throws {
+        try home.write("Documents/MyGame/sprites/walk 1.png", .noise(900, seed: 6), daysOld: 20)
+        try home.write("Documents/MyGame/sprites/walk 2.png", .noise(900, seed: 6), daysOld: 20)
+        try home.write("Documents/Reports/Week 30.xlsx", .noise(700, seed: 7), daysOld: 20)
+        try home.write("Documents/Reports/Week 31.xlsx", .noise(700, seed: 7), daysOld: 20)
+        try home.write("Documents/Reports/Summary.pdf", .noise(500, seed: 8), daysOld: 20)
+        try home.write("Documents/Reports/Summary 2.pdf", .noise(500, seed: 8), daysOld: 20)   // a real second copy
+        home.ageTree("Documents/MyGame", days: 20)
+        home.ageTree("Documents/Reports", days: 20)
+        let redundant = home.scan().findings.filter { $0.category == .redundant }.map(\.name)
+        XCTAssertEqual(redundant, ["Summary 2.pdf"])
+        XCTAssertTrue(Scanner.isCopy("Report copy 2.pdf", of: "Report.pdf"))
+        XCTAssertTrue(Scanner.isCopy("Report (1).pdf", of: "Report.pdf"))
+        XCTAssertFalse(Scanner.isCopy("Report copy.docx", of: "Report.pdf"))
+        XCTAssertFalse(Scanner.isCopy("walk 2.png", of: "walk 1.png"))
+    }
+
+    func testAFolderHoldingAnAppInTheDockIsNotFiled() throws {
+        let app = try home.app("Desktop/Tools/HandBrake.app", id: "fr.handbrake", version: "1", daysOld: 40)
+        try home.write("Desktop/Tools/readme.pdf", .noise(200), daysOld: 40)
+        home.ageTree("Desktop/Tools", days: 40)
+        XCTAssertNil(find(home.scan(), "Tools"), "a folder holding an app is where the app lives")
+        let forced = Finding(url: home.url.appendingPathComponent("Desktop/Tools"), name: "Tools", category: .staleDownloads,
+                             bytes: 1, lastTouched: home.now, isDirectory: true,
+                             assessment: Assessment(verdict: .file, confidence: 80, reasons: []))
+        let report = Filer.file([forced], home: home.url, archive: home.url.appendingPathComponent("Documents/Filed Away"),
+                                inUse: [app.path])
+        XCTAssertEqual(report.failures.map(\.message), ["It is open or kept in the Dock"])
+    }
+
+    func testALinkRinseCannotReadIsNotBroken() throws {
+        XCTAssertEqual(FileStat.reachability("/definitely/not/here"), .missing)
+        XCTAssertEqual(FileStat.reachability(home.url.path), .exists)
+        // A path through a file (ENOTDIR) is missing too.
+        let file = try home.write("Documents/plain.txt", .noise(10))
+        XCTAssertEqual(FileStat.reachability(file.path + "/inside"), .missing)
+    }
+
+    func testAnUnchangedUnpackedCopyIsNotReadAgain() throws {
+        let zip = ZipBuilder(items: [.file("Kit/a.bin", .noise(4000)), .file("Kit/b.bin", .noise(4000, seed: 2))])
+        try home.write("Downloads/Kit.zip", zip.data())
+        try home.write("Downloads/Kit/a.bin", .noise(4000))
+        try home.write("Downloads/Kit/b.bin", .noise(4000, seed: 2))
+        home.ageTree("Downloads/Kit", days: 1)
+        XCTAssertNotNil(find(home.scan(), "Kit.zip"))
+        let before = ZipIndex.checksumsRead
+        XCTAssertNotNil(find(home.scan(), "Kit.zip"))
+        XCTAssertEqual(ZipIndex.checksumsRead, before, "the second look used the cache")
+    }
+
+    func testFoldersKeptInSyncAreNotCleanedInside() throws {
+        try home.write("Documents/Dropbox/.dropbox", Data("x".utf8), daysOld: 30)
+        try folder("Documents/Dropbox/Shared/Empty", daysOld: 30)
+        home.ageTree("Documents/Dropbox", days: 30)
+        XCTAssertTrue(home.scan().findings.filter { $0.category == .empty }.isEmpty)
+    }
+}
+
 final class ProjectTests: XCTestCase {
     var home: FakeHome!
     var rules = Rules()

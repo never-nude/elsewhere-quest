@@ -200,11 +200,13 @@ public struct Scanner: Sendable {
         for item in landingFolders.flatMap(children) {
             // Links and other oddities are not the owner's files; an app run from here is in use;
             // a code project on the Desktop is somebody's work in progress.
-            guard item.stat.isRegular || item.stat.isDirectory,
+            guard item.stat.isRegular || item.stat.isDirectory, isSettled(item),
                   !(item.stat.isDirectory && Self.fileExtension(item.name) == "app"),
-                  !(item.stat.isDirectory && FileStat(path: item.url.appendingPathComponent(".git").path) != nil),
-                  item.url.standardizedFileURL.path != locations.screenshotFolder?.standardizedFileURL.path,
+                  !(item.stat.isDirectory && (Self.isProject(item.url) || Self.isSynced(item.url))),
+                  !isProtected(item.url),
                   days(since: item.stat.lastTouched) >= rules.staleDownloadDays else { continue }
+            // A folder holding an app is where the owner keeps that app, not clutter.
+            if item.stat.isDirectory, Self.containsApp(item.url) { continue }
             // A folder is as fresh as the newest thing inside it.
             let summary = FileStat.treeSummary(item.url.path)
             guard days(since: summary.newest) >= rules.staleDownloadDays else { continue }
@@ -268,6 +270,20 @@ public struct Scanner: Sendable {
     /// True for the filing folder itself, however its path is spelled.
     func isArchive(_ url: URL) -> Bool {
         url.standardizedFileURL.path == locations.archive.standardizedFileURL.path
+    }
+
+    /// True for a folder with an app bundle somewhere inside it (packages are not searched).
+    static func containsApp(_ folder: URL) -> Bool {
+        guard let walker = FileManager.default.enumerator(atPath: folder.path) else { return false }
+        var seen = 0
+        while let relative = walker.nextObject() as? String {
+            seen += 1
+            if seen > 50_000 { return true }
+            let ext = fileExtension((relative as NSString).lastPathComponent)
+            if ext == "app" { return true }
+            if packageExtensions.contains(ext) { walker.skipDescendants() }
+        }
+        return false
     }
 
     /// True for a folder with the filing folder somewhere inside it. Such a folder is never a finding.

@@ -28,7 +28,9 @@ extension Scanner {
         }
         inventory.roots = roots
         var budget = 1_500_000
-        for root in roots where FileStat(path: root.path)?.isDirectory == true {
+        // A top folder that is itself under version control (a whole Documents folder kept in git)
+        // is somebody's project from the top down. Rinse leaves all of it.
+        for root in roots where FileStat(path: root.path)?.isDirectory == true && !Self.isProject(root) {
             _ = walk(root, depth: 0, isRoot: true, into: &inventory, budget: &budget)
         }
         return inventory
@@ -66,14 +68,15 @@ extension Scanner {
                 if ext == "app" { inventory.apps.append(item) }
                 let skip = name.hasPrefix(".") || Self.packageExtensions.contains(ext) || isArchive(url)
                     || Self.buildFolders.contains(where: { $0.name == name })
-                    || FileStat(path: url.appendingPathComponent(".git").path) != nil
+                    || Self.isVersioned(url) || Self.isSynced(url)
                 guard !skip, depth < 14 else {
                     empty = false
                     continue
                 }
                 let inner = walk(url, depth: depth + 1, isRoot: false, into: &inventory, budget: &budget)
                 newest = max(newest, inner.newest)
-                if inner.empty, !holdsArchive(url) {
+                // A folder someone or something relies on counts as content, so no nest above it is called empty.
+                if inner.empty, !holdsArchive(url), !isProtected(url) {
                     emptyBelow.append((item, inner.newest))
                 } else {
                     empty = false
@@ -88,6 +91,44 @@ extension Scanner {
             return (false, newest, [])
         }
         return (true, newest, emptyBelow)
+    }
+
+    /// Version-control markers. A folder with any of these is a working copy whose files belong together.
+    static let versionMarkers = [".git", ".hg", ".svn", ".jj", "_darcs", ".fossil", ".bzr", "_FOSSIL_"]
+    /// Markers sync clients leave in the folders they keep in step with other machines.
+    static let syncMarkers = [".dropbox", ".dropbox.cache", ".tmp.drivedownload", ".tmp.driveupload", ".stfolder", ".sync"]
+
+    static func isVersioned(_ folder: URL) -> Bool {
+        versionMarkers.contains { FileStat(path: folder.appendingPathComponent($0).path) != nil }
+    }
+
+    static func isSynced(_ folder: URL) -> Bool {
+        syncMarkers.contains { FileStat(path: folder.appendingPathComponent($0).path) != nil }
+    }
+
+    /// A code project, versioned or not: version control, a Python environment, or a build manifest at its top.
+    static func isProject(_ folder: URL) -> Bool {
+        if isVersioned(folder) { return true }
+        let manifests = ["package.json", "Package.swift", "Cargo.toml", "go.mod", "pyproject.toml", "requirements.txt",
+                         "setup.py", "Pipfile", "Gemfile", "Podfile", "build.gradle", "build.gradle.kts", "CMakeLists.txt",
+                         "Makefile", "pom.xml", "composer.json", "mix.exs", "deno.json", "pyvenv.cfg", "Project.toml"]
+        if manifests.contains(where: { FileStat(path: folder.appendingPathComponent($0).path) != nil }) { return true }
+        let names = FileStat.names(in: folder.path) ?? []
+        if names.contains(where: { ["xcodeproj", "xcworkspace", "sln", "uproject", "godot"].contains(fileExtension($0)) }) {
+            return true
+        }
+        // A Python environment under any name (env, .env, virtualenv …).
+        return names.contains { FileStat(path: folder.appendingPathComponent($0 + "/pyvenv.cfg").path) != nil }
+    }
+
+    /// Folders that must stay even when empty: the screenshot folder (or one holding it), and folders
+    /// the owner tagged in Finder.
+    func isProtected(_ folder: URL) -> Bool {
+        let path = folder.standardizedFileURL.path
+        if let shots = locations.screenshotFolder?.standardizedFileURL.path, shots == path || shots.hasPrefix(path + "/") {
+            return true
+        }
+        return FileStat.hasTags(folder.path)
     }
 
     /// Settled: not changed in the last ten minutes, so not still downloading or unpacking,
@@ -125,6 +166,7 @@ extension Scanner {
     // MARK: - Dead files
 
     func scanDeadFiles(_ inventory: Inventory, _ out: inout Collector) {
+        let landing = Set(landingFolders.map { $0.standardizedFileURL.path })
         let officeOpen = inUse.contains { $0.hasSuffix("/Microsoft Word.app") || $0.hasSuffix("/Microsoft Excel.app")
             || $0.hasSuffix("/Microsoft PowerPoint.app") }
         for item in inventory.links where !out.claims(item.url.path) && isSettled(item) {
@@ -145,7 +187,10 @@ extension Scanner {
                 out.add(item, .dead, limit: .age(days: 0), lead: "Office lock file",
                         redundancy: .init(reason: "left behind after the document was closed", certainty: 0.9))
             } else if item.stat.size == 0, !name.hasPrefix("."), name != "Icon\r" {
-                guard days(since: item.stat.modified) >= rules.emptyDays else { continue }
+                // Only loose in Downloads or on the Desktop. Inside a folder an empty file is often a marker
+                // its folder needs (`__init__.py`, `py.typed`), or a note whose name is the note.
+                guard landing.contains(folder.standardizedFileURL.path), !Self.looksLikeMarker(name),
+                      days(since: item.stat.modified) >= rules.emptyDays else { continue }
                 out.add(item, .dead, limit: .age(days: 0), lead: "Untouched since " + ago(item.stat.modified),
                         redundancy: .init(reason: "an empty file: 0 bytes", certainty: 0.8))
             } else if Self.isBrokenAlias(item) {
@@ -153,6 +198,17 @@ extension Scanner {
                         redundancy: .init(reason: "points to something that no longer exists", certainty: 0.85))
             }
         }
+    }
+
+    /// Names that mean something even when empty: code, markup, settings and well-known markers.
+    static func looksLikeMarker(_ name: String) -> Bool {
+        let markers: Set<String> = ["__init__.py", "py.typed", "REQUESTED", "INSTALLER", "LICENSE", "README", "CNAME",
+                                    "Procfile", "Makefile", "Dockerfile", "keep", "placeholder"]
+        if markers.contains(name) { return true }
+        let code: Set<String> = ["py", "js", "ts", "jsx", "tsx", "swift", "rb", "go", "rs", "c", "h", "cpp", "java",
+                                 "kt", "php", "css", "scss", "html", "json", "yml", "yaml", "toml", "ini", "cfg",
+                                 "conf", "lock", "env", "sh", "md", "typed", "keep", "gitkeep"]
+        return code.contains(fileExtension(name))
     }
 
     enum LinkState { case fine, broken, offline }
@@ -163,10 +219,14 @@ extension Scanner {
         guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: link.path) else { return .fine }
         let resolved = target.hasPrefix("/") ? URL(fileURLWithPath: target)
             : link.deletingLastPathComponent().appendingPathComponent(target)
-        if FileManager.default.fileExists(atPath: resolved.path) { return .fine }
         let path = resolved.standardizedFileURL.path
         if path.hasPrefix("/Volumes/") || path.hasPrefix("/Network/") { return .offline }
-        return .broken
+        switch FileStat.reachability(resolved.path) {
+        case .exists: return .fine
+        case .missing: return .broken
+        // There but out of reach (privacy protection, another app's container, a cloud folder): not broken.
+        case .unreadable: return .offline
+        }
     }
 
     /// A Finder alias whose original is gone, and not merely on a disk that is not connected.

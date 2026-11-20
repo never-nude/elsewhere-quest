@@ -259,14 +259,32 @@ enum ZipIndex {
             let target = relative.isEmpty ? root.path : root.path + "/" + relative
             guard checksum(of: target, kind: entry.kind) == entry.crc else { return false }
         }
+        // Putting the access times back moves each file's change time, so the stamp is taken afresh.
+        var after = Hasher()
+        for entry in entries {
+            let relative = map(entry.path)
+            let target = relative.isEmpty ? root.path : root.path + "/" + relative
+            guard let st = FileStat(path: target) else { return false }
+            after.combine(target)
+            after.combine(st.size)
+            after.combine(st.inode)
+            after.combine(st.modified.timeIntervalSince1970)
+            after.combine(st.changed.timeIntervalSince1970)
+        }
         lock.lock()
-        verified[key] = stamp
+        verified[key] = after.finalize()
         lock.unlock()
         return true
     }
 
     /// CRC-32 of a file's bytes, or of the path a link points to. Leaves the file's access time alone.
+    /// How many files have been read for a checksum, so tests can see the cache at work.
+    static var checksumsRead = 0
+
     static func checksum(of path: String, kind: ZipEntry.Kind) -> UInt32? {
+        lock.lock()
+        checksumsRead += 1
+        lock.unlock()
         if kind == .symlink {
             guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: path) else { return nil }
             return CRC32.of(Data(target.utf8))

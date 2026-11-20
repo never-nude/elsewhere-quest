@@ -331,7 +331,7 @@ extension Scanner {
             for item in ordered {
                 let folder = item.url.deletingLastPathComponent().standardizedFileURL.path
                 let candidates = keepers.filter { keeper in
-                    isLoose(item) || (Self.isCopyName(item.name)
+                    isLoose(item) || (Self.isCopy(item.name, of: keeper.name)
                         && keeper.url.deletingLastPathComponent().standardizedFileURL.path == folder)
                 }
                 if !inUse.contains(item.url.standardizedFileURL.path),
@@ -361,6 +361,23 @@ extension Scanner {
     }
 
     /// True for names Finder or a browser gives a second copy: "x copy", "x copy 2", "x (1)", "x 2".
+    /// True when `name` is what Finder, a browser or AirDrop calls a second copy of `original`:
+    /// "Report copy.pdf", "Report copy 2.pdf", "Report (1).pdf" or "Report 2.pdf" for "Report.pdf".
+    /// Members of a numbered set ("walk 1.png", "walk 2.png", "Week 30.xlsx") are never copies of each other.
+    static func isCopy(_ name: String, of original: String) -> Bool {
+        let ext = (name as NSString).pathExtension.lowercased()
+        guard ext == (original as NSString).pathExtension.lowercased() else { return false }
+        let stem = (name as NSString).deletingPathExtension
+        let base = (original as NSString).deletingPathExtension
+        guard !base.isEmpty, stem.count > base.count, stem.hasPrefix(base + " ") else { return false }
+        if let last = base.split(separator: " ").last, last.allSatisfy(\.isNumber), base.contains(" ") { return false }
+        let tail = stem.dropFirst(base.count + 1)
+        if tail == "copy" { return true }
+        if tail.hasPrefix("copy "), tail.dropFirst(5).allSatisfy(\.isNumber), tail.count > 5 { return true }
+        if tail.hasPrefix("("), tail.hasSuffix(")"), tail.count > 2, tail.dropFirst().dropLast().allSatisfy(\.isNumber) { return true }
+        return !tail.isEmpty && tail.count <= 2 && tail.allSatisfy(\.isNumber)
+    }
+
     static func isCopyName(_ name: String) -> Bool {
         let stem = (name as NSString).deletingPathExtension
         let words = stem.split(separator: " ")
