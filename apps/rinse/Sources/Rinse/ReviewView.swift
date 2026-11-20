@@ -2,7 +2,7 @@ import AppKit
 import RinseCore
 import SwiftUI
 
-/// The rinse itself: Rinse's recommendations, the owner's corrections, then one button.
+/// The rinse itself: Wash's recommendations, the owner's corrections, then one button.
 struct ReviewView: View {
     @Environment(AppModel.self) private var model
     @State private var collapsed: Set<Verdict> = [.leave]
@@ -32,7 +32,7 @@ struct ReviewView: View {
                 .font(.system(size: 28))
                 .foregroundStyle(.waterGradient)
             VStack(alignment: .leading, spacing: 2) {
-                Text(Calendar.current.component(.hour, from: Date()) >= 17 ? "Tonight's rinse" : "Today's rinse")
+                Text(Calendar.current.component(.hour, from: Date()) >= 17 ? "Tonight's wash" : "Today's wash")
                     .font(.system(.title2, design: .rounded).weight(.semibold))
                 Text(summary)
                     .font(.callout)
@@ -47,7 +47,7 @@ struct ReviewView: View {
             } label: {
                 Image(systemName: "questionmark.circle")
             }
-            .help("How Rinse decides")
+            .help("How Wash decides")
             .popover(isPresented: $showingHow, arrowEdge: .bottom) { HowItDecides() }
             Button {
                 Task { await model.scan() }
@@ -132,7 +132,8 @@ struct ReviewView: View {
                 Text("\(verdict.title)  ·  \(rows.count)")
                     .font(.headline)
                     .foregroundStyle(.primary)
-                Text(verdict.blurb)
+                Text(verdict == .leave && rows.contains { $0.category.requiresExplicitChoice }
+                     ? "Includes older builds and empty folders you can choose to wash." : verdict.blurb)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -141,8 +142,18 @@ struct ReviewView: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
             Menu {
-                Button("Wash All of These") { model.setAll(recommended: verdict, to: .wash) }
-                Button("File All of These") { model.setAll(recommended: verdict, to: .file) }
+                let hasManualChoices = rows.contains { $0.category.requiresExplicitChoice }
+                if rows.contains(where: { !$0.category.requiresExplicitChoice }) {
+                    Button(hasManualChoices ? "Wash Other Items" : "Wash All of These") {
+                        model.setAll(recommended: verdict, to: .wash)
+                    }
+                    Button(hasManualChoices ? "File Other Items" : "File All of These") {
+                        model.setAll(recommended: verdict, to: .file)
+                    }
+                }
+                if rows.contains(where: { $0.category == .olderBuildArchives }) {
+                    Button("Select Older Builds to Wash") { model.selectOlderBuilds() }
+                }
                 Button("Leave All of These") { model.setAll(recommended: verdict, to: .leave) }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -226,7 +237,7 @@ private struct FindingRow: View {
                 Text(finding.reason.prefix(1).uppercased() + finding.reason.dropFirst())
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                    .lineLimit(finding.category.requiresExplicitChoice ? 2 : 1)
             }
             Spacer()
             if finding.verdict != .leave {
@@ -235,7 +246,7 @@ private struct FindingRow: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
                     .background(Color.water.opacity(0.08 + 0.22 * Double(finding.assessment.confidence) / 100), in: Capsule())
-                    .help("How sure Rinse is of its recommendation")
+                    .help("How sure Wash is of its recommendation")
             }
             Text(ByteFormat.string(finding.bytes))
                 .monospacedDigit()
@@ -276,7 +287,7 @@ private struct FindingRow: View {
 private struct HowItDecides: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("How Rinse decides")
+            Text("How Wash decides")
                 .font(.headline)
             Text("Every item is measured two ways.")
             point("arrow.triangle.2.circlepath", "Replaceable",
@@ -287,7 +298,7 @@ private struct HowItDecides: View {
             point("drop.fill", "Can go", "Dormant, and there is evidence it is replaceable: it rebuilds, or it was downloaded from the web.")
             point("archivebox.fill", "File away", "Dormant, but yours: it moves to your filing folder instead of the Trash.")
             point("pause.circle", "Leave for now", "Not dormant yet, or moving it would gain nothing.")
-            Text("The percentage is how sure Rinse is. You can overrule any row with the three buttons at its right.")
+            Text("The percentage is how sure Wash is. You can overrule any row with the three buttons at its right.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -369,7 +380,7 @@ private struct CleanView: View {
                 trashMessage = Platform.emptyTrash() ?? "The Trash is empty. The space is yours again."
             }
         } message: {
-            Text("This permanently deletes everything in the Trash, not only what Rinse put there. It cannot be undone.")
+            Text("This permanently deletes everything in the Trash, not only what Wash put there. It cannot be undone.")
         }
     }
 

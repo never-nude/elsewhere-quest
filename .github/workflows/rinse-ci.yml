@@ -1,4 +1,4 @@
-name: Rinse CI
+name: Wash CI
 
 on:
   push:
@@ -18,3 +18,22 @@ jobs:
       - run: swift --version
       - run: swift test
       - run: ./scripts/build-app.sh
+      - name: Verify and launch Wash
+        run: |
+          app="$PWD/build/Wash.app"
+          codesign --verify --strict --verbose=2 "$app"
+          test "$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Contents/Info.plist")" = Wash
+          open -n "$app"
+          trap 'pkill -x Wash || true' EXIT
+          for attempt in {1..15}; do
+            if pgrep -x Wash >/dev/null; then break; fi
+            sleep 1
+          done
+          swift scripts/check-review-window.swift "$(pgrep -x Wash)"
+      - name: Package the tested app
+        run: ditto -c -k --keepParent build/Wash.app build/Wash-macOS.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Wash-macOS
+          path: apps/rinse/build/Wash-macOS.zip
+          if-no-files-found: error

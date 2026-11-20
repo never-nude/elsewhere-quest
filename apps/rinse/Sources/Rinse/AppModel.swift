@@ -42,8 +42,8 @@ struct RinseReport {
 }
 
 extension Residue {
-    /// Caches rebuild themselves, so there is nothing in them worth filing.
-    var canBeFiled: Bool { self != .caches && self != .developer }
+    var canBeFiled: Bool { self != .caches && self != .developer && self != .emptyFolders }
+    var requiresExplicitChoice: Bool { self == .olderBuildArchives || self == .emptyFolders }
 }
 
 @MainActor
@@ -64,6 +64,7 @@ final class AppModel {
     /// and the recommendation they were disagreeing with. If that changes, the choice no longer applies.
     private var overrides: [String: (choice: Verdict, against: Verdict)] = [:]
     @ObservationIgnored private var rescanQueued = false
+    @ObservationIgnored private let archiveMatches = ArchiveMatchCache()
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let home = FileManager.default.homeDirectoryForCurrentUser
@@ -77,7 +78,7 @@ final class AppModel {
         ledger = Ledger.load(from: Self.ledgerURL)
     }
 
-    /// Where filed items go: the chosen folder, or a "Filed Away" folder inside it when Rinse scans that place.
+    /// Where filed items go: the chosen folder, or a "Filed Away" folder inside it when Wash scans that place.
     var archive: URL {
         Locations.filingFolder(chosen: prefs.archivePath.map { URL(fileURLWithPath: $0) }, home: home,
                                screenshotFolder: Platform.screenshotFolder())
@@ -161,7 +162,7 @@ final class AppModel {
             rescanQueued = false
             let scanner = Scanner(
                 locations: Locations(home: home, screenshotFolder: Platform.screenshotFolder(), archive: archive),
-                rules: rules, now: Date(), usage: { Platform.usage($0) })
+                rules: rules, now: Date(), usage: { Platform.usage($0) }, archiveMatches: archiveMatches)
             let fresh = await Task.detached(priority: .utility) { scanner.scan() }.value
             // The owner may have hidden something while the pass was running.
             let ignored = rules.ignored
@@ -186,9 +187,15 @@ final class AppModel {
         overrides[finding.id] = choice == finding.verdict ? nil : (choice, finding.verdict)
     }
 
-    /// Sets every item Rinse recommended one thing for to the same action.
+    /// Sets every item Wash recommended one thing for to the same action.
     func setAll(recommended verdict: Verdict, to action: Verdict) {
-        for finding in result?.findings(recommended: verdict) ?? [] { setAction(finding, action) }
+        for finding in result?.findings(recommended: verdict) ?? [] {
+            if action == .leave || !finding.category.requiresExplicitChoice { setAction(finding, action) }
+        }
+    }
+
+    func selectOlderBuilds() {
+        for finding in result?.findings(in: .olderBuildArchives) ?? [] { setAction(finding, .wash) }
     }
 
     var washFindings: [Finding] { (result?.findings ?? []).filter { action(for: $0) == .wash } }
@@ -245,11 +252,11 @@ final class AppModel {
     // MARK: - Windows
 
     /// Brings the window forward. It never throws away what is on screen.
-    func openReview(settings: Bool = false) {
+    func openReview(settings: Bool = false, refreshIfNeeded: Bool = true) {
         if settings { showSettings = true }
         ReviewWindow.shared.show(model: self)
-        if phase == .review, Date().timeIntervalSince(result?.scannedAt ?? .distantPast) > 300 {
-            Task { await scan() }
+        if refreshIfNeeded, phase == .review, Date().timeIntervalSince(result?.scannedAt ?? .distantPast) > 300 {
+            Task { if !isScanning { await scan() } }
         }
     }
 

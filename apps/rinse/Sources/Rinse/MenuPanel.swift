@@ -15,7 +15,7 @@ struct MenuPanel: View {
             Button {
                 open()
             } label: {
-                Text(model.hasWork ? "Start the Rinse" : "Look It Over")
+                Text(model.hasWork ? "Start the Wash" : "Look It Over")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)

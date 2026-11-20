@@ -148,6 +148,95 @@ final class ScannerTests: XCTestCase {
         XCTAssertNil(find(result, "notes.txt"), "files inside a listed folder are not listed again")
     }
 
+    func testMatchingArchiveCopyRetainsTheOriginalAndRechecksBeforeMoving() throws {
+        let original = try home.file("Downloads/Daybreak.zip")
+        let copy = original.deletingLastPathComponent().appendingPathComponent("Daybreak (1).zip")
+        try FileManager.default.copyItem(at: original, to: copy)
+        try home.file("Downloads/Daybreak (2).zip")
+        try home.folder("Downloads/Daybreak")
+        let result = home.scan()
+        let suggestion = try XCTUnwrap(find(result, "Daybreak (1).zip"))
+        XCTAssertEqual(suggestion.category, .duplicateArchives)
+        XCTAssertEqual(suggestion.verdict, .wash)
+        XCTAssertEqual(suggestion.retainedArchives, [original])
+        XCTAssertNil(find(result, "Daybreak.zip"))
+        XCTAssertNil(find(result, "Daybreak (2).zip"))
+        let trash = FolderTrasher(bin: home.url.appendingPathComponent("Test Trash"))
+        let moved = Washer.wash([suggestion], home: home.url, trasher: trash)
+        XCTAssertEqual(moved.washed.map(\.url), [copy])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: original.path))
+        try FileManager.default.copyItem(at: original, to: copy)
+        let rescanned = try XCTUnwrap(find(home.scan(), "Daybreak (1).zip"))
+        try FileManager.default.removeItem(at: original)
+        let report = Washer.wash([rescanned], home: home.url, trasher: trash)
+        XCTAssertTrue(report.washed.isEmpty)
+        XCTAssertEqual(report.failures.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
+    }
+
+    func testCachedArchiveMatchExpiresIfBytesChangeAndModificationDateIsRestored() throws {
+        let original = try home.file("Downloads/Preview.zip")
+        let copy = original.deletingLastPathComponent().appendingPathComponent("Preview (1).zip")
+        try FileManager.default.copyItem(at: original, to: copy)
+        home.age(copy, days: 0)
+        let cache = ArchiveMatchCache()
+        XCTAssertTrue(FolderCleanup.isMatchingCopy(copy, of: original, cache: cache))
+        let before = try XCTUnwrap(FileStat(path: copy.path))
+        let handle = try FileHandle(forWritingTo: copy)
+        let firstByte = try XCTUnwrap(Data(contentsOf: original).first)
+        try handle.write(contentsOf: Data([firstByte ^ 0xff]))
+        try handle.close()
+        home.age(copy, days: 0)
+        let after = try XCTUnwrap(FileStat(path: copy.path))
+        XCTAssertEqual(after.inode, before.inode)
+        XCTAssertEqual(after.length, before.length)
+        XCTAssertEqual(after.modified, before.modified)
+        XCTAssertFalse(FolderCleanup.isMatchingCopy(copy, of: original, cache: cache))
+    }
+
+    func testArchiveBuildSeriesKeepsTwoNewerVersionsAndRequiresAnExplicitChoice() throws {
+        // Standalone ZIP with one small entry and a real central directory.
+        let zip = try XCTUnwrap(Data(base64Encoded: "UEsDBBQAAAAAACtVdF3fmIPMBwAAAAcAAAAKAAAAUkVBRE1FLnR4dGEgYnVpbGRQSwECFAMUAAAAAAArVXRd35iDzAcAAAAHAAAACgAAAAAAAAAAAAAAgAEAAAAAUkVBRE1FLnR4dFBLBQYAAAAAAQABADgAAAAvAAAAAAA="))
+        for version in [2, 4, 6, 7, 10] {
+            let url = try home.file("Downloads/Atrium-Pose-Preview-\(version)-Mac.zip")
+            try zip.write(to: url)
+        }
+        try home.file("Downloads/Atrium-Pose-Preview-11-Mac.zip") // Invalid container does not count.
+        try home.file("Downloads/Atrium-Pose-Preview-3.part01")
+        try home.folder("Downloads/Atrium Pose Preview 3.app")
+        try home.file("Downloads/Atrium-Pose-Preview-3-Intel.zip")
+        let result = home.scan()
+        let older = result.findings(in: .olderBuildArchives)
+        XCTAssertEqual(Set(older.map(\.name)), Set([2, 4, 6].map { "Atrium-Pose-Preview-\($0)-Mac.zip" }))
+        XCTAssertTrue(older.allSatisfy { $0.verdict == .leave })
+        let pick = try XCTUnwrap(older.first)
+        XCTAssertEqual(Set(pick.retainedArchives.map(\.lastPathComponent)),
+                       ["Atrium-Pose-Preview-7-Mac.zip", "Atrium-Pose-Preview-10-Mac.zip"])
+        XCTAssertTrue(result.findings(recommended: .wash).isEmpty)
+        try FileManager.default.removeItem(at: pick.retainedArchives[0])
+        let report = Washer.wash([pick], home: home.url,
+                                 trasher: FolderTrasher(bin: home.url.appendingPathComponent("Test Trash")))
+        XCTAssertEqual(report.failures.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pick.id))
+    }
+
+    func testEmptyFolderSelectionExcludesPackagesHiddenContentsAndNewFolders() throws {
+        let empty = try home.folder("Desktop/Empty", daysOld: 10)
+        let next = try home.folder("Downloads/Old but empty", daysOld: 10)
+        try home.folder("Desktop/Empty.app", daysOld: 10)
+        try home.file("Desktop/Has hidden contents/.keep", daysOld: 10)
+        try home.folder("Downloads/New folder")
+        let result = home.scan()
+        XCTAssertEqual(Set(result.findings(in: .emptyFolders).map(\.id)), [empty.path, next.path])
+        let pick = try XCTUnwrap(find(result, "Empty"))
+        XCTAssertEqual(pick.verdict, .leave)
+        try home.file("Desktop/Empty/.keep")
+        let report = Washer.wash([pick], home: home.url,
+                                 trasher: FolderTrasher(bin: home.url.appendingPathComponent("Test Trash")))
+        XCTAssertEqual(report.failures.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: empty.path))
+    }
+
     func testCachesSkipAppleAndTinyOnesAndPreCheckBigOnes() throws {
         var rules = Rules()
         rules.cacheListBytes = 50_000
@@ -415,7 +504,7 @@ final class FilerTests: XCTestCase {
         let wash = Washer.wash(found.filter { $0.verdict == .wash }, home: home.url, trasher: FolderTrasher(bin: bin))
         let file = Filer.file(found.filter { $0.verdict == .file }, home: home.url, archive: home.url.appendingPathComponent("Documents/Filed Away"))
         XCTAssertEqual(wash.failures.map(\.message) + file.failures.map(\.message),
-                       ["Changed since Rinse looked", "Changed since Rinse looked"])
+                       ["Changed since Wash looked", "Changed since Wash looked"])
         XCTAssertTrue(FileManager.default.fileExists(atPath: shot.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: doc.path))
     }

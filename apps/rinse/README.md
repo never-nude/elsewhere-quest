@@ -1,12 +1,12 @@
-# Rinse
+# Wash
 
 A macOS app that keeps a pulse on the residue a working day leaves behind, and lets you wash it off in one pass at the end of the day.
 
 ## What it recommends
 
-Rinse does not ask you to judge every file. It measures each one two ways and puts it in one of three groups.
+Wash does not ask you to judge every file. It measures each one two ways and puts it in one of three groups.
 
-- **Replaceable:** is there evidence you could get it again? A cache rebuilds itself. An installer or archive that macOS recorded as downloaded from a web address can be fetched again. A document, a photo, a folder of your files, or anything Rinse cannot identify is treated as yours.
+- **Replaceable:** is there evidence you could get it again? A cache rebuilds itself. An installer or archive that macOS recorded as downloaded from a web address can be fetched again. A document, a photo, a folder of your files, or anything Wash cannot identify is treated as yours.
 - **Dormant:** how long since anything touched it, against the limit for its kind. A folder is as fresh as the newest thing inside it.
 
 | Group | Means | What happens |
@@ -15,7 +15,7 @@ Rinse does not ask you to judge every file. It measures each one two ways and pu
 | **File away** | dormant, but yours | moves to your filing folder |
 | **Leave for now** | not dormant yet, or moving it would gain nothing | nothing |
 
-Each row shows the reasons ("Taken 30 days ago · no record of you opening it") and a percentage for how sure Rinse is. Three buttons on the row overrule it.
+Each row shows the reasons ("Taken 30 days ago · no record of you opening it") and a percentage for how sure Wash is. Three buttons on the row overrule it.
 
 | Kind | Dormant after | Can go when | Otherwise |
 |---|---|---|---|
@@ -29,21 +29,31 @@ Each row shows the reasons ("Taken 30 days ago · no record of you opening it") 
 
 Screenshots are the one case that goes without proof of a second copy; that is what they are for. If you would rather keep them, raise their limit in Settings or switch the kind off.
 
-**Filing.** The filing folder is `~/Documents/Filed Away` unless you choose another in Settings. Clutter is sorted as `Kind/2026-11/name`. A big file keeps its place, as `Big and idle/Documents/Clients/Acme/name`, so where it came from is not lost. Nothing is overwritten. Rinse never looks inside the filing folder; if you choose a place it scans, such as Documents itself, it files into a `Filed Away` folder there.
+**Filing.** The filing folder is `~/Documents/Filed Away` unless you choose another in Settings. Clutter is sorted as `Kind/2026-11/name`. A big file keeps its place, as `Big and idle/Documents/Clients/Acme/name`, so where it came from is not lost. Nothing is overwritten. Wash never looks inside the filing folder; if you choose a place it scans, such as Documents itself, it files into a `Filed Away` folder there.
 
-**Last check.** Just before anything moves, Rinse looks at it again. If it is gone or was modified after the scan, it stays put and the report says so.
+**Last check.** Just before anything moves, Wash looks at it again. If it is gone or was modified after the scan, it stays put and the report says so.
 
 The rules live in `Sources/RinseCore/Judge.swift`.
+
+## Desktop and Downloads cleanup
+
+Wash checks the top level of both folders for common leftovers from downloading and testing apps.
+
+- **Duplicate archives.** A numbered copy such as `Daybreak (1).zip` can go when the archive beside it matches byte for byte. Wash retains the original and checks the match again before moving the copy.
+- **Older build archives.** Clearly versioned ZIP or DMG files such as `Atrium-Pose-Preview-4-Mac.zip` appear under **Leave for now** when Wash finds two higher versions from the same series and format. Use the section menu’s **Select Older Builds to Wash** to queue them together. Wash checks that the two newer archives are still present before moving each old build.
+- **Empty folders.** Loose folders that are empty and have gone at least seven days without changes appear under **Leave for now**. Choose Wash for any you no longer need. Wash checks for hidden files too and rechecks immediately before moving a folder.
+
+The build scan checks archive structure and version names. Keep any build you need for rollback or testing. App bundles, extracted project folders, and split archive parts stay out of these suggestions. Files go to the Trash, where Finder can put them back.
 
 ## How it behaves
 
 - It is a regular app: an icon in the Dock, one window, the usual menus. The Dock icon carries a badge with the amount ready to wash off.
-- Closing the window leaves Rinse running so the reminder and the badge keep working. Click the Dock icon to bring the window back; Quit with ⌘Q.
+- Closing the window leaves Wash running so the reminder and the badge keep working. Click the Dock icon to bring the window back; Quit with ⌘Q.
 - A drop in the menu bar shows the same amount with a per-category breakdown. Settings can switch it off.
 - At the time you set (9:30 pm to start) it sends one notification. Click it, look the three groups over, press the button.
-- Washing moves things to the Trash. Nothing is deleted, and Finder's Put Back works. The space comes back when the Trash is emptied, which Rinse offers afterwards and asks about first.
+- Washing moves things to the Trash. Nothing is deleted, and Finder's Put Back works. The space comes back when the Trash is emptied, which Wash offers afterwards and asks about first.
 - Right-click a row for Show in Finder, or **Never Show This Again**.
-- Rinse only ever moves things that sit inside a folder in your home folder, and inside `~/Library` only under Caches and Developer. That check is separate from the rules and runs on every item (`SafetyGuard` in `Sources/RinseCore/Washer.swift`).
+- Wash only ever moves things that sit inside a folder in your home folder, and inside `~/Library` only under Caches and Developer. That check is separate from the rules and runs on every item (`SafetyGuard` in `Sources/RinseCore/Washer.swift`).
 
 ## Build and run
 
@@ -54,9 +64,9 @@ cd apps/rinse
 ./scripts/build-app.sh --install
 ```
 
-That builds `build/Rinse.app`, copies it to `/Applications` and opens it. Keep it in the Dock from the Dock icon's menu: Options, Keep in Dock. macOS asks once each for the Desktop, Downloads and Documents folders, and for notifications.
+That builds `build/Wash.app`, copies it to `/Applications` and opens it. Wash uses the same bundle identifier and settings as Rinse. If you already have Rinse installed, quit it before opening Wash. Keep it in the Dock from the Dock icon's menu: Options, Keep in Dock. macOS asks once each for the Desktop, Downloads and Documents folders, and for notifications.
 
-To try it without installing: `swift run Rinse` (no notifications in that mode, since they need an app bundle).
+To try it without installing: `swift run Wash` (no notifications in that mode, since they need an app bundle).
 
 The app is signed ad hoc, so each rebuild counts as a new app to macOS and the folder prompts come back.
 
