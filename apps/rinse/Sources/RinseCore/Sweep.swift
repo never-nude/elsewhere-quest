@@ -30,7 +30,8 @@ extension Scanner {
         var budget = 1_500_000
         // A top folder that is itself under version control (a whole Documents folder kept in git)
         // is somebody's project from the top down. Rinse leaves all of it.
-        for root in roots where FileStat(path: root.path)?.isDirectory == true && !Self.isProject(root) {
+        for root in roots where FileStat(path: root.path)?.isDirectory == true
+            && !Self.isVersioned(root) && !Self.isSynced(root) {
             _ = walk(root, depth: 0, isRoot: true, into: &inventory, budget: &budget)
         }
         return inventory
@@ -68,7 +69,7 @@ extension Scanner {
                 if ext == "app" { inventory.apps.append(item) }
                 let skip = name.hasPrefix(".") || Self.packageExtensions.contains(ext) || isArchive(url)
                     || Self.buildFolders.contains(where: { $0.name == name })
-                    || Self.isVersioned(url) || Self.isSynced(url)
+                    || Self.isProject(url) || Self.isSynced(url)
                 guard !skip, depth < 14 else {
                     empty = false
                     continue
@@ -166,7 +167,7 @@ extension Scanner {
     // MARK: - Dead files
 
     func scanDeadFiles(_ inventory: Inventory, _ out: inout Collector) {
-        let landing = Set(landingFolders.map { $0.standardizedFileURL.path })
+        let downloads = home("Downloads").standardizedFileURL.path
         let officeOpen = inUse.contains { $0.hasSuffix("/Microsoft Word.app") || $0.hasSuffix("/Microsoft Excel.app")
             || $0.hasSuffix("/Microsoft PowerPoint.app") }
         for item in inventory.links where !out.claims(item.url.path) && isSettled(item) {
@@ -187,9 +188,9 @@ extension Scanner {
                 out.add(item, .dead, limit: .age(days: 0), lead: "Office lock file",
                         redundancy: .init(reason: "left behind after the document was closed", certainty: 0.9))
             } else if item.stat.size == 0, !name.hasPrefix("."), name != "Icon\r" {
-                // Only loose in Downloads or on the Desktop. Inside a folder an empty file is often a marker
-                // its folder needs (`__init__.py`, `py.typed`), or a note whose name is the note.
-                guard landing.contains(folder.standardizedFileURL.path), !Self.looksLikeMarker(name),
+                // Only loose in Downloads. Inside a folder an empty file is often a marker its folder needs
+                // (`__init__.py`, `py.typed`); on the Desktop it is often a reminder whose name is the note.
+                guard folder.standardizedFileURL.path == downloads, !Self.looksLikeMarker(name),
                       days(since: item.stat.modified) >= rules.emptyDays else { continue }
                 out.add(item, .dead, limit: .age(days: 0), lead: "Untouched since " + ago(item.stat.modified),
                         redundancy: .init(reason: "an empty file: 0 bytes", certainty: 0.8))

@@ -1274,7 +1274,7 @@ final class SweepSafetyTests: XCTestCase {
         home.ageTree("Documents/Code", days: 30)
         home.ageTree("Desktop/Notes", days: 30)
         let dead = Set(home.scan().findings.filter { $0.category == .dead }.map(\.name))
-        XCTAssertEqual(dead, ["blank.txt", "Call Dana re lease.txt"])
+        XCTAssertEqual(dead, ["blank.txt"], "a Desktop file whose name is the note stays")
     }
 
     func testAProjectWithoutGitIsNotCleanedInsideOrFiled() throws {
@@ -1284,6 +1284,39 @@ final class SweepSafetyTests: XCTestCase {
         try home.write("Desktop/taxes-script/out/old.txt", Data(), daysOld: 40)
         home.ageTree("Desktop/taxes-script", days: 40)
         XCTAssertTrue(home.scan().findings.isEmpty, "\(home.scan().findings.map(\.name))")
+    }
+
+    func testNothingInsideAProjectWithoutGitIsTouched() throws {
+        try home.write("Documents/shop-site/package.json", Data("{}".utf8), daysOld: 30)
+        try home.write("Documents/shop-site/server.js", .noise(300), daysOld: 30)
+        try home.write("Documents/shop-site/public/logo.png", .noise(900, seed: 2), daysOld: 30)
+        try home.write("Documents/shop-site/public/logo 2.png", .noise(900, seed: 2), daysOld: 30)
+        try folder("Documents/shop-site/uploads", daysOld: 30)
+        try home.write("Documents/pyt/main.py", .noise(200), daysOld: 30)
+        try home.write("Documents/pyt/env/pyvenv.cfg", Data("x".utf8), daysOld: 30)
+        try folder("Documents/pyt/env/include", daysOld: 30)
+        home.ageTree("Documents/shop-site", days: 30)
+        home.ageTree("Documents/pyt", days: 30)
+        XCTAssertTrue(home.scan().findings.isEmpty, "\(home.scan().findings.map(\.name))")
+    }
+
+    func testAStrayManifestDoesNotSwitchOffTheSweep() throws {
+        try home.write("Downloads/requirements.txt", Data("milk\neggs".utf8), daysOld: 3)
+        try home.write("Downloads/Report.pdf", .noise(700, seed: 3), daysOld: 3)
+        try home.write("Downloads/Report (1).pdf", .noise(700, seed: 3), daysOld: 2)
+        XCTAssertEqual(find(home.scan(), "Report (1).pdf")?.category, .redundant)
+    }
+
+    func testAFolderWithProjectsInsideIsNotFiled() throws {
+        try home.write("Desktop/Code/api/.git/HEAD", Data("x".utf8), daysOld: 40)
+        try home.write("Desktop/Code/api/app.py", .noise(300), daysOld: 40)
+        try home.write("Desktop/Code/web/package.json", Data("{}".utf8), daysOld: 40)
+        try home.write("Desktop/MyApp/backend/.venv/pyvenv.cfg", Data("x".utf8), daysOld: 40)
+        try home.write("Desktop/MyApp/backend/app.py", .noise(300), daysOld: 40)
+        try home.write("Desktop/Old Photos/a.jpg", .noise(300, seed: 5), daysOld: 40)
+        for f in ["Desktop/Code", "Desktop/MyApp", "Desktop/Old Photos"] { home.ageTree(f, days: 40) }
+        let filed = Set(home.scan().findings.filter { $0.verdict == .file }.map(\.name))
+        XCTAssertEqual(filed, ["Old Photos"])
     }
 
     func testAVersionedDocumentsFolderIsLeftWhole() throws {

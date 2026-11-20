@@ -205,8 +205,9 @@ public struct Scanner: Sendable {
                   !(item.stat.isDirectory && (Self.isProject(item.url) || Self.isSynced(item.url))),
                   !isProtected(item.url),
                   days(since: item.stat.lastTouched) >= rules.staleDownloadDays else { continue }
-            // A folder holding an app is where the owner keeps that app, not clutter.
-            if item.stat.isDirectory, Self.containsApp(item.url) { continue }
+            // A folder holding an app, a code project or a synced folder, at any depth, is somebody's
+            // working place, not clutter. Moving it breaks paths inside it.
+            if item.stat.isDirectory, Self.holdsKeptThing(item.url) { continue }
             // A folder is as fresh as the newest thing inside it.
             let summary = FileStat.treeSummary(item.url.path)
             guard days(since: summary.newest) >= rules.staleDownloadDays else { continue }
@@ -272,16 +273,22 @@ public struct Scanner: Sendable {
         url.standardizedFileURL.path == locations.archive.standardizedFileURL.path
     }
 
-    /// True for a folder with an app bundle somewhere inside it (packages are not searched).
-    static func containsApp(_ folder: URL) -> Bool {
+    /// True for a folder with an app, a code project or a synced folder somewhere inside it.
+    /// Packages and dependency folders are not searched. A tree too big to check counts as true.
+    static func holdsKeptThing(_ folder: URL) -> Bool {
         guard let walker = FileManager.default.enumerator(atPath: folder.path) else { return false }
+        let generated = Set(buildFolders.map(\.name))
         var seen = 0
         while let relative = walker.nextObject() as? String {
             seen += 1
             if seen > 50_000 { return true }
-            let ext = fileExtension((relative as NSString).lastPathComponent)
+            let name = (relative as NSString).lastPathComponent
+            let ext = fileExtension(name)
             if ext == "app" { return true }
-            if packageExtensions.contains(ext) { walker.skipDescendants() }
+            let url = folder.appendingPathComponent(relative)
+            guard FileStat(path: url.path)?.isDirectory == true else { continue }
+            if isProject(url) || isSynced(url) { return true }
+            if packageExtensions.contains(ext) || generated.contains(name) { walker.skipDescendants() }
         }
         return false
     }
