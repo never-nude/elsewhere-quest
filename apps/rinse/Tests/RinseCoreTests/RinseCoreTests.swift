@@ -174,6 +174,26 @@ final class ScannerTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: copy.path))
     }
 
+    func testCachedArchiveMatchExpiresIfBytesChangeAndModificationDateIsRestored() throws {
+        let original = try home.file("Downloads/Preview.zip")
+        let copy = original.deletingLastPathComponent().appendingPathComponent("Preview (1).zip")
+        try FileManager.default.copyItem(at: original, to: copy)
+        home.age(copy, days: 0)
+        let cache = ArchiveMatchCache()
+        XCTAssertTrue(FolderCleanup.isMatchingCopy(copy, of: original, cache: cache))
+        let before = try XCTUnwrap(FileStat(path: copy.path))
+        let handle = try FileHandle(forWritingTo: copy)
+        let firstByte = try XCTUnwrap(Data(contentsOf: original).first)
+        try handle.write(contentsOf: Data([firstByte ^ 0xff]))
+        try handle.close()
+        home.age(copy, days: 0)
+        let after = try XCTUnwrap(FileStat(path: copy.path))
+        XCTAssertEqual(after.inode, before.inode)
+        XCTAssertEqual(after.length, before.length)
+        XCTAssertEqual(after.modified, before.modified)
+        XCTAssertFalse(FolderCleanup.isMatchingCopy(copy, of: original, cache: cache))
+    }
+
     func testArchiveBuildSeriesKeepsTwoNewerVersionsAndRequiresAnExplicitChoice() throws {
         // Standalone ZIP with one small entry and a real central directory.
         let zip = try XCTUnwrap(Data(base64Encoded: "UEsDBBQAAAAAACtVdF3fmIPMBwAAAAcAAAAKAAAAUkVBRE1FLnR4dGEgYnVpbGRQSwECFAMUAAAAAAArVXRd35iDzAcAAAAHAAAACgAAAAAAAAAAAAAAgAEAAAAAUkVBRE1FLnR4dFBLBQYAAAAAAQABADgAAAAvAAAAAAA="))

@@ -7,6 +7,32 @@ import Glibc
 import Musl
 #endif
 
+/// Reuses verified archive matches during a session while both files have the same identities.
+public final class ArchiveMatchCache: @unchecked Sendable {
+    private struct Pair: Hashable {
+        let copy: FileStat.ContentIdentity
+        let original: FileStat.ContentIdentity
+    }
+
+    private let lock = NSLock()
+    private var verified: Set<Pair> = []
+
+    public init() {}
+
+    func contains(_ copy: FileStat, _ original: FileStat) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return verified.contains(Pair(copy: copy.contentIdentity, original: original.contentIdentity))
+    }
+
+    func remember(_ copy: FileStat, _ original: FileStat) {
+        lock.lock()
+        defer { lock.unlock() }
+        if verified.count >= 256 { verified.removeAll(keepingCapacity: true) }
+        verified.insert(Pair(copy: copy.contentIdentity, original: original.contentIdentity))
+    }
+}
+
 /// Narrow cleanup rules for the loose items directly in Desktop and Downloads.
 enum FolderCleanup {
     private static let archiveExtensions: Set<String> = ["zip", "dmg", "pkg", "xip", "iso", "tar", "tgz", "7z", "rar"]
@@ -23,6 +49,7 @@ enum FolderCleanup {
     static func splitArchiveBase(for name: String) -> String? {
         let file = name.lowercased() as NSString
         let ext = file.pathExtension
+        guard ext.count == 3, ext.hasPrefix("z") || ext.hasPrefix("r") else { return nil }
         guard ext.range(of: #"^[zr][0-9]{2}$"#, options: .regularExpression) != nil else { return nil }
         return file.deletingPathExtension + (ext.hasPrefix("z") ? ".zip" : ".rar")
     }
@@ -30,10 +57,9 @@ enum FolderCleanup {
     static func originalName(of name: String) -> String? {
         let file = name as NSString
         let stem = file.deletingPathExtension
+        guard stem.hasSuffix(")"), archiveExtensions.contains(file.pathExtension.lowercased()) else { return nil }
         let original = stem.replacingOccurrences(of: copyPattern, with: "", options: .regularExpression)
-        guard !original.isEmpty, original != stem, archiveExtensions.contains(file.pathExtension.lowercased()) else {
-            return nil
-        }
+        guard !original.isEmpty, original != stem else { return nil }
         return original + "." + file.pathExtension
     }
 
@@ -69,12 +95,15 @@ enum FolderCleanup {
         return names.isEmpty
     }
 
-    static func isMatchingCopy(_ url: URL, of original: URL) -> Bool {
+    static func isMatchingCopy(_ url: URL, of original: URL, cache: ArchiveMatchCache? = nil) -> Bool {
         guard url.deletingLastPathComponent() == original.deletingLastPathComponent(),
               originalName(of: url.lastPathComponent) == original.lastPathComponent,
               let copy = FileStat(path: url.path), let kept = FileStat(path: original.path),
               copy.isRegular, kept.isRegular, copy.linkCount == 1, kept.linkCount == 1,
               copy.length > 0, copy.length == kept.length else { return false }
+        if cache?.contains(copy, kept) == true {
+            return copy.sameFile(path: url.path) && kept.sameFile(path: original.path)
+        }
         do {
             let copyHandle = try openRegularFile(url)
             defer { try? copyHandle.close() }
@@ -87,7 +116,9 @@ enum FolderCleanup {
                       chunk == (try originalHandle.read(upToCount: count)) else { return false }
                 remaining -= Int64(count)
             }
-            return copy.sameFile(path: url.path) && kept.sameFile(path: original.path)
+            guard copy.sameFile(path: url.path), kept.sameFile(path: original.path) else { return false }
+            cache?.remember(copy, kept)
+            return true
         } catch {
             return false
         }

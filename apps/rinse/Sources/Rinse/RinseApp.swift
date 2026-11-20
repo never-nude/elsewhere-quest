@@ -43,7 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Present after launch handling, before requesting notification permission.
         DispatchQueue.main.async {
             let model = AppModel.shared
-            if !launchedAtLogin { model.openReview() }
+            if !launchedAtLogin { model.openReview(refreshIfNeeded: false) }
             model.start()
         }
     }

@@ -64,6 +64,7 @@ final class AppModel {
     /// and the recommendation they were disagreeing with. If that changes, the choice no longer applies.
     private var overrides: [String: (choice: Verdict, against: Verdict)] = [:]
     @ObservationIgnored private var rescanQueued = false
+    @ObservationIgnored private let archiveMatches = ArchiveMatchCache()
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private let home = FileManager.default.homeDirectoryForCurrentUser
@@ -161,7 +162,7 @@ final class AppModel {
             rescanQueued = false
             let scanner = Scanner(
                 locations: Locations(home: home, screenshotFolder: Platform.screenshotFolder(), archive: archive),
-                rules: rules, now: Date(), usage: { Platform.usage($0) })
+                rules: rules, now: Date(), usage: { Platform.usage($0) }, archiveMatches: archiveMatches)
             let fresh = await Task.detached(priority: .utility) { scanner.scan() }.value
             // The owner may have hidden something while the pass was running.
             let ignored = rules.ignored
@@ -251,11 +252,11 @@ final class AppModel {
     // MARK: - Windows
 
     /// Brings the window forward. It never throws away what is on screen.
-    func openReview(settings: Bool = false) {
+    func openReview(settings: Bool = false, refreshIfNeeded: Bool = true) {
         if settings { showSettings = true }
         ReviewWindow.shared.show(model: self)
-        if phase == .review, Date().timeIntervalSince(result?.scannedAt ?? .distantPast) > 300 {
-            Task { await scan() }
+        if refreshIfNeeded, phase == .review, Date().timeIntervalSince(result?.scannedAt ?? .distantPast) > 300 {
+            Task { if !isScanning { await scan() } }
         }
     }
 

@@ -8,7 +8,7 @@ import Musl
 #endif
 
 /// What `lstat` says about one path. Symbolic links are never followed.
-struct FileStat {
+struct FileStat: Sendable {
     /// Space allocated on disk, which is what washing actually gives back.
     let bytes: Int64
     let isDirectory: Bool
@@ -16,6 +16,7 @@ struct FileStat {
     let modified: Date
     let accessed: Date
     let created: Date
+    let changed: Date
     /// The disk it lives on.
     let device: UInt64
     let inode: UInt64
@@ -40,17 +41,59 @@ struct FileStat {
         modified = Date(st.st_mtimespec)
         accessed = Date(st.st_atimespec)
         created = Date(st.st_birthtimespec)
+        changed = Date(st.st_ctimespec)
         #else
         modified = Date(st.st_mtim)
         accessed = Date(st.st_atim)
         created = Date(st.st_mtim)
+        changed = Date(st.st_ctim)
         #endif
     }
 
     func sameFile(path: String) -> Bool {
         guard let latest = FileStat(path: path), latest.isRegular else { return false }
-        return device == latest.device && inode == latest.inode && modified == latest.modified
-            && length == latest.length && linkCount == latest.linkCount
+        return contentIdentity == latest.contentIdentity
+    }
+
+    struct ContentIdentity: Hashable, Sendable {
+        let device: UInt64
+        let inode: UInt64
+        let modified: Date
+        let changed: Date
+        let length: Int64
+        let linkCount: UInt64
+    }
+
+    var contentIdentity: ContentIdentity {
+        ContentIdentity(device: device, inode: inode, modified: modified, changed: changed,
+                        length: length, linkCount: linkCount)
+    }
+
+    enum WalkAction { case descend, skip, stop }
+
+    /// Read directory entries and their lstat data once. Never descend through symlinks.
+    static func walk(_ root: String, includeHidden: Bool, visit: (String, String, FileStat) -> WalkAction) {
+        var pending = [root]
+        while let folder = pending.popLast() {
+            let fd = open(folder, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            guard fd >= 0 else { continue }
+            guard let directory = fdopendir(fd) else { _ = close(fd); continue }
+            defer { closedir(directory) }
+            while let entry = readdir(directory) {
+                let capacity = MemoryLayout.size(ofValue: entry.pointee.d_name)
+                let name = withUnsafePointer(to: &entry.pointee.d_name) { pointer in
+                    pointer.withMemoryRebound(to: CChar.self, capacity: capacity) { String(validatingUTF8: $0) }
+                }
+                guard let name, name != ".", name != "..", includeHidden || !name.hasPrefix(".") else { continue }
+                let path = folder + "/" + name
+                guard let stat = FileStat(path: path) else { continue }
+                switch visit(path, name, stat) {
+                case .descend: if stat.isDirectory { pending.append(path) }
+                case .skip: continue
+                case .stop: return
+                }
+            }
+        }
     }
 
     /// Disk space of a file, or of a folder and everything under it.
@@ -58,9 +101,9 @@ struct FileStat {
         guard let top = FileStat(path: path) else { return 0 }
         guard top.isDirectory else { return top.bytes }
         var total = top.bytes
-        guard let walker = FileManager.default.enumerator(atPath: path) else { return total }
-        while let relative = walker.nextObject() as? String {
-            if let st = FileStat(path: path + "/" + relative) { total += st.bytes }
+        walk(path, includeHidden: true) { _, _, stat in
+            total += stat.bytes
+            return .descend
         }
         return total
     }
@@ -78,19 +121,18 @@ struct FileStat {
 
     /// Disk space and the most recent sign of life anywhere in a folder (or of a single file).
     /// A folder's own dates do not move when something deep inside it is edited.
-    static func treeSummary(_ path: String) -> (bytes: Int64, newest: Date) {
-        guard let top = FileStat(path: path) else { return (0, .distantPast) }
-        guard top.isDirectory else { return (top.bytes, top.lastTouched) }
+    static func staleTreeSummary(_ path: String, top: FileStat, cutoff: Date) -> (bytes: Int64, newest: Date)? {
+        guard top.isDirectory else { return top.lastTouched <= cutoff ? (top.bytes, top.lastTouched) : nil }
         var total = top.bytes
         var newest = top.modified
-        guard let walker = FileManager.default.enumerator(atPath: path) else { return (total, newest) }
-        while let relative = walker.nextObject() as? String {
-            guard let st = FileStat(path: path + "/" + relative) else { continue }
+        guard newest <= cutoff else { return nil }
+        walk(path, includeHidden: true) { _, _, st in
             total += st.bytes
             // A folder's access time moves whenever anything lists it, this scan included.
             newest = max(newest, st.isDirectory ? st.modified : st.lastTouched)
+            return newest <= cutoff ? .descend : .stop
         }
-        return (total, newest)
+        return newest <= cutoff ? (total, newest) : nil
     }
 
     /// True when macOS recorded that the file came from a web address, so it can plausibly be fetched again.
