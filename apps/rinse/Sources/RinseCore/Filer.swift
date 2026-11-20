@@ -41,11 +41,15 @@ public enum Filer {
         return FileReport(filed: filed, failures: failures)
     }
 
-    /// Clutter is sorted by month: `archive/Screenshots/2026-11`.
+    /// Clutter is sorted by month: `archive/Screenshots/2026-11`, `archive/From Downloads/2026-11`.
     /// A big file that sat in its own place keeps that place, so where it came from is not lost:
     /// `archive/Big and idle/Documents/Clients/Acme`.
     public static func folder(for finding: Finding, home: URL, archive: URL, calendar: Calendar = .current) -> URL {
-        let kind = archive.appendingPathComponent(finding.category.title)
+        // Idle things are sorted by where they were lying: "From Downloads", "From Desktop".
+        let kindName = finding.category == .staleDownloads
+            ? "From " + finding.url.deletingLastPathComponent().lastPathComponent
+            : finding.category.title
+        let kind = archive.appendingPathComponent(kindName)
         if finding.category == .bigIdle {
             let parent = finding.url.deletingLastPathComponent().standardizedFileURL.path
             let homePath = home.standardizedFileURL.path

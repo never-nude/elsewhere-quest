@@ -285,6 +285,8 @@ private struct HowItDecides: View {
                 .font(.headline)
             point("square.on.square", "Redundant",
                   "An archive already unpacked, an exact duplicate, an older build of an app, or an installer for an app you have. These can go straight away: the copy that stays is checked again just before anything moves.")
+            point("folder", "Empty and dead",
+                  "Folders with nothing in them, links to things that are gone, and leftovers with nothing in them.")
             Divider()
             Text("Everything else is measured two ways.")
             point("arrow.triangle.2.circlepath", "Replaceable",

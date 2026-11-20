@@ -5,6 +5,8 @@ public enum Residue: String, CaseIterable, Codable, Sendable, Identifiable {
     case screenshots
     case recordings
     case redundant
+    case empty
+    case dead
     case installers
     case caches
     case developer
@@ -19,11 +21,13 @@ public enum Residue: String, CaseIterable, Codable, Sendable, Identifiable {
         case .screenshots: return "Screenshots"
         case .recordings: return "Screen recordings"
         case .redundant: return "Redundant copies"
+        case .empty: return "Empty folders"
+        case .dead: return "Dead files"
         case .projectBuilds: return "Project build folders"
         case .installers: return "Installers"
         case .caches: return "App caches"
         case .developer: return "Developer leftovers"
-        case .staleDownloads: return "Stale downloads"
+        case .staleDownloads: return "Idle in Downloads and on the Desktop"
         case .bigIdle: return "Big and idle"
         }
     }
@@ -33,6 +37,8 @@ public enum Residue: String, CaseIterable, Codable, Sendable, Identifiable {
         case .screenshots: return "Captures that served their moment"
         case .recordings: return "Screen recordings left where they landed"
         case .redundant: return "Unpacked archives, duplicates, old builds and spent installers"
+        case .empty: return "Folders with nothing left in them"
+        case .dead: return "Broken links, empty files and leftovers from other apps"
         case .projectBuilds: return "Dependencies and build output a project can recreate"
         case .installers: return "Disk images and packages you have already run"
         case .caches: return "Apps rebuild these when they need them"
@@ -48,6 +54,8 @@ public enum Residue: String, CaseIterable, Codable, Sendable, Identifiable {
         case .screenshots: return "camera.viewfinder"
         case .recordings: return "record.circle"
         case .redundant: return "square.on.square"
+        case .empty: return "folder"
+        case .dead: return "doc.badge.ellipsis"
         case .projectBuilds: return "shippingbox.and.arrow.backward"
         case .installers: return "shippingbox"
         case .caches: return "internaldrive"
@@ -60,7 +68,7 @@ public enum Residue: String, CaseIterable, Codable, Sendable, Identifiable {
     /// Things that rebuild themselves, or that have another copy, are washed or left, never filed.
     public var canBeFiled: Bool {
         switch self {
-        case .caches, .developer, .redundant, .projectBuilds: return false
+        case .caches, .developer, .redundant, .projectBuilds, .empty, .dead: return false
         default: return true
         }
     }

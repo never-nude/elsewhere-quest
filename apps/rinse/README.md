@@ -11,11 +11,19 @@ Rinse does not ask you to judge every file. First it looks for things that are *
 | **Unpacked archive** (`Daybreak.zip`, `Wash-0.2.1.zip`) | every file and link in the archive is present unpacked beside it, with the same length and the same CRC-32 checksum; extra files in the unpacked copy are fine | the unpacked folder or app, including Finder's “Wash 2”, “Daybreak 3” names |
 | **Split archive** (`Atrium-Pose.part01` … `part08`, `backup.zip.001` …) | every piece is present, numbered with no gaps, and the joined archive passes the same check | the unpacked copy |
 | **Older build of an app** (`Atrium Pose Preview 7`) | same bundle identifier as a newer build beside it or in Applications; newer means a higher version, or the same version built later | the newest build |
-| **Spent installer** (`Install Atrium Pose.command`, `Atrium-Pose-Installer.zip`) | the name says install, installer or setup, and an app of that name is in Applications | the installed app |
-| **Exact copy** (`Daybreak (1).zip`, `Daybreak 2`, `Report copy.pdf`) | byte for byte the same, folders included | the one without “copy”, “(1)” or “ 2” in its name, else the oldest |
+| **Spent installer** (`Install Atrium Pose.command`, `Atrium-Pose-Installer.zip`) | an app, package, disk image, zip or script whose name says install, installer or setup, and an app of that name is in Applications | the installed app |
+| **Exact copy of a folder** (`Daybreak 2`) | side by side in Downloads or on the Desktop, byte for byte the same throughout | the one without “copy”, “(1)” or “ 2” in its name, else the oldest |
+| **Exact copy of a file** (`Daybreak (1).zip`, `invoice.pdf` already filed in Documents, `Report copy.pdf`) | byte for byte the same; the copy that goes is loose in Downloads or on the Desktop, or is a “copy” of its twin in the same folder | the filed one in Documents first, then the plainest name, then the oldest |
 | **Unfinished download** (`.crdownload`, `.download`, `.part`) | untouched for a day | nothing: it never finished |
 
-Only the top level of Downloads and the Desktop is searched for these, and nothing changed in the last ten minutes (it may still be downloading or unpacking). An app that is running or kept in the Dock is never touched, and Applications is only read, never changed. Right before anything moves, Rinse checks again that the copy that stays still exists and is not going in the same rinse; it follows a chain (an archive unpacked as an old build, which a newer build replaces) and refuses if nothing would be left standing.
+Then two kinds of debris with nothing in them:
+
+| | Can go when |
+|---|---|
+| **Empty folder** | nothing inside but other empty folders, and nothing in it changed for 7 days. Only the top-most folder of a nest is listed. Never Downloads, Documents or the Desktop themselves, the screenshot folder, the filing folder, a Finder-tagged folder, or a folder in Documents named after an installed app (Zoom and friends expect theirs). |
+| **Dead file** | a link or Finder alias whose target is gone (not one pointing at a disk that is unplugged); a `._name` leftover from a USB drive whose `name` is gone; an Office `~$` lock file a day old while Office is closed; a zero-byte file untouched for 7 days. |
+
+All of this covers Downloads, Documents and the Desktop at every depth (plus the screenshot folder, if it is elsewhere), but never goes inside a git project (its files belong together), an app or other package, a hidden folder, a dependency folder like `node_modules`, or the filing folder. Duplicate *files* inside organised folders are left alone on purpose: the same logo in two client folders is two folders that each need it. Nothing changed in the last ten minutes is touched (it may still be downloading or unpacking). An app that is running or kept in the Dock is never touched, and Applications is only read, never changed. Right before anything moves, Rinse checks again that the copy that stays still exists and is not going in the same rinse; it follows a chain (an archive unpacked as an old build, which a newer build replaces) and refuses if nothing would be left standing.
 
 Rinse also looks inside **code projects** (git repositories under Developer, Documents, Desktop, Projects, Code, src, GitHub, repos, dev and Sites) for dependency and build folders: `node_modules`, `.next`, `dist`, `build`, `.build`, `target`, `.venv`, `Pods`, `.gradle`. One is listed only when the file that recreates it is beside it (`package.json`, `Package.swift`, `Cargo.toml`, `requirements.txt` …) and the project's `.gitignore` names it. It can go once nothing in the project has changed for 14 days, and the row says how to get it back (“comes back with npm install”).
 
@@ -41,7 +49,7 @@ Each row shows the reasons ("Taken 30 days ago · no record of you opening it") 
 | **App caches** (`~/Library/Caches`, not Apple's) | 100 MB | always | |
 | **Developer leftovers** | 7 days unused (Xcode builds), 100 MB (tool caches) | Xcode DerivedData and device support; simulator, npm, Gradle, Bun and known `~/.cache` tools | unknown `~/.cache` folders are left; model and login stores are not listed |
 | **Project build folders** | 14 days since anything in the project changed | always, if recreatable and ignored by git | left while the project is in use |
-| **Stale downloads** | 30 days | archives and installers downloaded from a web address | everything else is filed |
+| **Idle in Downloads and on the Desktop** | 30 days (a folder: since anything in it changed) | archives and installers downloaded from a web address | everything else is filed, as `From Downloads/2026-11/…` or `From Desktop/2026-11/…`; code projects on the Desktop are left |
 | **Big and idle** (250 MB+) | 60 days | archives and disk images downloaded from a web address | filed only if the filing folder is on another disk, where that frees space; otherwise left |
 
 Screenshots are the one case that goes without proof of a second copy; that is what they are for. If you would rather keep them, raise their limit in Settings or switch the kind off.

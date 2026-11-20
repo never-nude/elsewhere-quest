@@ -98,7 +98,12 @@ public struct Scanner: Sendable {
         // Order matters: an item is listed once, under the first kind that claims it,
         // so the passes with the strongest evidence go first.
         if isOn(.screenshots) || isOn(.recordings) { scanCaptures(&collector) }
-        if isOn(.redundant) { scanRedundant(&collector) }
+        if isOn(.redundant) || isOn(.empty) || isOn(.dead) {
+            let inventory = takeInventory()
+            if isOn(.redundant) { scanRedundant(inventory, &collector) }
+            if isOn(.dead) { scanDeadFiles(inventory, &collector) }
+            if isOn(.empty) { scanEmptyFolders(inventory, &collector) }
+        }
         if isOn(.installers) { scanInstallers(&collector) }
         if isOn(.caches) { scanCaches(&collector) }
         if isOn(.developer) { scanDeveloper(&collector) }
@@ -186,11 +191,14 @@ public struct Scanner: Sendable {
         }
     }
 
+    /// Things left lying in Downloads or on the Desktop. Kept things get filed away; the rest is weighed up.
     private func scanStaleDownloads(_ out: inout Collector) {
-        for item in children(home("Downloads")) {
-            // Links and other oddities are not the owner's files; an app run from Downloads is in use.
+        for item in landingFolders.flatMap(children) {
+            // Links and other oddities are not the owner's files; an app run from here is in use;
+            // a code project on the Desktop is somebody's work in progress.
             guard item.stat.isRegular || item.stat.isDirectory,
                   !(item.stat.isDirectory && Self.fileExtension(item.name) == "app"),
+                  !(item.stat.isDirectory && FileStat(path: item.url.appendingPathComponent(".git").path) != nil),
                   item.url.standardizedFileURL.path != locations.screenshotFolder?.standardizedFileURL.path,
                   days(since: item.stat.lastTouched) >= rules.staleDownloadDays else { continue }
             // A folder is as fresh as the newest thing inside it.

@@ -193,7 +193,8 @@ final class ScannerTests: XCTestCase {
         let fresh = try XCTUnwrap(find(result, "Screenshot 2026-11-18 at 8.00.00 AM.png"))
         XCTAssertEqual(fresh.verdict, .leave)
         XCTAssertEqual(fresh.reason, "Taken today · still recent")
-        XCTAssertNil(find(result, "holiday.png"), "an ordinary picture is not a screenshot")
+        XCTAssertNotEqual(find(result, "holiday.png")?.category, .screenshots, "an ordinary picture is not a screenshot")
+        XCTAssertEqual(find(result, "holiday.png")?.verdict, .file, "but a year on the Desktop is long enough to file it")
     }
 
     func testScreenshotsInACustomFolderAreFound() throws {
@@ -466,7 +467,7 @@ final class FilerTests: XCTestCase {
         let first = home.scan().findings
         XCTAssertEqual(first.map(\.verdict), [.file])
         let month = Filer.folder(for: first[0], home: home.url, archive: archive, calendar: utc)
-        XCTAssertEqual(month.deletingLastPathComponent().lastPathComponent, "Stale downloads")
+        XCTAssertEqual(month.deletingLastPathComponent().lastPathComponent, "From Downloads")
         XCTAssertEqual(month.lastPathComponent.count, 7)
 
         let one = Filer.file(first, home: home.url, archive: archive, calendar: utc)
@@ -917,6 +918,157 @@ final class RedundancyTests: XCTestCase {
         let report = Washer.wash(both, home: home.url, trasher: FolderTrasher(bin: bin))
         XCTAssertTrue(report.failures.isEmpty, "\(report.failures.map(\.message))")
         XCTAssertTrue(FileManager.default.fileExists(atPath: home.url.appendingPathComponent("Downloads/Wash 2.app").path))
+    }
+}
+
+final class SweepTests: XCTestCase {
+    var home: FakeHome!
+
+    override func setUpWithError() throws { home = try FakeHome() }
+    override func tearDown() { home = nil }
+
+    private func find(_ result: ScanResult, _ name: String) -> Finding? {
+        result.findings.first { $0.url.lastPathComponent == name }
+    }
+
+    /// Makes a folder (and any folders above it, below the top folder) dated `daysOld` days ago.
+    private func folder(_ relative: String, daysOld: Int) throws {
+        try FileManager.default.createDirectory(at: home.url.appendingPathComponent(relative), withIntermediateDirectories: true)
+        let parts = relative.split(separator: "/")
+        for depth in stride(from: parts.count, through: 2, by: -1) {
+            home.age(home.url.appendingPathComponent(parts.prefix(depth).joined(separator: "/")), days: daysOld)
+        }
+    }
+
+    func testArchivesAnywhereInDocumentsAreChecked() throws {
+        let zip = ZipBuilder(items: [.file("Scans/page1.pdf", .noise(4000)), .file("Scans/page2.pdf", .noise(4000, seed: 2))])
+        try home.write("Documents/Taxes/2025/Scans.zip", zip.data(), daysOld: 3)
+        try home.write("Documents/Taxes/2025/Scans/page1.pdf", .noise(4000), daysOld: 3)
+        try home.write("Documents/Taxes/2025/Scans/page2.pdf", .noise(4000, seed: 2), daysOld: 3)
+        home.ageTree("Documents/Taxes", days: 3)
+        XCTAssertEqual(find(home.scan(), "Scans.zip")?.keeps?.lastPathComponent, "Scans")
+    }
+
+    func testNothingInsideAGitProjectIsTouched() throws {
+        let zip = ZipBuilder(items: [.file("fixture/data.json", .noise(500))])
+        try home.write("Documents/Code/app/.git/HEAD", Data("x".utf8), daysOld: 30)
+        try home.write("Documents/Code/app/tests/fixture.zip", zip.data(), daysOld: 30)
+        try home.write("Documents/Code/app/tests/fixture/data.json", .noise(500), daysOld: 30)
+        try home.write("Documents/Code/app/empty.txt", Data(), daysOld: 30)
+        try folder("Documents/Code/app/logs", daysOld: 30)
+        home.ageTree("Documents/Code", days: 30)
+        XCTAssertTrue(home.scan().findings.isEmpty, "\(home.scan().findings.map(\.name))")
+    }
+
+    func testEmptyFoldersGoOnlyTheTopMostOneIsListed() throws {
+        try folder("Documents/Old Plans/Drafts/Final", daysOld: 30)
+        try home.write("Documents/Old Plans/.DS_Store", .noise(10), daysOld: 30)
+        home.ageTree("Documents/Old Plans", days: 30)
+        try folder("Downloads/Just Made", daysOld: 1)
+        try folder("Documents/Zoom", daysOld: 30)               // Zoom made this and expects it
+        try home.app("Applications/zoom.us.app", id: "us.zoom", version: "6")
+        try home.app("Applications/Zoom.app", id: "us.zoom.xos", version: "6")
+        try folder("Documents/Shots", daysOld: 30)              // where screenshots are saved
+        try folder("Documents/Kept/inner", daysOld: 30)
+        try home.write("Documents/Kept/note.txt", .noise(20), daysOld: 30)
+        let result = home.scan(screenshotFolder: home.url.appendingPathComponent("Documents/Shots"))
+        let empties = result.findings.filter { $0.category == .empty }
+        XCTAssertEqual(Set(empties.map(\.name)), ["Old Plans", "inner"])
+        XCTAssertEqual(find(result, "Old Plans")?.verdict, .wash)
+        XCTAssertNil(find(result, "Documents"), "the top folders themselves never go")
+    }
+
+    func testAFolderThatFillsUpAfterTheScanStays() throws {
+        try folder("Documents/Old Plans/Drafts", daysOld: 30)
+        let found = home.scan().findings.filter { $0.category == .empty }
+        XCTAssertEqual(found.map(\.name), ["Old Plans"])
+        try home.write("Documents/Old Plans/Drafts/new idea.txt", .noise(50), daysOld: 30)
+        home.age(home.url.appendingPathComponent("Documents/Old Plans/Drafts"), days: 30)
+        let report = Washer.wash(found, home: home.url, trasher: FolderTrasher(bin: home.url.appendingPathComponent("bin")))
+        XCTAssertEqual(report.failures.map(\.message), ["No longer empty"])
+    }
+
+    func testDeadFiles() throws {
+        let docs = home.url.appendingPathComponent("Documents")
+        try home.write("Documents/real.txt", .noise(30), daysOld: 30)
+        try FileManager.default.createSymbolicLink(atPath: docs.appendingPathComponent("gone link").path, withDestinationPath: "missing.txt")
+        try FileManager.default.createSymbolicLink(atPath: docs.appendingPathComponent("good link").path, withDestinationPath: "real.txt")
+        try FileManager.default.createSymbolicLink(atPath: docs.appendingPathComponent("on backup disk").path,
+                                                   withDestinationPath: "/Volumes/Backup/photos")
+        try home.write("Documents/._Report.pdf", .noise(4096), daysOld: 30)           // Report.pdf is gone
+        try home.write("Documents/._real.txt", .noise(4096), daysOld: 30)             // real.txt is there
+        try home.write("Documents/~$Budget.xlsx", .noise(162), daysOld: 2)
+        try home.write("Downloads/blank.txt", Data(), daysOld: 30)
+        try home.write("Downloads/just now.txt", Data(), daysOld: 1)
+        try home.write("Documents/Icon\r", Data(), daysOld: 30)
+        home.ageTree("Documents", days: 30)
+        for link in ["gone link", "good link", "on backup disk"] {
+            var times = [timeval(tv_sec: Int(home.now.timeIntervalSince1970) - 30 * 86_400, tv_usec: 0),
+                         timeval(tv_sec: Int(home.now.timeIntervalSince1970) - 30 * 86_400, tv_usec: 0)]
+            _ = lutimes(docs.appendingPathComponent(link).path, &times)
+        }
+        let dead = Dictionary(uniqueKeysWithValues: home.scan().findings.filter { $0.category == .dead }.map { ($0.name, $0.reason) })
+        XCTAssertEqual(Set(dead.keys), ["gone link", "._Report.pdf", "~$Budget.xlsx", "blank.txt"])
+        XCTAssertEqual(dead["gone link"], "Link · points to something that no longer exists")
+        XCTAssertEqual(dead["blank.txt"], "Untouched since 30 days ago · an empty file: 0 bytes")
+    }
+
+    func testOfficeLockFilesStayWhileOfficeIsOpen() throws {
+        try home.write("Documents/~$Budget.xlsx", .noise(162), daysOld: 2)
+        home.inUse = ["/Applications/Microsoft Excel.app"]
+        XCTAssertNil(find(home.scan(), "~$Budget.xlsx"))
+    }
+
+    func testALooseDownloadAlreadyFiledInDocumentsCanGo() throws {
+        try home.write("Documents/Taxes/2025/invoice.pdf", .noise(9000, seed: 3), daysOld: 20)
+        try home.write("Downloads/invoice.pdf", .noise(9000, seed: 3), daysOld: 2)
+        home.ageTree("Documents/Taxes", days: 20)
+        let copy = try XCTUnwrap(find(home.scan(), "invoice.pdf"))
+        XCTAssertEqual(copy.url.deletingLastPathComponent().lastPathComponent, "Downloads")
+        XCTAssertEqual(copy.reason, "Copy from 2 days ago · an exact copy of “invoice.pdf” in Documents/Taxes/2025")
+    }
+
+    func testCopiesInsideOrganisedFoldersAreLeftAlone() throws {
+        // The same logo in two project folders: each folder needs its own.
+        try home.write("Documents/Client A/logo.png", .noise(5000, seed: 4), daysOld: 20)
+        try home.write("Documents/Client B/logo.png", .noise(5000, seed: 4), daysOld: 10)
+        // A file inside a folder unpacked in Downloads belongs to that folder.
+        try home.write("Downloads/Kit/logo.png", .noise(5000, seed: 4), daysOld: 5)
+        // But a "copy" right beside its twin is clutter.
+        try home.write("Documents/Client A/brief.pdf", .noise(3000, seed: 5), daysOld: 20)
+        try home.write("Documents/Client A/brief copy.pdf", .noise(3000, seed: 5), daysOld: 10)
+        for f in ["Documents/Client A", "Documents/Client B", "Downloads/Kit"] { home.ageTree(f, days: 5) }
+        let redundant = home.scan().findings.filter { $0.category == .redundant }
+        XCTAssertEqual(redundant.map(\.name), ["brief copy.pdf"])
+        XCTAssertEqual(redundant.first?.reason, "Copy from 5 days ago · an exact copy of “brief.pdf”")
+    }
+
+    func testOnlyRealInstallersCount() throws {
+        try home.app("Applications/Notes Pro.app", id: "notes.pro", version: "1")
+        try home.write("Downloads/Install Notes Pro.pkg", .noise(800), daysOld: 2)
+        try home.write("Downloads/Install Notes Pro Guide.pdf", .noise(800, seed: 2), daysOld: 2)
+        try home.write("Documents/Setup Notes Pro.pdf", .noise(800, seed: 3), daysOld: 2)
+        let result = home.scan()
+        XCTAssertEqual(find(result, "Install Notes Pro.pkg")?.category, .redundant)
+        XCTAssertNotEqual(find(result, "Install Notes Pro Guide.pdf")?.category, .redundant)
+        XCTAssertNil(find(result, "Setup Notes Pro.pdf"))
+    }
+
+    func testOldBuildsDeepInDownloadsAreFound() throws {
+        try home.app("Downloads/Atrium Pose for Mac/Atrium Pose.app", id: "earth.atrium.pose", version: "3.4.1", daysOld: 3)
+        try home.app("Downloads/Atrium Pose Preview 8.app", id: "earth.atrium.pose", version: "3.4.3", daysOld: 1)
+        home.ageTree("Downloads/Atrium Pose for Mac", days: 3)
+        XCTAssertEqual(find(home.scan(), "Atrium Pose.app")?.keeps?.lastPathComponent, "Atrium Pose Preview 8.app")
+    }
+
+    func testAProjectOnTheDesktopIsNotFiledAway() throws {
+        try home.write("Desktop/sketch/.git/HEAD", Data("x".utf8), daysOld: 90)
+        try home.write("Desktop/sketch/index.html", .noise(300), daysOld: 90)
+        try home.write("Desktop/notes.pages", .noise(300, seed: 2), daysOld: 90)
+        home.ageTree("Desktop/sketch", days: 90)
+        let result = home.scan()
+        XCTAssertNil(find(result, "sketch"))
+        XCTAssertEqual(find(result, "notes.pages")?.verdict, .file)
     }
 }
 

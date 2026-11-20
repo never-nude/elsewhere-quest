@@ -23,6 +23,8 @@ public struct Rules: Codable, Equatable, Sendable {
     public var cacheListBytes: Int64 = 5_000_000
     /// Projects untouched for this long can give up their dependency and build folders.
     public var projectIdleDays = 14
+    /// Empty folders and empty files untouched for this long can go.
+    public var emptyDays = 7
     /// Categories the owner switched off.
     public var disabled: Set<Residue> = []
     /// Paths the owner said never to show again.
@@ -48,6 +50,7 @@ public struct Rules: Codable, Equatable, Sendable {
         cacheSuggestBytes = try value(.cacheSuggestBytes, d.cacheSuggestBytes)
         cacheListBytes = try value(.cacheListBytes, d.cacheListBytes)
         projectIdleDays = try value(.projectIdleDays, d.projectIdleDays)
+        emptyDays = try value(.emptyDays, d.emptyDays)
         // A category name this version does not know is dropped rather than losing every setting.
         let names = try value(.disabled, [String]())
         disabled = Set(names.compactMap(Residue.init(rawValue:)))

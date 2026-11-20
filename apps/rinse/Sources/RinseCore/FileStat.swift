@@ -198,6 +198,25 @@ struct FileStat {
         }
     }
 
+    /// True when the owner gave it a Finder tag (a colour or a name).
+    static func hasTags(_ path: String) -> Bool {
+        #if canImport(Darwin)
+        return getxattr(path, "com.apple.metadata:_kMDItemUserTags", nil, 0, 0, XATTR_NOFOLLOW) > 0
+        #else
+        return false
+        #endif
+    }
+
+    /// True for a folder with nothing in it but other such folders and Finder's own `.DS_Store`.
+    static func isEmptyTree(_ path: String) -> Bool {
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: path) else { return false }
+        for name in names where name != ".DS_Store" && name != ".localized" {
+            let child = path + "/" + name
+            guard let st = FileStat(path: child), st.isDirectory, isEmptyTree(child) else { return false }
+        }
+        return true
+    }
+
     /// True when macOS itself tagged the file as a screen capture.
     static func isMarkedScreenCapture(_ path: String) -> Bool {
         #if canImport(Darwin)

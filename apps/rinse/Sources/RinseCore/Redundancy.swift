@@ -2,32 +2,25 @@ import Foundation
 
 /// Leftovers that have another copy Rinse can point to. Unlike everything else, these do not have
 /// to sit idle first: the evidence is the other copy, which is checked here and again just before
-/// anything moves. Only the top level of Downloads and the Desktop is searched.
+/// anything moves. Downloads, Documents and the Desktop are searched at every depth (see `Inventory`).
 extension Scanner {
-    func scanRedundant(_ out: inout Collector) {
-        let folders = [home("Downloads"), home("Desktop")]
-        for folder in folders {
-            let items = children(folder).filter(isSettled)
-            scanSplitArchives(items, in: folder, &out)
-            scanUnpackedArchives(items, in: folder, &out)
-        }
-        scanSupersededBuilds(folders, &out)
-        scanSpentInstallers(folders, &out)
-        for folder in folders { scanDuplicates(children(folder).filter(isSettled), &out) }
+    func scanRedundant(_ inventory: Inventory, _ out: inout Collector) {
+        let files = inventory.files.filter(isSettled)
+        scanSplitArchives(files, &out)
+        scanUnpackedArchives(files, &out)
+        scanSupersededBuilds(inventory.apps, &out)
+        scanSpentInstallers(files + inventory.apps.filter(isSettled), &out)
+        for folder in landingFolders { scanDuplicateFolders(children(folder).filter(isSettled), &out) }
+        scanDuplicateFiles(files, &out)
         scanUnfinishedDownloads(&out)
-    }
-
-    /// Not changed in the last ten minutes, so not still downloading or unpacking, and not an app in use.
-    private func isSettled(_ item: Item) -> Bool {
-        max(item.stat.modified, item.stat.created) <= now.addingTimeInterval(-600)
-            && !inUse.contains(item.url.standardizedFileURL.path)
     }
 
     // MARK: - Archives
 
-    private func scanUnpackedArchives(_ items: [Item], in folder: URL, _ out: inout Collector) {
+    private func scanUnpackedArchives(_ items: [Item], _ out: inout Collector) {
         for item in items where item.stat.isRegular && Self.fileExtension(item.name) == "zip" && !out.claims(item.url.path) {
             let path = item.url.path
+            let folder = item.url.deletingLastPathComponent()
             guard let file = JoinedFile(paths: [path]),
                   let entries = FileStat.preservingAccessTime([path], { ZipIndex.entries(of: file) }),
                   let copy = ZipIndex.unpackedCopy(of: entries, archiveName: (item.name as NSString).deletingPathExtension,
@@ -40,13 +33,15 @@ extension Scanner {
     }
 
     /// `name.part01`, `name.part02` … or `name.001`, `name.002` …: one archive cut into pieces.
-    private func scanSplitArchives(_ items: [Item], in folder: URL, _ out: inout Collector) {
+    private func scanSplitArchives(_ items: [Item], _ out: inout Collector) {
         var sets: [String: [(number: Int, item: Item)]] = [:]
         for item in items where item.stat.isRegular {
             guard let (base, number) = Self.splitPart(item.name) else { continue }
-            sets[base, default: []].append((number, item))
+            sets[item.url.deletingLastPathComponent().path + "/" + base, default: []].append((number, item))
         }
-        for (base, parts) in sets {
+        for (key, parts) in sets {
+            let folder = URL(fileURLWithPath: key).deletingLastPathComponent()
+            let base = URL(fileURLWithPath: key).lastPathComponent
             let ordered = parts.sorted { $0.number < $1.number }
             // Every piece must be there, numbered from one with no gaps, or the archive cannot be read.
             guard ordered.count >= 2,
@@ -136,12 +131,10 @@ extension Scanner {
 
     /// Older builds of an app, when a newer build of the same app (same bundle identifier) is
     /// right beside it or installed in Applications.
-    private func scanSupersededBuilds(_ folders: [URL], _ out: inout Collector) {
+    private func scanSupersededBuilds(_ apps: [Item], _ out: inout Collector) {
         var loose: [(build: AppBuild, item: Item)] = []
-        for folder in folders {
-            for item in children(folder) where item.stat.isDirectory && Self.fileExtension(item.name) == "app" {
-                if let build = appBuild(item.url, installed: false) { loose.append((build, item)) }
-            }
+        for item in apps {
+            if let build = appBuild(item.url, installed: false) { loose.append((build, item)) }
         }
         guard !loose.isEmpty else { return }
         let installed = installedApps()
@@ -174,26 +167,21 @@ extension Scanner {
         return build.version.isEmpty ? name : "\(name) \(build.version)"
     }
 
+    /// Kinds of file an installer comes as. A document called "Install Guide" is not one.
+    static let installerTypes: Set<String> = ["app", "pkg", "mpkg", "dmg", "zip", "command", "sh", "tool"]
+
     /// Installers (`Install X`, `X Installer`, `X-Setup.zip` …) for an app that is already installed.
-    private func scanSpentInstallers(_ folders: [URL], _ out: inout Collector) {
-        let apps: [(key: String, url: URL)] = locations.applications.flatMap { folder -> [(String, URL)] in
-            let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-            return names.filter { Self.fileExtension($0) == "app" }.map {
-                (Self.productKey(($0 as NSString).deletingPathExtension), folder.appendingPathComponent($0))
-            }
-        }
+    private func scanSpentInstallers(_ items: [Item], _ out: inout Collector) {
+        let apps = installedAppNames().map { (key: Self.productKey($0.name), url: $0.url) }
         guard !apps.isEmpty else { return }
-        for folder in folders {
-            for item in children(folder) where isSettled(item) && !out.claims(item.url.path) {
-                let stem = (item.name as NSString).deletingPathExtension
-                let words = Self.words(stem)
-                guard words.contains(where: Self.installerWords.contains) else { continue }
-                let key = Self.productKey(stem)
-                guard key.count >= 3, let app = apps.first(where: { $0.key == key }) else { continue }
-                out.add(item, .redundant, limit: .age(days: 0), lead: "Installer from " + ago(item.stat.lastTouched),
-                        redundancy: .init(reason: "\(Self.displayName(app.url)) is already installed", certainty: 0.8),
-                        keeps: app.url)
-            }
+        for item in items where !out.claims(item.url.path) && Self.installerTypes.contains(Self.fileExtension(item.name)) {
+            let stem = (item.name as NSString).deletingPathExtension
+            guard Self.words(stem).contains(where: Self.installerWords.contains) else { continue }
+            let key = Self.productKey(stem)
+            guard key.count >= 3, let app = apps.first(where: { $0.key == key }) else { continue }
+            out.add(item, .redundant, limit: .age(days: 0), lead: "Installer from " + ago(item.stat.lastTouched),
+                    redundancy: .init(reason: "\(Self.displayName(app.url)) is already installed", certainty: 0.8),
+                    keeps: app.url)
         }
     }
 
@@ -214,15 +202,13 @@ extension Scanner {
 
     // MARK: - Duplicates
 
-    /// Exact copies: same bytes, or the same folder tree with the same bytes in every file.
+    /// Exact copies of whole folders (or apps) sitting side by side in Downloads or on the Desktop.
     /// One copy stays: an app in use first, then the one without a "copy", " 2" or " (1)" in its
     /// name, then the oldest.
-    private func scanDuplicates(_ items: [Item], _ out: inout Collector) {
+    private func scanDuplicateFolders(_ items: [Item], _ out: inout Collector) {
         var groups: [String: [Item]] = [:]
         for item in items where !out.claims(item.url.path) {
-            if item.stat.isRegular, item.stat.size > 0 {
-                groups["f\(item.stat.size)", default: []].append(item)
-            } else if item.stat.isDirectory, let listing = FileStat.listing(item.url.path), !listing.isEmpty {
+            if item.stat.isDirectory, let listing = FileStat.listing(item.url.path), !listing.isEmpty {
                 let total = listing.reduce(Int64(0)) { $0 + $1.size }
                 groups["d\(listing.count):\(total):\(listing.hashValue)", default: []].append(item)
             }
@@ -249,6 +235,50 @@ extension Scanner {
                 remaining = different
             }
         }
+    }
+
+    /// Exact copies of single files. A file inside an organised folder may be part of a set (a project,
+    /// an album), so a copy goes only when it is loose in Downloads or on the Desktop, or is a "copy"
+    /// of its twin in the same folder. The copy that stays is preferably the one already filed in Documents.
+    private func scanDuplicateFiles(_ files: [Item], _ out: inout Collector) {
+        let landing = Set(landingFolders.map { $0.standardizedFileURL.path })
+        func isLoose(_ item: Item) -> Bool { landing.contains(item.url.deletingLastPathComponent().standardizedFileURL.path) }
+        var bySize: [Int64: [Item]] = [:]
+        for item in files where item.stat.isRegular && item.stat.size > 0 && !out.claims(item.url.path) {
+            bySize[item.stat.size, default: []].append(item)
+        }
+        for group in bySize.values where group.count >= 2 && group.contains(where: { isLoose($0) || Self.isCopyName($0.name) }) {
+            // Filed copies first, then names without "copy", then the oldest.
+            let ordered = group.sorted { a, b in
+                let ka = (isLoose(a) ? 1 : 0, keeperRank(a)), kb = (isLoose(b) ? 1 : 0, keeperRank(b))
+                if ka.0 != kb.0 { return ka.0 < kb.0 }
+                return ka.1 != kb.1 ? ka.1 < kb.1 : a.url.path < b.url.path
+            }
+            var keepers: [Item] = []
+            for item in ordered {
+                let folder = item.url.deletingLastPathComponent().standardizedFileURL.path
+                let candidates = keepers.filter { keeper in
+                    isLoose(item) || (Self.isCopyName(item.name)
+                        && keeper.url.deletingLastPathComponent().standardizedFileURL.path == folder)
+                }
+                if !inUse.contains(item.url.standardizedFileURL.path),
+                   let keeper = candidates.first(where: { FileStat.sameContents($0.url.path, item.url.path) }) {
+                    let place = keeper.url.deletingLastPathComponent().standardizedFileURL.path == folder
+                        ? "" : " in \(Self.placeName(keeper.url.deletingLastPathComponent(), home: locations.home))"
+                    out.add(item, .redundant, limit: .age(days: 0), lead: "Copy from " + ago(item.stat.lastTouched),
+                            redundancy: .init(reason: "an exact copy of “\(Self.displayName(keeper.url))”\(place)", certainty: 0.95),
+                            keeps: keeper.url)
+                } else {
+                    keepers.append(item)
+                }
+            }
+        }
+    }
+
+    /// "Documents/Taxes/2025", for showing where the copy that stays is.
+    static func placeName(_ folder: URL, home: URL) -> String {
+        let path = folder.standardizedFileURL.path, base = home.standardizedFileURL.path
+        return path.hasPrefix(base + "/") ? String(path.dropFirst(base.count + 1)) : path
     }
 
     private func keeperRank(_ item: Item) -> (Int, Int, Double) {

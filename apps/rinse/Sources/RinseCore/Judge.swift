@@ -137,7 +137,7 @@ public enum Judge {
 
     public static func assess(_ e: Evidence) -> Assessment {
         // Redundancy needs no waiting: the other copy is right there, and was checked byte by byte or entry by entry.
-        if e.kind == .redundant {
+        if e.kind == .redundant || e.kind == .empty || e.kind == .dead {
             guard let r = e.redundancy else { return Assessment(verdict: .leave, confidence: 50, reasons: []) }
             return Assessment(verdict: .wash, confidence: percent(r.certainty), reasons: [r.reason])
         }
@@ -172,7 +172,7 @@ public enum Judge {
         switch e.kind {
         case .caches, .developer:
             return (1, ["rebuilds itself"])
-        case .redundant, .projectBuilds:
+        case .redundant, .projectBuilds, .empty, .dead:
             return (1, [])
         case .installers:
             // Without a download record it may be a disk image the owner made, so it is never washed.

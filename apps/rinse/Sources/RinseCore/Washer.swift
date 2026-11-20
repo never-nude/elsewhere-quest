@@ -57,6 +57,10 @@ extension SafetyGuard {
         guard now.isDirectory == finding.isDirectory, now.modified <= finding.lastTouched else {
             return "Changed since Rinse looked"
         }
+        // Something may have been put deep inside an empty folder, which its own date would not show.
+        if finding.category == .empty, !FileStat.isEmptyTree(finding.url.path) { return "No longer empty" }
+        if finding.category == .dead, now.isSymlink, Scanner.linkState(finding.url) != .broken { return "Its target is back" }
+        if finding.category == .dead, now.isRegular, finding.bytes == 0, now.size != 0 { return "No longer empty" }
         return nil
     }
 

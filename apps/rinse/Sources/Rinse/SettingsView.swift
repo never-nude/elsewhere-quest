@@ -49,6 +49,8 @@ struct SettingsView: View {
                             value: $model.rules.buildDays, in: 1...90)
                     Stepper("Projects untouched for \(days(model.rules.projectIdleDays))",
                             value: $model.rules.projectIdleDays, in: 1...365)
+                    Stepper("Empty folders and files untouched for \(days(model.rules.emptyDays))",
+                            value: $model.rules.emptyDays, in: 1...90)
                     Picker("Caches larger than", selection: $model.rules.cacheSuggestBytes) {
                         ForEach([50, 100, 250, 500, 1000], id: \.self) { size in
                             Text("\(size) MB").tag(Int64(size) * Self.megabyte)
