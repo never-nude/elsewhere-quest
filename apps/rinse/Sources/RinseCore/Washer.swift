@@ -5,7 +5,7 @@ public protocol Trasher: Sendable {
     func trash(_ url: URL) throws
 }
 
-/// The last line of defence: what Rinse will never move, whatever a rule says.
+/// The last line of defence: what Wash will never move, whatever a rule says.
 public enum SafetyGuard {
     /// Folders that hold other things. Their contents may go; they may not.
     static let anchors: Set<String> = [
@@ -47,7 +47,7 @@ extension SafetyGuard {
     /// Why an item must not be moved right now, or nil when it may be.
     /// Checked at the last moment, because the scan that judged it may be hours old.
     static func objection(to finding: Finding, home: URL, archive: URL?) -> String? {
-        guard canWash(finding.url, home: home) else { return "Rinse does not move this location" }
+        guard canWash(finding.url, home: home) else { return "Wash does not move this location" }
         if let archive {
             let path = finding.url.standardizedFileURL.path, filing = archive.standardizedFileURL.path
             if path == filing || path.hasPrefix(filing + "/") { return "Already in the filing folder" }
@@ -55,7 +55,27 @@ extension SafetyGuard {
         }
         guard let now = FileStat(path: finding.url.path) else { return "Already gone" }
         guard now.isDirectory == finding.isDirectory, now.modified <= finding.lastTouched else {
-            return "Changed since Rinse looked"
+            return "Changed since Wash looked"
+        }
+        if [.duplicateArchives, .olderBuildArchives, .emptyFolders].contains(finding.category) {
+            let parent = finding.url.deletingLastPathComponent()
+            guard ["Desktop", "Downloads"].contains(parent.lastPathComponent),
+                  parent.deletingLastPathComponent().standardizedFileURL.path == home.standardizedFileURL.path,
+                  FileStat(path: parent.path)?.isDirectory == true else { return "Cleanup folder changed" }
+        }
+        switch finding.category {
+        case .duplicateArchives:
+            guard let kept = finding.retainedArchives.first, FolderCleanup.isMatchingCopy(finding.url, of: kept) else {
+                return "Matching archive changed or is gone"
+            }
+        case .olderBuildArchives:
+            guard FolderCleanup.retainsNewerBuilds(for: finding.url, archives: finding.retainedArchives) else {
+                return "Two newer build archives are no longer available"
+            }
+        case .emptyFolders:
+            guard FolderCleanup.isEmptyFolder(finding.url) else { return "Folder is no longer empty" }
+        default:
+            break
         }
         return nil
     }

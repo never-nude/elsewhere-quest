@@ -42,8 +42,8 @@ struct RinseReport {
 }
 
 extension Residue {
-    /// Caches rebuild themselves, so there is nothing in them worth filing.
-    var canBeFiled: Bool { self != .caches && self != .developer }
+    var canBeFiled: Bool { self != .caches && self != .developer && self != .emptyFolders }
+    var requiresExplicitChoice: Bool { self == .olderBuildArchives || self == .emptyFolders }
 }
 
 @MainActor
@@ -77,7 +77,7 @@ final class AppModel {
         ledger = Ledger.load(from: Self.ledgerURL)
     }
 
-    /// Where filed items go: the chosen folder, or a "Filed Away" folder inside it when Rinse scans that place.
+    /// Where filed items go: the chosen folder, or a "Filed Away" folder inside it when Wash scans that place.
     var archive: URL {
         Locations.filingFolder(chosen: prefs.archivePath.map { URL(fileURLWithPath: $0) }, home: home,
                                screenshotFolder: Platform.screenshotFolder())
@@ -186,9 +186,15 @@ final class AppModel {
         overrides[finding.id] = choice == finding.verdict ? nil : (choice, finding.verdict)
     }
 
-    /// Sets every item Rinse recommended one thing for to the same action.
+    /// Sets every item Wash recommended one thing for to the same action.
     func setAll(recommended verdict: Verdict, to action: Verdict) {
-        for finding in result?.findings(recommended: verdict) ?? [] { setAction(finding, action) }
+        for finding in result?.findings(recommended: verdict) ?? [] {
+            if action == .leave || !finding.category.requiresExplicitChoice { setAction(finding, action) }
+        }
+    }
+
+    func selectOlderBuilds() {
+        for finding in result?.findings(in: .olderBuildArchives) ?? [] { setAction(finding, .wash) }
     }
 
     var washFindings: [Finding] { (result?.findings ?? []).filter { action(for: $0) == .wash } }

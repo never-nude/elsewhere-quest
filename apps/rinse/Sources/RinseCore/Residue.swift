@@ -1,6 +1,6 @@
 import Foundation
 
-/// The kinds of residue Rinse looks for, in the order they are shown.
+/// The kinds of residue Wash looks for, in the order they are shown.
 public enum Residue: String, CaseIterable, Codable, Sendable, Identifiable {
     case screenshots
     case recordings
@@ -9,6 +9,9 @@ public enum Residue: String, CaseIterable, Codable, Sendable, Identifiable {
     case developer
     case staleDownloads
     case bigIdle
+    case duplicateArchives
+    case olderBuildArchives
+    case emptyFolders
 
     public var id: String { rawValue }
 
@@ -21,6 +24,9 @@ public enum Residue: String, CaseIterable, Codable, Sendable, Identifiable {
         case .developer: return "Developer leftovers"
         case .staleDownloads: return "Stale downloads"
         case .bigIdle: return "Big and idle"
+        case .duplicateArchives: return "Duplicate archives"
+        case .olderBuildArchives: return "Older build archives"
+        case .emptyFolders: return "Empty folders"
         }
     }
 
@@ -33,6 +39,9 @@ public enum Residue: String, CaseIterable, Codable, Sendable, Identifiable {
         case .developer: return "Build products and tool caches that regenerate"
         case .staleDownloads: return "Downloads nobody has touched in a while"
         case .bigIdle: return "Large files that have been sitting untouched"
+        case .duplicateArchives: return "Downloaded copies that match an archive beside them"
+        case .olderBuildArchives: return "Earlier ZIP or DMG builds with newer versions beside them"
+        case .emptyFolders: return "Unused Desktop or Downloads folders with nothing inside"
         }
     }
 
@@ -46,6 +55,9 @@ public enum Residue: String, CaseIterable, Codable, Sendable, Identifiable {
         case .developer: return "hammer"
         case .staleDownloads: return "arrow.down.circle"
         case .bigIdle: return "moon.zzz"
+        case .duplicateArchives: return "doc.on.doc"
+        case .olderBuildArchives: return "shippingbox"
+        case .emptyFolders: return "folder"
         }
     }
 }

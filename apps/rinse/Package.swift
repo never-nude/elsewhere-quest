@@ -10,12 +10,12 @@ var targets: [Target] = [
 ]
 
 #if os(macOS)
-products.append(.executable(name: "Rinse", targets: ["Rinse"]))
-targets.append(.executableTarget(name: "Rinse", dependencies: ["RinseCore"]))
+products.append(.executable(name: "Wash", targets: ["Wash"]))
+targets.append(.executableTarget(name: "Wash", dependencies: ["RinseCore"], path: "Sources/Rinse"))
 #endif
 
 let package = Package(
-    name: "Rinse",
+    name: "Wash",
     platforms: [.macOS(.v14)],
     products: products,
     targets: targets

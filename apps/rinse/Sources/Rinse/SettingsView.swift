@@ -15,14 +15,14 @@ struct SettingsView: View {
         VStack(spacing: 0) {
             Form {
                 Section("Evening ritual") {
-                    Toggle("Remind me to rinse", isOn: $model.prefs.ritualEnabled)
+                    Toggle("Remind me to wash", isOn: $model.prefs.ritualEnabled)
                     DatePicker("At", selection: ritualTime, displayedComponents: .hourAndMinute)
                         .disabled(!model.prefs.ritualEnabled)
                 }
-                Section("Where Rinse shows up") {
+                Section("Where Wash shows up") {
                     Toggle("Show the amount on the Dock icon and in the menu bar", isOn: $model.prefs.showAmount)
                     Toggle("Show a drop in the menu bar", isOn: $model.prefs.showMenuBarItem)
-                    Toggle("Open Rinse at login", isOn: $openAtLogin)
+                    Toggle("Open Wash at login", isOn: $openAtLogin)
                     if let loginError {
                         Text(loginError).font(.caption).foregroundStyle(.secondary)
                     }
@@ -103,7 +103,7 @@ struct SettingsView: View {
         panel.canChooseFiles = false
         panel.canCreateDirectories = true
         panel.prompt = "File Here"
-        panel.message = "Choose where Rinse files things away."
+        panel.message = "Choose where Wash files things away."
         if panel.runModal() == .OK, let url = panel.url { model.prefs.archivePath = url.path }
     }
 

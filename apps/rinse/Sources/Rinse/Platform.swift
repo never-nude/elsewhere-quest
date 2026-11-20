@@ -80,7 +80,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     func announce(bytes: Int64, toFile: Int) {
         guard isAvailable else { return }
         let content = UNMutableNotificationContent()
-        content.title = "Time to rinse"
+        content.title = "Time to wash"
         var parts: [String] = []
         if bytes > 0 { parts.append("\(ByteFormat.string(bytes)) ready to wash off") }
         if toFile > 0 { parts.append("\(toFile) \(toFile == 1 ? "thing" : "things") to file away") }
@@ -118,7 +118,7 @@ final class ReviewWindow {
             let hosting = NSHostingController(rootView: ReviewView().environment(model))
             hosting.sizingOptions = []
             let made = NSWindow(contentViewController: hosting)
-            made.title = "Rinse"
+            made.title = "Wash"
             made.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             made.isReleasedWhenClosed = false
             made.contentMinSize = NSSize(width: 620, height: 480)
@@ -148,11 +148,11 @@ enum MainMenu {
         let main = NSMenu()
 
         let app = NSMenu()
-        app.addItem(withTitle: "About Rinse", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        app.addItem(withTitle: "About Wash", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         app.addItem(.separator())
-        app.addItem(withTitle: "Hide Rinse", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        app.addItem(withTitle: "Quit Rinse", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        main.addItem(submenu(app, title: "Rinse"))
+        app.addItem(withTitle: "Hide Wash", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        app.addItem(withTitle: "Quit Wash", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        main.addItem(submenu(app, title: "Wash"))
 
         let edit = NSMenu(title: "Edit")
         edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")

@@ -3,19 +3,19 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Rinse</string>
+    <string>Wash</string>
     <key>CFBundleDisplayName</key>
-    <string>Rinse</string>
+    <string>Wash</string>
     <key>CFBundleIdentifier</key>
     <string>quest.elsewhere.rinse</string>
     <key>CFBundleExecutable</key>
-    <string>Rinse</string>
+    <string>Wash</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>0.2.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>CFBundleIconFile</key>
@@ -23,16 +23,16 @@
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>NSHumanReadableCopyright</key>
-    <string>Everything Rinse moves goes to the Trash.</string>
+    <string>Wash moves selected files to the Trash or your filing folder.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Rinse asks Finder to empty the Trash, and only when you press Empty the Trash.</string>
+    <string>Wash asks Finder to empty the Trash, and only when you press Empty the Trash.</string>
     <key>NSDesktopFolderUsageDescription</key>
-    <string>Rinse looks on the Desktop for old screenshots, recordings and installers.</string>
+    <string>Wash looks on the Desktop for screenshots, recordings, installers, older build archives and empty folders.</string>
     <key>NSDownloadsFolderUsageDescription</key>
-    <string>Rinse looks in Downloads for installers and files nobody has touched in a while.</string>
+    <string>Wash looks in Downloads for installers, older build archives, empty folders and unused files.</string>
     <key>NSDocumentsFolderUsageDescription</key>
-    <string>Rinse looks in Documents for large files that have been sitting idle.</string>
+    <string>Wash looks in Documents for large files that have been sitting idle.</string>
 </dict>
 </plist>

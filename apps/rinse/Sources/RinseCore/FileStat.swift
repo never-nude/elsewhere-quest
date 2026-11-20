@@ -18,6 +18,9 @@ struct FileStat {
     let created: Date
     /// The disk it lives on.
     let device: UInt64
+    let inode: UInt64
+    let linkCount: UInt64
+    let length: Int64
 
     /// The most recent sign of life.
     var lastTouched: Date { max(modified, max(accessed, created)) }
@@ -30,6 +33,9 @@ struct FileStat {
         isRegular = kind == S_IFREG
         bytes = Int64(st.st_blocks) * 512
         device = UInt64(truncatingIfNeeded: st.st_dev)
+        inode = UInt64(truncatingIfNeeded: st.st_ino)
+        linkCount = UInt64(truncatingIfNeeded: st.st_nlink)
+        length = Int64(st.st_size)
         #if canImport(Darwin)
         modified = Date(st.st_mtimespec)
         accessed = Date(st.st_atimespec)
@@ -39,6 +45,12 @@ struct FileStat {
         accessed = Date(st.st_atim)
         created = Date(st.st_mtim)
         #endif
+    }
+
+    func sameFile(path: String) -> Bool {
+        guard let latest = FileStat(path: path), latest.isRegular else { return false }
+        return device == latest.device && inode == latest.inode && modified == latest.modified
+            && length == latest.length && linkCount == latest.linkCount
     }
 
     /// Disk space of a file, or of a folder and everything under it.
@@ -70,7 +82,7 @@ struct FileStat {
         guard let top = FileStat(path: path) else { return (0, .distantPast) }
         guard top.isDirectory else { return (top.bytes, top.lastTouched) }
         var total = top.bytes
-        var newest = top.lastTouched
+        var newest = top.modified
         guard let walker = FileManager.default.enumerator(atPath: path) else { return (total, newest) }
         while let relative = walker.nextObject() as? String {
             guard let st = FileStat(path: path + "/" + relative) else { continue }

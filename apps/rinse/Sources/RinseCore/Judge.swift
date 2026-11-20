@@ -1,6 +1,6 @@
 import Foundation
 
-/// What Rinse recommends doing with one item.
+/// What Wash recommends doing with one item.
 public enum Verdict: String, Codable, CaseIterable, Sendable, Identifiable {
     /// Send it to the Trash: it is replaceable and nobody is using it.
     case wash
@@ -161,10 +161,12 @@ public enum Judge {
         case .screenshots, .recordings:
             if e.renamed { return (0.3, ["you renamed it"]) }
             if e.usage?.lastOpened != nil { return (0.3, ["you have opened it"]) }
-            // A screenshot left under its default name with no sign of use is the one thing Rinse
+            // A screenshot left under its default name with no sign of use is the one thing Wash
             // lets go without proof of a second copy. A recording is bigger and more deliberate.
             if e.kind == .screenshots { return (0.7, ["no record of you opening it"]) }
             return (0.5, [])
+        case .duplicateArchives, .olderBuildArchives, .emptyFolders:
+            return (0, []) // These use direct evidence from the folder scan.
         case .staleDownloads, .bigIdle:
             if e.isDirectory { return (0.2, ["a folder of your files"]) }
             let ext = Scanner.fileExtension(e.name)
@@ -175,7 +177,7 @@ public enum Judge {
             }
             if documents.contains(ext) { return (0.25, ["a document"]) }
             if media.contains(ext) { return (0.25, ["a photo, video or sound file"]) }
-            // Rinse does not know what this is, and nothing about how it arrived changes that.
+            // Wash does not know what this is, and nothing about how it arrived changes that.
             return (0.4, [])
         }
     }

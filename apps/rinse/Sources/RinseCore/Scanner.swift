@@ -5,7 +5,7 @@ public struct Locations: Equatable, Sendable {
     public var home: URL
     /// Where macOS saves screenshots when the owner moved it off the Desktop.
     public var screenshotFolder: URL?
-    /// Where filed items go. Rinse never looks inside it.
+    /// Where filed items go. Wash never looks inside it.
     public var archive: URL
 
     public init(home: URL, screenshotFolder: URL? = nil, archive: URL? = nil) {
@@ -14,13 +14,13 @@ public struct Locations: Equatable, Sendable {
         self.archive = Locations.filingFolder(chosen: archive, home: home, screenshotFolder: screenshotFolder)
     }
 
-    /// The folders Rinse looks through. The filing folder must never be one of them, or contain one.
+    /// The folders Wash looks through. The filing folder must never be one of them, or contain one.
     static func scanRoots(home: URL, screenshotFolder: URL?) -> [URL] {
         ["Desktop", "Downloads", "Movies", "Documents"].map(home.appendingPathComponent)
             + (screenshotFolder.map { [$0] } ?? [])
     }
 
-    /// The folder filing really uses. If the owner picked a place Rinse scans (Documents, say),
+    /// The folder filing really uses. If the owner picked a place Wash scans (Documents, say),
     /// or one that contains such a place, a "Filed Away" folder inside it is used instead,
     /// so that filed things are never scanned again.
     public static func filingFolder(chosen: URL?, home: URL, screenshotFolder: URL? = nil) -> URL {
@@ -64,13 +64,13 @@ public struct Scanner: Sendable {
         "pip", "uv", "yarn", "pnpm", "go-build", "pre-commit", "node-gyp", "Homebrew", "typescript",
         "puppeteer", "ms-playwright", "deno", "bazel", "ccache", "sccache", "electron", "cypress",
     ]
-    /// Tool folders in `~/.cache` that hold models or logins. Rinse does not list them.
+    /// Tool folders in `~/.cache` that hold models or logins. Wash does not list them.
     static let notCaches: Set<String> = ["huggingface", "torch", "whisper", "lm-studio", "ollama", "gcloud"]
 
     static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "heic", "tiff", "gif", "pdf"]
     static let movieExtensions: Set<String> = ["mov", "mp4", "m4v"]
     static let installerExtensions: Set<String> = ["dmg", "pkg", "mpkg", "xip", "iso"]
-    /// Folders that are really one document. Rinse does not look inside them.
+    /// Folders that are really one document. Wash does not look inside them.
     static let packageExtensions: Set<String> = [
         "app", "photoslibrary", "fcpbundle", "imovielibrary", "tvlibrary", "musiclibrary",
         "logicx", "band", "xcodeproj", "xcworkspace", "playground", "bundle", "framework",
@@ -82,6 +82,7 @@ public struct Scanner: Sendable {
             != FileStat.device(ofNearestExisting: locations.home)
         var collector = Collector(rules: rules, now: now, usage: usage, hasOrigin: hasOrigin,
                                   filingFreesSpace: filingFreesSpace)
+        scanFolderCleanup(&collector)
         if isOn(.screenshots) || isOn(.recordings) { scanCaptures(&collector) }
         if isOn(.installers) { scanInstallers(&collector) }
         if isOn(.caches) { scanCaches(&collector) }
@@ -92,6 +93,60 @@ public struct Scanner: Sendable {
     }
 
     // MARK: - Categories
+
+    private func scanFolderCleanup(_ out: inout Collector) {
+        for folder in [home("Desktop"), home("Downloads")] where FileStat(path: folder.path)?.isDirectory == true {
+            let items = children(folder)
+            let splitBases = Set(items.compactMap { FolderCleanup.splitArchiveBase(for: $0.name) })
+            let files = items.filter { item in
+                item.stat.isRegular && !FolderCleanup.isSplitArchive(item.name)
+                    && !splitBases.contains(item.name.lowercased())
+            }
+            let byName = Dictionary(uniqueKeysWithValues: files.map { ($0.name, $0) })
+            for item in items where FolderCleanup.isSplitArchive(item.name) || splitBases.contains(item.name.lowercased()) {
+                out.reserve(item)
+            }
+            for item in files {
+                guard let name = FolderCleanup.originalName(of: item.name), let original = byName[name],
+                      FolderCleanup.isMatchingCopy(item.url, of: original.url) else { continue }
+                out.reserve(original)
+                if isOn(.duplicateArchives) {
+                    out.addCleanup(item, .duplicateArchives, verdict: .wash,
+                                   reason: "Matches \(original.name) byte for byte", retaining: [original.url])
+                } else {
+                    out.reserve(item)
+                }
+            }
+            let builds = files.compactMap { item in FolderCleanup.build(named: item.name).map { (item, $0) } }
+            for family in Dictionary(grouping: builds, by: { $0.1.family }).values {
+                // Once a build series is identified, only the build rules may select any of its archives.
+                let candidates = family.filter { !out.claims($0.0.url.path) }
+                defer { for (item, _) in family { out.reserve(item) } }
+                guard isOn(.olderBuildArchives), Set(candidates.map { $0.1.version }).count >= 3 else { continue }
+                let valid = candidates.filter { item, _ in
+                    item.stat.linkCount == 1 && FolderCleanup.looksLikeArchive(item.url, expectedSize: item.stat.length)
+                        && item.stat.sameFile(path: item.url.path)
+                }
+                let versions = Set(valid.map { $0.1.version }).sorted { $1.lexicographicallyPrecedes($0) }
+                guard versions.count >= 3 else { continue }
+                let retained = versions.prefix(2).compactMap { version in valid.first { $0.1.version == version }?.0 }
+                for (item, build) in valid where !versions.prefix(2).contains(build.version) {
+                    out.addCleanup(item, .olderBuildArchives, verdict: .leave,
+                                   reason: "Older build · newer copies: \(retained.map(\.name).joined(separator: ", "))",
+                                   retaining: retained.map(\.url))
+                }
+            }
+            for item in items where item.stat.isDirectory {
+                guard !Self.packageExtensions.contains(Self.fileExtension(item.name)),
+                      item.url.standardizedFileURL.path != locations.screenshotFolder?.standardizedFileURL.path,
+                      FolderCleanup.isEmptyFolder(item.url) else { continue }
+                if isOn(.emptyFolders), days(since: item.stat.modified) >= 7 {
+                    out.addCleanup(item, .emptyFolders, verdict: .leave, reason: "Empty and unchanged for at least 7 days")
+                }
+                out.reserve(item)
+            }
+        }
+    }
 
     private func scanCaptures(_ out: inout Collector) {
         var folders = [home("Desktop"), home("Movies"), home("Downloads")]
@@ -175,7 +230,7 @@ public struct Scanner: Sendable {
             guard item.stat.isRegular || item.stat.isDirectory,
                   !(item.stat.isDirectory && Self.fileExtension(item.name) == "app"),
                   item.url.standardizedFileURL.path != locations.screenshotFolder?.standardizedFileURL.path,
-                  days(since: item.stat.lastTouched) >= rules.staleDownloadDays else { continue }
+                  days(since: item.stat.isDirectory ? item.stat.modified : item.stat.lastTouched) >= rules.staleDownloadDays else { continue }
             // A folder is as fresh as the newest thing inside it.
             let summary = FileStat.treeSummary(item.url.path)
             guard days(since: summary.newest) >= rules.staleDownloadDays else { continue }
@@ -300,6 +355,18 @@ private struct Collector {
     }
 
     func claims(_ path: String) -> Bool { claimed.contains(path) || rules.ignored.contains(path) }
+
+    mutating func reserve(_ item: Scanner.Item) { claimed.insert(item.url.path) }
+
+    mutating func addCleanup(_ item: Scanner.Item, _ category: Residue, verdict: Verdict,
+                             reason: String, retaining: [URL] = []) {
+        guard !claims(item.url.path) else { return }
+        reserve(item)
+        findings.append(Finding(url: item.url, name: item.name, category: category, bytes: item.stat.bytes,
+                                lastTouched: item.stat.lastTouched, isDirectory: item.stat.isDirectory,
+                                assessment: Assessment(verdict: verdict, confidence: verdict == .wash ? 100 : 50,
+                                                       reasons: [reason]), retainedArchives: retaining))
+    }
 
     /// `lead` opens the reason line, for example "Taken 12 days ago".
     mutating func add(_ item: Scanner.Item, _ category: Residue, bytes: Int64? = nil, limit: Judge.Limit,

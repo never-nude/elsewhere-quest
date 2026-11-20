@@ -9,7 +9,7 @@ struct RinseApp: App {
 
     var body: some Scene {
         @Bindable var model = model
-        // Rinse is an ordinary Dock app. The menu bar drop is an extra, and can be switched off.
+        // Wash is an ordinary Dock app. The menu bar drop is an extra, and can be switched off.
         MenuBarExtra(isInserted: $model.prefs.showMenuBarItem) {
             MenuPanel().environment(model)
         } label: {
@@ -25,7 +25,7 @@ struct RinseApp: App {
                     .keyboardShortcut(",", modifiers: .command)
             }
             CommandGroup(replacing: .newItem) {
-                Button("Show Rinse") { model.openReview() }
+                Button("Show Wash") { model.openReview() }
                     .keyboardShortcut("0", modifiers: .command)
                 Button("Look Again") { Task { await model.scan() } }
                     .keyboardShortcut("r", modifiers: .command)
@@ -40,7 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         MainMenu.installIfMissing()
         AppModel.shared.start()
-        // Opened by hand, the window comes forward. Started at login, Rinse stays quietly in the Dock.
+        // Opened by hand, the window comes forward. Started at login, Wash stays quietly in the Dock.
         if !Platform.wasLaunchedAtLogin() { AppModel.shared.openReview() }
     }
 
@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
-    /// Closing the window leaves Rinse running, so the evening reminder and the Dock badge keep working.
+    /// Closing the window leaves Wash running, so the evening reminder and the Dock badge keep working.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
