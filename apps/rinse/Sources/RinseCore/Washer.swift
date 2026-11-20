@@ -59,6 +59,25 @@ extension SafetyGuard {
         }
         return nil
     }
+
+    /// For a redundant item: the copy that must survive, after following any chain through other
+    /// items in the same batch (an archive whose unpacked app is itself an old build is fine, as
+    /// long as the newest build stays). Nil when no copy is left standing.
+    static func survivingCopy(of finding: Finding, batch: [Finding]) -> URL? {
+        guard var copy = finding.keeps else { return nil }
+        let going = Dictionary(batch.map { ($0.url.standardizedFileURL.path, $0.keeps) }, uniquingKeysWith: { a, _ in a })
+        var visited: Set<String> = [finding.url.standardizedFileURL.path]
+        while true {
+            let path = copy.standardizedFileURL.path
+            guard visited.insert(path).inserted else { return nil }
+            // Inside something that is going: that copy goes with it.
+            if going.keys.contains(where: { path.hasPrefix($0 + "/") }) { return nil }
+            guard let next = going[path] else { break }
+            guard let further = next else { return nil }
+            copy = further
+        }
+        return FileManager.default.fileExists(atPath: copy.path) ? copy : nil
+    }
 }
 
 public enum Washer {
@@ -69,6 +88,10 @@ public enum Washer {
         for finding in findings {
             if let objection = SafetyGuard.objection(to: finding, home: home, archive: archive) {
                 failures.append(.init(finding: finding, message: objection))
+                continue
+            }
+            if finding.keeps != nil, SafetyGuard.survivingCopy(of: finding, batch: findings) == nil {
+                failures.append(.init(finding: finding, message: "Its other copy is gone or going too"))
                 continue
             }
             do {

@@ -20,8 +20,8 @@ public enum Filer {
         for finding in findings {
             func fail(_ message: String) { failures.append(.init(finding: finding, message: message)) }
 
-            guard finding.category != .caches, finding.category != .developer else {
-                fail("Caches are not worth filing")
+            guard finding.category.canBeFiled else {
+                fail("Only things that are yours get filed")
                 continue
             }
             if let objection = SafetyGuard.objection(to: finding, home: home, archive: archive) {

@@ -28,6 +28,22 @@ enum Platform {
         return Usage(lastOpened: opened)
     }
 
+    /// Apps that are running or kept in the Dock. Moving one would break the app or leave a
+    /// question mark in the Dock, so Rinse never recommends it.
+    @MainActor
+    static func appsInUse() -> Set<String> {
+        var paths = Set(NSWorkspace.shared.runningApplications.compactMap { $0.bundleURL?.standardizedFileURL.path })
+        let tiles = CFPreferencesCopyAppValue("persistent-apps" as CFString, "com.apple.dock" as CFString) as? [[String: Any]] ?? []
+        for tile in tiles {
+            guard let data = tile["tile-data"] as? [String: Any],
+                  let file = data["file-data"] as? [String: Any],
+                  let text = file["_CFURLString"] as? String,
+                  let url = URL(string: text), url.isFileURL else { continue }
+            paths.insert(url.standardizedFileURL.path)
+        }
+        return paths
+    }
+
     /// True when macOS started the app as a login item, rather than the owner opening it.
     @MainActor
     static func wasLaunchedAtLogin() -> Bool {

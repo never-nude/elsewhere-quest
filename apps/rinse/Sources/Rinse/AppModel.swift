@@ -41,11 +41,6 @@ struct RinseReport {
     var didNothing: Bool { wash.washed.isEmpty && file.filed.isEmpty }
 }
 
-extension Residue {
-    /// Caches rebuild themselves, so there is nothing in them worth filing.
-    var canBeFiled: Bool { self != .caches && self != .developer }
-}
-
 @MainActor
 @Observable
 final class AppModel {
@@ -161,7 +156,7 @@ final class AppModel {
             rescanQueued = false
             let scanner = Scanner(
                 locations: Locations(home: home, screenshotFolder: Platform.screenshotFolder(), archive: archive),
-                rules: rules, now: Date(), usage: { Platform.usage($0) })
+                rules: rules, now: Date(), usage: { Platform.usage($0) }, inUse: Platform.appsInUse())
             let fresh = await Task.detached(priority: .utility) { scanner.scan() }.value
             // The owner may have hidden something while the pass was running.
             let ignored = rules.ignored

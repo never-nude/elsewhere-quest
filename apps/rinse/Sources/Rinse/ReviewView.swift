@@ -264,6 +264,11 @@ private struct FindingRow: View {
             Button("Open") {
                 NSWorkspace.shared.open(finding.url)
             }
+            if let copy = finding.keeps {
+                Button("Show the Copy That Stays") {
+                    NSWorkspace.shared.activateFileViewerSelecting([copy])
+                }
+            }
             Divider()
             Button("Never Show This Again") {
                 model.ignore(finding)
@@ -278,7 +283,10 @@ private struct HowItDecides: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("How Rinse decides")
                 .font(.headline)
-            Text("Every item is measured two ways.")
+            point("square.on.square", "Redundant",
+                  "An archive already unpacked, an exact duplicate, an older build of an app, or an installer for an app you have. These can go straight away: the copy that stays is checked again just before anything moves.")
+            Divider()
+            Text("Everything else is measured two ways.")
             point("arrow.triangle.2.circlepath", "Replaceable",
                   "Could you get it again without effort? A cache rebuilds itself and an installer downloads again. A document, a photo or a folder of your files does not.")
             point("moon.zzz", "Dormant",

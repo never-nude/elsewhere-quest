@@ -21,10 +21,36 @@ public struct Rules: Codable, Equatable, Sendable {
     public var cacheSuggestBytes: Int64 = 100_000_000
     /// Caches smaller than this are not worth a row.
     public var cacheListBytes: Int64 = 5_000_000
+    /// Projects untouched for this long can give up their dependency and build folders.
+    public var projectIdleDays = 14
     /// Categories the owner switched off.
     public var disabled: Set<Residue> = []
     /// Paths the owner said never to show again.
     public var ignored: Set<String> = []
 
     public init() {}
+
+    /// Settings saved by an earlier version may lack newer keys; those keep their defaults.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) throws -> T {
+            try c.decodeIfPresent(T.self, forKey: key) ?? fallback
+        }
+        let d = Rules()
+        screenshotDays = try value(.screenshotDays, d.screenshotDays)
+        recordingDays = try value(.recordingDays, d.recordingDays)
+        installerDays = try value(.installerDays, d.installerDays)
+        buildDays = try value(.buildDays, d.buildDays)
+        deviceSupportDays = try value(.deviceSupportDays, d.deviceSupportDays)
+        staleDownloadDays = try value(.staleDownloadDays, d.staleDownloadDays)
+        bigFileBytes = try value(.bigFileBytes, d.bigFileBytes)
+        bigFileIdleDays = try value(.bigFileIdleDays, d.bigFileIdleDays)
+        cacheSuggestBytes = try value(.cacheSuggestBytes, d.cacheSuggestBytes)
+        cacheListBytes = try value(.cacheListBytes, d.cacheListBytes)
+        projectIdleDays = try value(.projectIdleDays, d.projectIdleDays)
+        // A category name this version does not know is dropped rather than losing every setting.
+        let names = try value(.disabled, [String]())
+        disabled = Set(names.compactMap(Residue.init(rawValue:)))
+        ignored = try value(.ignored, d.ignored)
+    }
 }

@@ -7,11 +7,21 @@ public struct Locations: Equatable, Sendable {
     public var screenshotFolder: URL?
     /// Where filed items go. Rinse never looks inside it.
     public var archive: URL
+    /// Where installed apps live. Read to spot old builds and spent installers; never changed.
+    public var applications: [URL]
+    /// Where code projects live. Searched a few levels deep for git repositories.
+    public var projectRoots: [URL]
 
-    public init(home: URL, screenshotFolder: URL? = nil, archive: URL? = nil) {
+    public init(home: URL, screenshotFolder: URL? = nil, archive: URL? = nil,
+                applications: [URL]? = nil, projectRoots: [URL]? = nil) {
         self.home = home
         self.screenshotFolder = screenshotFolder
         self.archive = Locations.filingFolder(chosen: archive, home: home, screenshotFolder: screenshotFolder)
+        self.applications = applications
+            ?? [URL(fileURLWithPath: "/Applications"), home.appendingPathComponent("Applications")]
+        self.projectRoots = projectRoots
+            ?? ["Developer", "Documents", "Desktop", "Projects", "Code", "src", "GitHub", "repos", "dev", "Sites"]
+                .map(home.appendingPathComponent)
     }
 
     /// The folders Rinse looks through. The filing folder must never be one of them, or contain one.
@@ -48,15 +58,18 @@ public struct Scanner: Sendable {
     public let usage: @Sendable (URL) -> Usage?
     /// Says whether macOS recorded where a file was downloaded from.
     public let hasOrigin: @Sendable (URL) -> Bool
+    /// Apps that are running or kept in the Dock. Rinse never recommends moving them.
+    public let inUse: Set<String>
 
     public init(locations: Locations, rules: Rules = Rules(), now: Date = Date(),
                 usage: @escaping @Sendable (URL) -> Usage? = { _ in nil },
-                hasOrigin: (@Sendable (URL) -> Bool)? = nil) {
+                hasOrigin: (@Sendable (URL) -> Bool)? = nil, inUse: Set<String> = []) {
         self.locations = locations
         self.rules = rules
         self.now = now
         self.usage = usage
         self.hasOrigin = hasOrigin ?? { FileStat.hasOrigin($0.path) }
+        self.inUse = Set(inUse.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
     }
 
     /// Tool folders in `~/.cache` known to hold nothing but a cache.
@@ -82,10 +95,14 @@ public struct Scanner: Sendable {
             != FileStat.device(ofNearestExisting: locations.home)
         var collector = Collector(rules: rules, now: now, usage: usage, hasOrigin: hasOrigin,
                                   filingFreesSpace: filingFreesSpace)
+        // Order matters: an item is listed once, under the first kind that claims it,
+        // so the passes with the strongest evidence go first.
         if isOn(.screenshots) || isOn(.recordings) { scanCaptures(&collector) }
+        if isOn(.redundant) { scanRedundant(&collector) }
         if isOn(.installers) { scanInstallers(&collector) }
         if isOn(.caches) { scanCaches(&collector) }
         if isOn(.developer) { scanDeveloper(&collector) }
+        if isOn(.projectBuilds) { scanProjects(&collector) }
         if isOn(.staleDownloads) { scanStaleDownloads(&collector) }
         if isOn(.bigIdle) { scanBigIdle(&collector) }
         return ScanResult(findings: collector.findings, scannedAt: now)
@@ -219,14 +236,14 @@ public struct Scanner: Sendable {
         let stat: FileStat
     }
 
-    private func isOn(_ category: Residue) -> Bool { !rules.disabled.contains(category) }
+    func isOn(_ category: Residue) -> Bool { !rules.disabled.contains(category) }
 
-    private func home(_ relative: String) -> URL { locations.home.appendingPathComponent(relative) }
+    func home(_ relative: String) -> URL { locations.home.appendingPathComponent(relative) }
 
     /// The visible items directly inside a folder. A folder that is missing or unreadable is simply empty.
-    private func children(_ folder: URL) -> [Item] { children(folder, includeHidden: false) }
+    func children(_ folder: URL) -> [Item] { children(folder, includeHidden: false) }
 
-    private func children(_ folder: URL, includeHidden: Bool) -> [Item] {
+    func children(_ folder: URL, includeHidden: Bool) -> [Item] {
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return [] }
         return names.sorted().compactMap { name in
             if !includeHidden && name.hasPrefix(".") { return nil }
@@ -237,16 +254,16 @@ public struct Scanner: Sendable {
     }
 
     /// True for the filing folder itself, however its path is spelled.
-    private func isArchive(_ url: URL) -> Bool {
+    func isArchive(_ url: URL) -> Bool {
         url.standardizedFileURL.path == locations.archive.standardizedFileURL.path
     }
 
     /// True for a folder with the filing folder somewhere inside it. Such a folder is never a finding.
-    private func holdsArchive(_ url: URL) -> Bool {
+    func holdsArchive(_ url: URL) -> Bool {
         locations.archive.standardizedFileURL.path.hasPrefix(url.standardizedFileURL.path + "/")
     }
 
-    private func days(since date: Date) -> Int {
+    func days(since date: Date) -> Int {
         max(0, Int(now.timeIntervalSince(date) / 86_400))
     }
 
@@ -281,7 +298,7 @@ public struct Scanner: Sendable {
 
 /// Gathers findings so that each path is listed once, under the first category that claims it,
 /// and asks the Judge what to recommend for each.
-private struct Collector {
+struct Collector {
     let rules: Rules
     let now: Date
     let usage: @Sendable (URL) -> Usage?
@@ -304,7 +321,8 @@ private struct Collector {
     /// `lead` opens the reason line, for example "Taken 12 days ago".
     mutating func add(_ item: Scanner.Item, _ category: Residue, bytes: Int64? = nil, limit: Judge.Limit,
                       lead: String, askUsage: Bool = false, renamed: Bool = false, regenerable: Bool = true,
-                      touched: Date? = nil) {
+                      touched: Date? = nil, notes: [String] = [], redundancy: Judge.Redundancy? = nil,
+                      keeps: URL? = nil) {
         let path = item.url.path
         guard !claims(path) else { return }
         claimed.insert(path)
@@ -318,11 +336,14 @@ private struct Collector {
             filingFreesSpace: filingFreesSpace)
         evidence.renamed = renamed
         evidence.regenerable = regenerable
+        evidence.redundancy = redundancy
         let judged = Judge.assess(evidence)
         findings.append(Finding(
             url: item.url, name: item.name, category: category, bytes: size,
-            lastTouched: lastTouched, isDirectory: item.stat.isDirectory,
+            // Never earlier than the item's own date, so the last check before a move does not misfire.
+            lastTouched: max(lastTouched, item.stat.modified), isDirectory: item.stat.isDirectory,
             assessment: Assessment(verdict: judged.verdict, confidence: judged.confidence,
-                                   reasons: [lead] + judged.reasons)))
+                                   reasons: [lead] + judged.reasons + notes),
+            keeps: keeps))
     }
 }

@@ -89,6 +89,8 @@ public enum Judge {
         public var renamed = false
         /// False for tool folders that may hold more than a cache (models, logins).
         public var regenerable = true
+        /// For a redundant item: why, and how sure the check is (0 to 1).
+        public var redundancy: Redundancy?
 
         public init(kind: Residue, name: String, isDirectory: Bool = false, bytes: Int64 = 0, idleDays: Int,
                     limit: Limit, hasOrigin: Bool = false, usage: Usage? = nil, filingFreesSpace: Bool = false) {
@@ -101,6 +103,17 @@ public enum Judge {
             self.hasOrigin = hasOrigin
             self.usage = usage
             self.filingFreesSpace = filingFreesSpace
+        }
+    }
+
+    /// A second copy that makes an item unnecessary, already verified by the scanner.
+    public struct Redundancy: Sendable {
+        public let reason: String
+        public let certainty: Double
+
+        public init(reason: String, certainty: Double) {
+            self.reason = reason
+            self.certainty = certainty
         }
     }
 
@@ -123,6 +136,11 @@ public enum Judge {
     ]
 
     public static func assess(_ e: Evidence) -> Assessment {
+        // Redundancy needs no waiting: the other copy is right there, and was checked byte by byte or entry by entry.
+        if e.kind == .redundant {
+            guard let r = e.redundancy else { return Assessment(verdict: .leave, confidence: 50, reasons: []) }
+            return Assessment(verdict: .wash, confidence: percent(r.certainty), reasons: [r.reason])
+        }
         if e.kind == .caches || e.kind == .developer, !e.regenerable {
             return Assessment(verdict: .leave, confidence: 50,
                               reasons: ["tool data that may not come back, check before removing"])
@@ -133,7 +151,7 @@ public enum Judge {
         guard dormant >= dormantLine else {
             let why: String
             switch e.limit {
-            case .age: why = "still recent"
+            case .age: why = e.kind == .projectBuilds ? "the project is still in use" : "still recent"
             case .size: why = "small"
             }
             return Assessment(verdict: .leave, confidence: percent(1 - dormant), reasons: [why])
@@ -154,6 +172,8 @@ public enum Judge {
         switch e.kind {
         case .caches, .developer:
             return (1, ["rebuilds itself"])
+        case .redundant, .projectBuilds:
+            return (1, [])
         case .installers:
             // Without a download record it may be a disk image the owner made, so it is never washed.
             guard e.hasOrigin else { return (0.45, ["no download record, so it may be your own"]) }

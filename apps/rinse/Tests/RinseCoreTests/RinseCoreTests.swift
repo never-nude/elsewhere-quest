@@ -52,18 +52,110 @@ final class FakeHome {
     var neverOpened: Set<String> = []
     var opened: Set<String> = []
     var archive: URL?
+    /// Apps running or kept in the Dock, as full paths.
+    var inUse: Set<String> = []
 
     func scan(_ rules: Rules = Rules(), screenshotFolder: URL? = nil) -> ScanResult {
         let (downloaded, neverOpened, opened) = (self.downloaded, self.neverOpened, self.opened)
         return Scanner(
-            locations: Locations(home: url, screenshotFolder: screenshotFolder, archive: archive),
+            locations: Locations(home: url, screenshotFolder: screenshotFolder, archive: archive,
+                                 applications: [url.appendingPathComponent("Applications")]),
             rules: rules, now: now,
             usage: { url in
                 if neverOpened.contains(url.lastPathComponent) { return Usage(lastOpened: nil) }
                 if opened.contains(url.lastPathComponent) { return Usage(lastOpened: Date(timeIntervalSince1970: 1)) }
                 return nil
             },
-            hasOrigin: { downloaded.contains($0.lastPathComponent) }).scan()
+            hasOrigin: { downloaded.contains($0.lastPathComponent) }, inUse: inUse).scan()
+    }
+
+    /// Writes a file with exactly these bytes, aged.
+    @discardableResult
+    func write(_ relative: String, _ data: Data, daysOld: Int = 1) throws -> URL {
+        let target = url.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: target)
+        age(target, days: daysOld)
+        return target
+    }
+
+    /// Ages a folder and everything in it, the way an unpack or copy made a while ago looks.
+    func ageTree(_ relative: String, days: Int) {
+        let root = url.appendingPathComponent(relative)
+        let inside = (FileManager.default.enumerator(atPath: root.path)?.allObjects as? [String]) ?? []
+        for path in inside.reversed() {
+            let target = root.appendingPathComponent(path)
+            if FileStat(path: target.path)?.isSymlink == false { age(target, days: days) }
+        }
+        age(root, days: days)
+    }
+
+    /// Lays out an app bundle with an identifier and version, built `daysOld` days ago.
+    @discardableResult
+    func app(_ relative: String, id: String, version: String, build: String = "1", daysOld: Int = 1) throws -> URL {
+        let bundle = url.appendingPathComponent(relative)
+        let info: [String: Any] = ["CFBundleIdentifier": id, "CFBundleShortVersionString": version, "CFBundleVersion": build]
+        try write(relative + "/Contents/Info.plist",
+                  try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0), daysOld: daysOld)
+        try write(relative + "/Contents/MacOS/" + bundle.deletingPathExtension().lastPathComponent,
+                  Data(repeating: 7, count: 3000), daysOld: daysOld)
+        for folder in ["Contents/MacOS", "Contents", ""] {
+            age(folder.isEmpty ? bundle : bundle.appendingPathComponent(folder), days: daysOld)
+        }
+        return bundle
+    }
+}
+
+/// Builds zip archives byte for byte (stored, not compressed), so tests need no outside tools.
+struct ZipBuilder {
+    enum Item {
+        case file(String, Data)
+        case folder(String)
+        case link(String, String)
+    }
+
+    var items: [Item] = []
+
+    func data() -> Data {
+        var body = Data()
+        var directory = Data()
+        func le16(_ v: Int) -> Data { withUnsafeBytes(of: UInt16(v).littleEndian) { Data($0) } }
+        func le32(_ v: Int) -> Data { withUnsafeBytes(of: UInt32(v).littleEndian) { Data($0) } }
+        for item in items {
+            let (name, content, mode): (String, Data, Int)
+            switch item {
+            case .file(let n, let d): (name, content, mode) = (n, d, 0o100644)
+            case .folder(let n): (name, content, mode) = (n.hasSuffix("/") ? n : n + "/", Data(), 0o040755)
+            case .link(let n, let target): (name, content, mode) = (n, Data(target.utf8), 0o120755)
+            }
+            let nameData = Data(name.utf8)
+            let offset = body.count
+            body += le32(0x0403_4b50) + le16(10) + le16(0x0800) + le16(0) + le16(0) + le16(0)
+            let crc = Int(CRC32.of(content))
+            body += le32(crc) + le32(content.count) + le32(content.count) + le16(nameData.count) + le16(0)
+            body += nameData + content
+            directory += le32(0x0201_4b50) + le16(3 << 8 | 20) + le16(10) + le16(0x0800) + le16(0) + le16(0) + le16(0)
+            directory += le32(crc) + le32(content.count) + le32(content.count)
+            directory += le16(nameData.count) + le16(0) + le16(0) + le16(0) + le16(0)
+            directory += le32(mode << 16) + le32(offset) + nameData
+        }
+        var end = le32(0x0605_4b50) + le16(0) + le16(0) + le16(items.count) + le16(items.count)
+        end += le32(directory.count) + le32(body.count) + le16(0)
+        return body + directory + end
+    }
+}
+
+extension Data {
+    static func noise(_ count: Int, seed: UInt8 = 1) -> Data {
+        var bytes = [UInt8](repeating: 0, count: count)
+        var x = UInt32(seed) &* 2_654_435_761 | 1
+        for i in bytes.indices {
+            x ^= x << 13
+            x ^= x >> 17
+            x ^= x << 5
+            bytes[i] = UInt8(truncatingIfNeeded: x)
+        }
+        return Data(bytes)
     }
 }
 
@@ -506,6 +598,406 @@ extension ScannerTests {
         XCTAssertFalse(FileStat.isWebOrigin(try record(["message:%3Cabc@mail.example%3E"])), "Mail")
         XCTAssertFalse(FileStat.isWebOrigin(try record([])))
         XCTAssertFalse(FileStat.isWebOrigin(Data("not a property list".utf8)))
+    }
+}
+
+final class RedundancyTests: XCTestCase {
+    var home: FakeHome!
+
+    override func setUpWithError() throws { home = try FakeHome() }
+    override func tearDown() { home = nil }
+
+    private func find(_ result: ScanResult, _ name: String) -> Finding? {
+        result.findings.first { $0.url.lastPathComponent == name }
+    }
+
+    /// The zip Wash-0.2.1.zip in the screenshot: an app with a framework symlink inside.
+    private func washZip(_ seed: UInt8 = 1) -> ZipBuilder {
+        ZipBuilder(items: [
+            .folder("Wash.app"), .folder("Wash.app/Contents"),
+            .file("Wash.app/Contents/Info.plist", .noise(300, seed: seed)),
+            .file("Wash.app/Contents/MacOS/Wash", .noise(4000, seed: seed &+ 1)),
+            .link("Wash.app/Contents/Frameworks/Current", "A"),
+            .file("__MACOSX/Wash.app/._Info.plist", .noise(80)),
+        ])
+    }
+
+    /// Writes the zip's contents out the way Archive Utility would, under another top-level name.
+    private func unpack(_ zip: ZipBuilder, as top: String, in folder: String, daysOld: Int = 1) throws {
+        for item in zip.items {
+            switch item {
+            case .file(let name, let data):
+                guard !name.hasPrefix("__MACOSX") else { continue }
+                try home.write(folder + "/" + top + name.drop(while: { $0 != "/" }), data, daysOld: daysOld)
+            case .folder(let name):
+                try FileManager.default.createDirectory(
+                    at: home.url.appendingPathComponent(folder + "/" + top + name.drop(while: { $0 != "/" })),
+                    withIntermediateDirectories: true)
+            case .link(let name, let target):
+                let path = home.url.appendingPathComponent(folder + "/" + top + name.drop(while: { $0 != "/" }))
+                try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try FileManager.default.createSymbolicLink(atPath: path.path, withDestinationPath: target)
+            }
+        }
+        home.ageTree(folder + "/" + top, days: daysOld)
+    }
+
+    func testAnArchiveAlreadyUnpackedCanGoEvenIfItIsFromToday() throws {
+        let zip = washZip()
+        try home.write("Downloads/Wash-0.2.1.zip", zip.data())
+        try unpack(zip, as: "Wash 2.app", in: "Downloads")   // Wash.app was taken, so Finder made "Wash 2"
+        try home.app("Downloads/Wash.app", id: "other.wash", version: "1")
+        let finding = try XCTUnwrap(find(home.scan(), "Wash-0.2.1.zip"))
+        XCTAssertEqual(finding.category, .redundant)
+        XCTAssertEqual(finding.verdict, .wash)
+        XCTAssertEqual(finding.keeps?.lastPathComponent, "Wash 2.app")
+        XCTAssertTrue(finding.reason.contains("already unpacked as “Wash 2”"), finding.reason)
+        XCTAssertGreaterThanOrEqual(finding.assessment.confidence, 90)
+    }
+
+    func testAnArchiveIsKeptWhenTheUnpackedCopyDiffers() throws {
+        let zip = washZip()
+        try home.write("Downloads/Wash-0.2.1.zip", zip.data())
+        try unpack(washZip(9), as: "Wash.app", in: "Downloads")   // same names, different contents
+        XCTAssertNil(find(home.scan(), "Wash-0.2.1.zip"))
+    }
+
+    func testSameLengthsAreNotEnoughTheContentsMustMatch() throws {
+        // A rebuilt app often keeps every file's length: here only the version number changed.
+        let old = ZipBuilder(items: [.file("Wash.app/Contents/Info.plist", Data("<string>0.2.0</string>".utf8))])
+        let new = ZipBuilder(items: [.file("Wash.app/Contents/Info.plist", Data("<string>0.2.1</string>".utf8))])
+        try home.write("Downloads/Wash-0.2.1.zip", new.data())
+        try unpack(old, as: "Wash.app", in: "Downloads")
+        XCTAssertNil(find(home.scan(), "Wash-0.2.1.zip"), "the archive holds a newer build than the unpacked copy")
+        XCTAssertEqual(CRC32.of(Data("123456789".utf8)), 0xCBF4_3926, "the standard check value")
+    }
+
+    /// The archives real tools make: `zip` (compressed, links kept) and, on a Mac, `ditto`,
+    /// which is what Finder's Compress uses.
+    func testArchivesMadeByRealTools() throws {
+        let tools = [("/usr/bin/zip", ["-q", "-r", "-y"]), ("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent"])]
+            .filter { FileManager.default.isExecutableFile(atPath: $0.0) }
+        guard !tools.isEmpty else { throw XCTSkip("no zip tool on this machine") }
+        try home.write("Downloads/Noctilucent/src/main.swift", Data(String(repeating: "let x = 1\n", count: 500).utf8))
+        try home.write("Downloads/Noctilucent/Résumé notes.md", Data("ünïcode name".utf8))
+        try FileManager.default.createSymbolicLink(
+            atPath: home.url.appendingPathComponent("Downloads/Noctilucent/latest").path, withDestinationPath: "src")
+        home.ageTree("Downloads/Noctilucent", days: 1)
+        for (tool, flags) in tools {
+            let zip = home.url.appendingPathComponent("Downloads/Noctilucent-source.zip")
+            try? FileManager.default.removeItem(at: zip)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: tool)
+            process.currentDirectoryURL = home.url.appendingPathComponent("Downloads")
+            process.arguments = flags + (tool.hasSuffix("ditto") ? ["Noctilucent", zip.path] : [zip.path, "Noctilucent"])
+            try process.run()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, tool)
+            home.age(zip, days: 1)
+            let entries = try XCTUnwrap(JoinedFile(paths: [zip.path]).flatMap { ZipIndex.entries(of: $0) }, tool)
+            XCTAssertTrue(entries.contains { $0.path == "Noctilucent/latest" && $0.kind == .symlink } || tool.hasSuffix("ditto"), tool)
+            XCTAssertEqual(find(home.scan(), "Noctilucent-source.zip")?.keeps?.lastPathComponent, "Noctilucent", tool)
+            // Change one byte in the unpacked copy and the archive is the only copy again.
+            let main = home.url.appendingPathComponent("Downloads/Noctilucent/src/main.swift")
+            let original = try Data(contentsOf: main)
+            var changed = original
+            changed[0] = UInt8(ascii: "v")
+            try changed.write(to: main)
+            home.ageTree("Downloads/Noctilucent", days: 1)
+            XCTAssertNil(find(home.scan(), "Noctilucent-source.zip"), tool)
+            try original.write(to: main)
+            home.ageTree("Downloads/Noctilucent", days: 1)
+        }
+    }
+
+    func testAnArchiveWithSeveralTopLevelItemsUnpacksIntoAFolderNamedAfterIt() throws {
+        let zip = ZipBuilder(items: [.file("index.html", .noise(500)), .file("app.js", .noise(900, seed: 4))])
+        try home.write("Downloads/Worldbook.zip", zip.data())
+        try home.write("Downloads/Worldbook/index.html", .noise(500))
+        try home.write("Downloads/Worldbook/app.js", .noise(900, seed: 4))
+        try home.write("Downloads/Worldbook/notes I added.txt", .noise(10))   // extra files do not matter
+        home.ageTree("Downloads/Worldbook", days: 1)
+        XCTAssertEqual(find(home.scan(), "Worldbook.zip")?.keeps?.lastPathComponent, "Worldbook")
+    }
+
+    func testAFreshArchiveIsLeftAlone() throws {
+        let zip = washZip()
+        try home.write("Downloads/Wash-0.2.1.zip", zip.data(), daysOld: 0)
+        try unpack(zip, as: "Wash.app", in: "Downloads")
+        XCTAssertNil(find(home.scan(), "Wash-0.2.1.zip"), "it may still be downloading")
+    }
+
+    func testReadingAnArchiveDoesNotMakeItLookUsed() throws {
+        let zip = washZip()
+        let url = try home.write("Downloads/Unrelated.zip", zip.data(), daysOld: 40)
+        let before = try XCTUnwrap(FileStat(path: url.path)).accessed
+        _ = home.scan()
+        XCTAssertEqual(try XCTUnwrap(FileStat(path: url.path)).accessed.timeIntervalSince1970,
+                       before.timeIntervalSince1970, accuracy: 1)
+    }
+
+    func testEveryPieceOfASplitArchiveCanGoOnceItIsUnpacked() throws {
+        let zip = washZip()
+        let bytes = zip.data()
+        let cut = [0, bytes.count / 3, 2 * bytes.count / 3, bytes.count]
+        for i in 0..<3 {
+            try home.write("Downloads/Atrium-Pose.part0\(i + 1)", bytes.subdata(in: cut[i]..<cut[i + 1]))
+        }
+        try unpack(zip, as: "Wash.app", in: "Downloads")
+        let result = home.scan()
+        for i in 1...3 {
+            let part = try XCTUnwrap(find(result, "Atrium-Pose.part0\(i)"))
+            XCTAssertEqual(part.verdict, .wash)
+            XCTAssertEqual(part.reason, "Piece \(i) of 3 · the archive is already unpacked as “Wash”")
+        }
+    }
+
+    func testASplitArchiveWithAMissingPieceIsLeftAlone() throws {
+        let bytes = washZip().data()
+        try home.write("Downloads/Atrium-Pose.part01", bytes.prefix(200))
+        try home.write("Downloads/Atrium-Pose.part03", bytes.suffix(from: 400))
+        try unpack(washZip(), as: "Wash.app", in: "Downloads")
+        XCTAssertNil(find(home.scan(), "Atrium-Pose.part01"))
+    }
+
+    func testOlderBuildsGoAndTheNewestStays() throws {
+        try home.app("Downloads/Atrium Pose Preview 7.app", id: "earth.atrium.pose", version: "3.4.1", daysOld: 2)
+        try home.app("Downloads/Atrium Pose Preview 8.app", id: "earth.atrium.pose", version: "3.4.3", daysOld: 1)
+        try home.app("Downloads/Atrium Pose Preview.app", id: "earth.atrium.pose", version: "1.0", build: "3", daysOld: 3)
+        try home.app("Downloads/Other.app", id: "some.other", version: "1.0")
+        let result = home.scan()
+        XCTAssertNil(find(result, "Atrium Pose Preview 8.app"))
+        XCTAssertNil(find(result, "Other.app"))
+        let seven = try XCTUnwrap(find(result, "Atrium Pose Preview 7.app"))
+        XCTAssertEqual(seven.verdict, .wash)
+        XCTAssertEqual(seven.reason, "Atrium Pose Preview 7 3.4.1 · an older build; “Atrium Pose Preview 8” is newer")
+        XCTAssertEqual(find(result, "Atrium Pose Preview.app")?.keeps?.lastPathComponent, "Atrium Pose Preview 8.app")
+    }
+
+    func testSameVersionBuildsAreOrderedByWhenTheyWereBuilt() throws {
+        try home.app("Downloads/Wash.app", id: "quest.wash", version: "0.2", daysOld: 3)
+        try home.app("Downloads/Wash 2.app", id: "quest.wash", version: "0.2", daysOld: 1)
+        let result = home.scan()
+        XCTAssertNil(find(result, "Wash 2.app"))
+        XCTAssertEqual(find(result, "Wash.app")?.keeps?.lastPathComponent, "Wash 2.app")
+    }
+
+    func testAnAppInUseIsNeverMoved() throws {
+        let old = try home.app("Downloads/Wash.app", id: "quest.wash", version: "0.1")
+        try home.app("Downloads/Wash 2.app", id: "quest.wash", version: "0.2")
+        home.inUse = [old.path]
+        XCTAssertNil(find(home.scan(), "Wash.app"), "running, or kept in the Dock")
+    }
+
+    func testABuildInDownloadsGoesWhenTheSameOrNewerIsInstalled() throws {
+        try home.app("Applications/Atrium Pose.app", id: "earth.atrium.pose", version: "3.4.3")
+        try home.app("Downloads/Atrium Pose.app", id: "earth.atrium.pose", version: "3.4.3")
+        try home.app("Downloads/Atrium Pose Preview 6.app", id: "earth.atrium.pose", version: "3.4.0")
+        try home.app("Downloads/Wash.app", id: "quest.wash", version: "0.3")
+        try home.app("Applications/Wash.app", id: "quest.wash", version: "0.2")
+        let result = home.scan()
+        XCTAssertEqual(find(result, "Atrium Pose.app")?.reason, "Atrium Pose 3.4.3 · the same build is installed in Applications")
+        XCTAssertEqual(find(result, "Atrium Pose Preview 6.app")?.reason,
+                       "Atrium Pose Preview 6 3.4.0 · an older build; Atrium Pose 3.4.3 is installed in Applications")
+        XCTAssertNil(find(result, "Wash.app"), "newer than the installed one: maybe about to be installed")
+        XCTAssertNil(result.findings.first { $0.url.path.contains("/Applications/") }, "Applications is never touched")
+    }
+
+    func testInstallersGoOnceTheAppIsInstalled() throws {
+        try home.app("Applications/Atrium Pose.app", id: "earth.atrium.pose", version: "3.4.3")
+        try home.write("Downloads/Install Atrium Pose.command", .noise(2000))
+        try home.write("Downloads/Atrium-Pose-Installer.zip", .noise(951, seed: 2))
+        try home.write("Downloads/Atrium-Pose-Applications-Installer.zip", .noise(1200, seed: 3))
+        try home.write("Downloads/Install Something Else.command", .noise(100, seed: 4))
+        try home.write("Downloads/Atrium Pose notes.txt", .noise(100, seed: 5))
+        let result = home.scan()
+        for name in ["Install Atrium Pose.command", "Atrium-Pose-Installer.zip", "Atrium-Pose-Applications-Installer.zip"] {
+            let finding = try XCTUnwrap(find(result, name), name)
+            XCTAssertEqual(finding.verdict, .wash)
+            XCTAssertTrue(finding.reason.hasSuffix("Atrium Pose is already installed"), finding.reason)
+        }
+        XCTAssertNil(find(result, "Install Something Else.command"))
+        XCTAssertNil(find(result, "Atrium Pose notes.txt"), "not an installer")
+    }
+
+    func testExactCopiesGoAndTheOriginalStays() throws {
+        try home.write("Downloads/Daybreak.zip", .noise(5000, seed: 7), daysOld: 2)
+        try home.write("Downloads/Daybreak (1).zip", .noise(5000, seed: 7), daysOld: 1)
+        try home.write("Downloads/Similar.zip", .noise(5000, seed: 8))     // same size, other bytes
+        try home.write("Downloads/Daybreak/src/main.js", .noise(700, seed: 9))
+        try home.write("Downloads/Daybreak 2/src/main.js", .noise(700, seed: 9))
+        try home.write("Downloads/Daybreak 3/src/main.js", .noise(700, seed: 10))  // edited copy
+        for name in ["Daybreak", "Daybreak 2", "Daybreak 3"] { home.ageTree("Downloads/" + name, days: 1) }
+        let result = home.scan()
+        XCTAssertNil(find(result, "Daybreak.zip"))
+        XCTAssertNil(find(result, "Similar.zip"))
+        XCTAssertEqual(find(result, "Daybreak (1).zip")?.reason, "Copy from yesterday · an exact copy of “Daybreak.zip”")
+        XCTAssertNil(find(result, "Daybreak"))
+        XCTAssertEqual(find(result, "Daybreak 2")?.keeps?.lastPathComponent, "Daybreak")
+        XCTAssertNil(find(result, "Daybreak 3"), "different contents")
+    }
+
+    func testUnfinishedDownloadsGoAfterADay() throws {
+        try home.write("Downloads/movie.mp4.crdownload", .noise(900), daysOld: 2)
+        try home.write("Downloads/new.zip.crdownload", .noise(900), daysOld: 0)
+        let result = home.scan()
+        XCTAssertEqual(find(result, "movie.mp4.crdownload")?.verdict, .wash)
+        XCTAssertNil(find(result, "new.zip.crdownload"))
+    }
+
+    func testNamesThatMarkACopy() {
+        for name in ["Report copy.pdf", "Report copy 2.pdf", "Daybreak (1).zip", "Wash 2.app", "Daybreak 3"] {
+            XCTAssertTrue(Scanner.isCopyName(name), name)
+        }
+        for name in ["Report.pdf", "Daybreak", "Area 51 Notes.txt", "copy.txt", "Version 2026"] {
+            XCTAssertFalse(Scanner.isCopyName(name), name)
+        }
+        XCTAssertEqual(Scanner.productKey("Atrium-Pose-Applications-Installer copy"), "atrium pose")
+        XCTAssertEqual(Scanner.productKey("Install Atrium Pose"), "atrium pose")
+        XCTAssertEqual(Scanner.splitPart("Atrium-Pose.part08")?.number, 8)
+        XCTAssertEqual(Scanner.splitPart("backup.zip.003")?.base, "backup.zip")
+        XCTAssertNil(Scanner.splitPart("video.part"))
+        XCTAssertNil(Scanner.splitPart("song.mp3"))
+    }
+
+    // MARK: - The last check
+
+    func testNothingRedundantMovesIfItsOtherCopyIsGone() throws {
+        let zip = washZip()
+        try home.write("Downloads/Wash-0.2.1.zip", zip.data())
+        try unpack(zip, as: "Wash.app", in: "Downloads")
+        let found = home.scan().findings
+        XCTAssertEqual(found.count, 1)
+        try FileManager.default.removeItem(at: home.url.appendingPathComponent("Downloads/Wash.app"))
+        let report = Washer.wash(found, home: home.url, trasher: FolderTrasher(bin: home.url.appendingPathComponent("bin")))
+        XCTAssertEqual(report.failures.map(\.message), ["Its other copy is gone or going too"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home.url.appendingPathComponent("Downloads/Wash-0.2.1.zip").path))
+    }
+
+    func testAnArchiveAndItsOnlyCopyNeverGoTogether() throws {
+        let zip = washZip()
+        try home.write("Downloads/Wash-0.2.1.zip", zip.data())
+        try unpack(zip, as: "Wash.app", in: "Downloads")
+        let archive = try XCTUnwrap(home.scan().findings.first)
+        let copy = home.url.appendingPathComponent("Downloads/Wash.app")
+        let overruled = Finding(url: copy, name: "Wash.app", category: .staleDownloads, bytes: 1, lastTouched: Date(),
+                                isDirectory: true, assessment: Assessment(verdict: .wash, confidence: 100, reasons: []))
+        let report = Washer.wash([overruled, archive], home: home.url,
+                                 trasher: FolderTrasher(bin: FileManager.default.temporaryDirectory.appendingPathComponent("rinse-bin-\(UUID())")))
+        XCTAssertEqual(report.washed.map(\.name), ["Wash.app"])
+        XCTAssertEqual(report.failures.map(\.message), ["Its other copy is gone or going too"])
+    }
+
+    func testAChainOfCopiesIsFineWhileTheLastOneStays() throws {
+        // Wash-macOS.zip unpacked as Wash.app, which is an older build of Wash 2.app.
+        let zip = washZip()
+        try home.write("Downloads/Wash-macOS.zip", zip.data())
+        try unpack(zip, as: "Wash.app", in: "Downloads")
+        try home.write("Downloads/Wash.app/Contents/Info.plist",
+                       try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "quest.wash",
+                                                                             "CFBundleShortVersionString": "0.1"],
+                                                          format: .xml, options: 0), daysOld: 3)
+        home.ageTree("Downloads/Wash.app", days: 3)
+        try home.app("Downloads/Wash 2.app", id: "quest.wash", version: "0.2")
+        let found = home.scan().findings
+        XCTAssertEqual(Set(found.map(\.name)), ["Wash.app"], "the zip no longer matches, the old build does")
+        // Put the zip back in step with the edited app and look again.
+        let edited = ZipBuilder(items: zip.items.map { item in
+            if case .file("Wash.app/Contents/Info.plist", _) = item,
+               let data = FileManager.default.contents(atPath: home.url.appendingPathComponent("Downloads/Wash.app/Contents/Info.plist").path) {
+                return .file("Wash.app/Contents/Info.plist", data)
+            }
+            return item
+        })
+        try home.write("Downloads/Wash-macOS.zip", edited.data())
+        let both = home.scan().findings
+        XCTAssertEqual(Set(both.map(\.name)), ["Wash.app", "Wash-macOS.zip"])
+        let bin = FileManager.default.temporaryDirectory.appendingPathComponent("rinse-bin-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: bin) }
+        let report = Washer.wash(both, home: home.url, trasher: FolderTrasher(bin: bin))
+        XCTAssertTrue(report.failures.isEmpty, "\(report.failures.map(\.message))")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home.url.appendingPathComponent("Downloads/Wash 2.app").path))
+    }
+}
+
+final class ProjectTests: XCTestCase {
+    var home: FakeHome!
+    var rules = Rules()
+
+    override func setUpWithError() throws {
+        home = try FakeHome()
+        rules.cacheListBytes = 10_000
+    }
+
+    override func tearDown() { home = nil }
+
+    private func project(_ path: String, daysOld: Int, ignore: String = "node_modules/\n") throws {
+        try home.write(path + "/.git/HEAD", Data("ref: refs/heads/main\n".utf8), daysOld: daysOld)
+        try home.write(path + "/package.json", Data("{}".utf8), daysOld: daysOld)
+        try home.write(path + "/src/index.js", .noise(400), daysOld: daysOld)
+        try home.write(path + "/.gitignore", Data(ignore.utf8), daysOld: daysOld)
+        try home.write(path + "/node_modules/react/index.js", .noise(30_000), daysOld: daysOld)
+    }
+
+    func testDependenciesOfAnIdleProjectCanGo() throws {
+        try project("Documents/ChatGPT/Atrium", daysOld: 40)
+        let finding = try XCTUnwrap(home.scan(rules).findings.first { $0.url.lastPathComponent == "node_modules" })
+        XCTAssertEqual(finding.category, .projectBuilds)
+        XCTAssertEqual(finding.name, "node_modules in Atrium")
+        XCTAssertEqual(finding.verdict, .wash)
+        XCTAssertEqual(finding.reason, "Project last worked on 40 days ago · comes back with npm install")
+    }
+
+    func testAProjectInUseKeepsItsDependencies() throws {
+        try project("Developer/Live", daysOld: 40)
+        try home.write("Developer/Live/src/today.js", .noise(100), daysOld: 0)
+        let finding = try XCTUnwrap(home.scan(rules).findings.first { $0.url.lastPathComponent == "node_modules" })
+        XCTAssertEqual(finding.verdict, .leave)
+        XCTAssertTrue(finding.reason.contains("the project is still in use"))
+    }
+
+    func testAFolderTheProjectDoesNotIgnoreIsNotListed() throws {
+        try project("Documents/Vendored", daysOld: 40, ignore: "dist\n")
+        XCTAssertTrue(home.scan(rules).findings.filter { $0.category == .projectBuilds }.isEmpty)
+    }
+
+    func testOnlyRecognisedAndRecreatableFoldersAreListed() throws {
+        try home.write("Documents/Py/.git/HEAD", Data("x".utf8), daysOld: 40)
+        try home.write("Documents/Py/requirements.txt", Data("x".utf8), daysOld: 40)
+        try home.write("Documents/Py/.gitignore", Data(".venv\n/venv\nbuild/\n".utf8), daysOld: 40)
+        try home.write("Documents/Py/.venv/pyvenv.cfg", Data("x".utf8), daysOld: 40)
+        try home.write("Documents/Py/.venv/lib/big.so", .noise(30_000), daysOld: 40)
+        try home.write("Documents/Py/venv/lib/notreally.so", .noise(30_000), daysOld: 40)   // no pyvenv.cfg
+        try home.write("Documents/Py/build/output.bin", .noise(30_000), daysOld: 40)       // no manifest for it
+        try home.write("Documents/Swift/.git/HEAD", Data("x".utf8), daysOld: 40)
+        try home.write("Documents/Swift/Package.swift", Data("x".utf8), daysOld: 40)
+        try home.write("Documents/Swift/.gitignore", Data("/.build\n".utf8), daysOld: 40)
+        try home.write("Documents/Swift/.build/debug/x.o", .noise(30_000), daysOld: 40)
+        let names = Set(home.scan(rules).findings.filter { $0.category == .projectBuilds }.map(\.name))
+        XCTAssertEqual(names, [".venv in Py", ".build in Swift"])
+    }
+
+    func testIgnorePatterns() throws {
+        let file = home.url.appendingPathComponent("ignore")
+        try Data("# deps\n**/node_modules\n/target/\n!keep\nbuild/**\n".utf8).write(to: file)
+        XCTAssertTrue(Scanner.ignoreFile(file, names: "node_modules", anchoredHere: false))
+        XCTAssertTrue(Scanner.ignoreFile(file, names: "target", anchoredHere: true))
+        XCTAssertFalse(Scanner.ignoreFile(file, names: "target", anchoredHere: false), "anchored to the root")
+        XCTAssertTrue(Scanner.ignoreFile(file, names: "build", anchoredHere: false))
+        XCTAssertFalse(Scanner.ignoreFile(file, names: "keep", anchoredHere: true))
+        XCTAssertFalse(Scanner.ignoreFile(file, names: "deps", anchoredHere: true))
+    }
+}
+
+final class RulesMigrationTests: XCTestCase {
+    func testSettingsFromAnEarlierVersionKeepTheOwnersChoices() throws {
+        let old = Data(#"{"screenshotDays":12,"ignored":["/Users/x/a.png"],"disabled":["installers","somethingRemoved"]}"#.utf8)
+        let rules = try JSONDecoder().decode(Rules.self, from: old)
+        XCTAssertEqual(rules.screenshotDays, 12)
+        XCTAssertEqual(rules.ignored, ["/Users/x/a.png"])
+        XCTAssertEqual(rules.disabled, [.installers])
+        XCTAssertEqual(rules.projectIdleDays, Rules().projectIdleDays)
+        XCTAssertEqual(try JSONDecoder().decode(Rules.self, from: JSONEncoder().encode(rules)), rules)
     }
 }
 

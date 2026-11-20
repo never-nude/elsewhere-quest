@@ -13,13 +13,15 @@ public struct Finding: Identifiable, Hashable, Sendable {
     public let isDirectory: Bool
     /// What Rinse recommends, how sure it is, and why.
     public let assessment: Assessment
+    /// For a redundant item, the other copy that stays. It is checked again just before anything moves.
+    public let keeps: URL?
 
     public var verdict: Verdict { assessment.verdict }
     /// A short human line, such as "Taken 12 days ago · never opened".
     public var reason: String { assessment.reasons.joined(separator: " · ") }
 
     public init(url: URL, name: String, category: Residue, bytes: Int64, lastTouched: Date,
-                isDirectory: Bool, assessment: Assessment) {
+                isDirectory: Bool, assessment: Assessment, keeps: URL? = nil) {
         self.url = url
         self.name = name
         self.category = category
@@ -27,6 +29,7 @@ public struct Finding: Identifiable, Hashable, Sendable {
         self.lastTouched = lastTouched
         self.isDirectory = isDirectory
         self.assessment = assessment
+        self.keeps = keeps
     }
 }
 
