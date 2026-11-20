@@ -39,7 +39,7 @@ extension Scanner {
     private func walk(_ folder: URL, depth: Int, isRoot: Bool, into inventory: inout Inventory,
                       budget: inout Int) -> (empty: Bool, newest: Date, emptyBelow: [(Item, Date)]) {
         guard let stat = FileStat(path: folder.path),
-              let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else {
+              let names = FileStat.names(in: folder.path) else {
             return (false, .distantFuture, [])
         }
         var empty = true

@@ -198,6 +198,21 @@ struct FileStat {
         }
     }
 
+    /// Every name in a folder, straight from the file system. Foundation's listing on a Mac leaves out
+    /// `._` files (the leftovers USB drives make), which are exactly what the dead-file rule looks for.
+    static func names(in path: String) -> [String]? {
+        guard let dir = opendir(path) else { return nil }
+        defer { closedir(dir) }
+        var names: [String] = []
+        while let entry = readdir(dir) {
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                String(cString: UnsafeRawPointer($0).assumingMemoryBound(to: CChar.self))
+            }
+            if name != "." && name != ".." { names.append(name) }
+        }
+        return names
+    }
+
     /// True when the owner gave it a Finder tag (a colour or a name).
     static func hasTags(_ path: String) -> Bool {
         #if canImport(Darwin)
@@ -209,7 +224,7 @@ struct FileStat {
 
     /// True for a folder with nothing in it but other such folders and Finder's own `.DS_Store`.
     static func isEmptyTree(_ path: String) -> Bool {
-        guard let names = try? FileManager.default.contentsOfDirectory(atPath: path) else { return false }
+        guard let names = Self.names(in: path) else { return false }
         for name in names where name != ".DS_Store" && name != ".localized" {
             let child = path + "/" + name
             guard let st = FileStat(path: child), st.isDirectory, isEmptyTree(child) else { return false }
