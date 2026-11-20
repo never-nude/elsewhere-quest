@@ -44,6 +44,12 @@ enum Platform {
         return paths
     }
 
+    /// Bundle identifiers of every running app, wherever it runs from.
+    @MainActor
+    static func runningBundleIDs() -> Set<String> {
+        Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+    }
+
     /// True when macOS started the app as a login item, rather than the owner opening it.
     @MainActor
     static func wasLaunchedAtLogin() -> Bool {

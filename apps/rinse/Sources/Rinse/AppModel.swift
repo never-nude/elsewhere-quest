@@ -156,7 +156,8 @@ final class AppModel {
             rescanQueued = false
             let scanner = Scanner(
                 locations: Locations(home: home, screenshotFolder: Platform.screenshotFolder(), archive: archive),
-                rules: rules, now: Date(), usage: { Platform.usage($0) }, inUse: Platform.appsInUse())
+                rules: rules, now: Date(), usage: { Platform.usage($0) }, inUse: Platform.appsInUse(),
+                runningIDs: Platform.runningBundleIDs())
             let fresh = await Task.detached(priority: .utility) { scanner.scan() }.value
             // The owner may have hidden something while the pass was running.
             let ignored = rules.ignored
@@ -212,9 +213,12 @@ final class AppModel {
         guard !toWash.isEmpty || !toFile.isEmpty, phase != .working else { return }
         phase = .working
         let home = self.home, archive = self.archive
+        // What is open or in the Dock right now, not when the list was made.
+        let inUse = Platform.appsInUse(), runningIDs = Platform.runningBundleIDs()
         let report = await Task.detached(priority: .userInitiated) {
             RinseReport(
-                wash: Washer.wash(toWash, home: home, archive: archive, trasher: SystemTrasher()),
+                wash: Washer.wash(toWash, home: home, archive: archive, inUse: inUse, runningIDs: runningIDs,
+                                  trasher: SystemTrasher()),
                 file: Filer.file(toFile, home: home, archive: archive),
                 archive: archive)
         }.value

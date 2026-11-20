@@ -148,6 +148,8 @@ enum ZipIndex {
             }
             entries.append(ZipEntry(path: name, size: kind == .directory ? 0 : size, kind: kind, crc: crc))
         }
+        // A table of contents with records left over is not one to trust.
+        guard p == directory.count else { return nil }
         return entries
     }
 
@@ -187,6 +189,24 @@ enum ZipIndex {
             }
         }
         return nil
+    }
+
+    /// Runs the same check again for one known place, as found by `unpackedCopy`. `top` is the
+    /// archive's single top-level name when it has one, nil when it unpacked into a folder of its own.
+    static func isUnpackedCopy(_ entries: [ZipEntry], at root: URL, top: String?) -> Bool {
+        let kept = entries.filter { !isBookkeeping($0.path) }
+        guard kept.contains(where: { $0.kind != .directory }) else { return false }
+        if let top {
+            guard Set(kept.map { String($0.path.split(separator: "/")[0]) }) == [top] else { return false }
+            return matches(kept, at: root, map: { $0 == top ? "" : String($0.dropFirst(top.count + 1)) })
+        }
+        return matches(kept, at: root, map: { $0 })
+    }
+
+    /// The single top-level name of an archive's contents, or nil when it has several.
+    static func singleTop(_ entries: [ZipEntry]) -> String? {
+        let tops = Set(entries.filter { !isBookkeeping($0.path) }.map { String($0.path.split(separator: "/")[0]) })
+        return tops.count == 1 ? tops.first : nil
     }
 
     /// "Wash.app" becomes "Wash 2.app"; "Daybreak" becomes "Daybreak 2", as Finder names a second copy.

@@ -93,8 +93,13 @@ extension Scanner {
     /// Settled: not changed in the last ten minutes, so not still downloading or unpacking,
     /// and not an app that is running or kept in the Dock.
     func isSettled(_ item: Item) -> Bool {
-        max(item.stat.modified, item.stat.created) <= now.addingTimeInterval(-600)
-            && !inUse.contains(item.url.standardizedFileURL.path)
+        let path = item.url.standardizedFileURL.path
+        guard max(item.stat.modified, item.stat.created) <= now.addingTimeInterval(-600),
+              !inUse.contains(where: { $0 == path || $0.hasPrefix(path + "/") }) else { return false }
+        // An app opened from Downloads runs from a hidden copy, so check what it is, not just where.
+        if item.stat.isDirectory, Self.fileExtension(item.name) == "app", !runningIDs.isEmpty,
+           let id = Self.bundleID(of: item.url), runningIDs.contains(id) { return false }
+        return true
     }
 
     // MARK: - Empty folders

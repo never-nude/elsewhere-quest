@@ -60,16 +60,20 @@ public struct Scanner: Sendable {
     public let hasOrigin: @Sendable (URL) -> Bool
     /// Apps that are running or kept in the Dock. Rinse never recommends moving them.
     public let inUse: Set<String>
+    /// Bundle identifiers of running apps. An app opened from Downloads runs from a hidden copy
+    /// elsewhere (App Translocation), so its path alone does not show that it is open.
+    public let runningIDs: Set<String>
 
     public init(locations: Locations, rules: Rules = Rules(), now: Date = Date(),
                 usage: @escaping @Sendable (URL) -> Usage? = { _ in nil },
-                hasOrigin: (@Sendable (URL) -> Bool)? = nil, inUse: Set<String> = []) {
+                hasOrigin: (@Sendable (URL) -> Bool)? = nil, inUse: Set<String> = [], runningIDs: Set<String> = []) {
         self.locations = locations
         self.rules = rules
         self.now = now
         self.usage = usage
         self.hasOrigin = hasOrigin ?? { FileStat.hasOrigin($0.path) }
         self.inUse = Set(inUse.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
+        self.runningIDs = runningIDs
     }
 
     /// Tool folders in `~/.cache` known to hold nothing but a cache.
@@ -330,7 +334,7 @@ struct Collector {
     mutating func add(_ item: Scanner.Item, _ category: Residue, bytes: Int64? = nil, limit: Judge.Limit,
                       lead: String, askUsage: Bool = false, renamed: Bool = false, regenerable: Bool = true,
                       touched: Date? = nil, notes: [String] = [], redundancy: Judge.Redundancy? = nil,
-                      keeps: URL? = nil) {
+                      keeps: URL? = nil, proof: Proof = .none) {
         let path = item.url.path
         guard !claims(path) else { return }
         claimed.insert(path)
@@ -352,6 +356,6 @@ struct Collector {
             lastTouched: max(lastTouched, item.stat.modified), isDirectory: item.stat.isDirectory,
             assessment: Assessment(verdict: judged.verdict, confidence: judged.confidence,
                                    reasons: [lead] + judged.reasons + notes),
-            keeps: keeps))
+            keeps: keeps, proof: proof))
     }
 }

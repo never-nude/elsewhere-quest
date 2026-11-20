@@ -1,5 +1,20 @@
 import Foundation
 
+/// How a redundant item was shown to be redundant, so the same proof can be run again just before it moves.
+public enum Proof: Hashable, Sendable {
+    /// Not redundant, or nothing to re-prove beyond the kept copy existing.
+    case none
+    /// An archive (one file, or every piece of a split one) whose contents sit unpacked at `keeps`.
+    /// `top` is the archive's single top-level name, which Finder may have renamed ("Wash.app" to "Wash 2.app").
+    case unpacked(pieces: [String], top: String?)
+    /// Byte for byte the same as `keeps`.
+    case duplicate
+    /// An older build of the app at `keeps`, which has this bundle identifier.
+    case olderBuild(id: String)
+    /// An installer for the app at `keeps`.
+    case installer
+}
+
 /// One file or folder Rinse thinks could go.
 public struct Finding: Identifiable, Hashable, Sendable {
     /// The absolute path.
@@ -15,13 +30,15 @@ public struct Finding: Identifiable, Hashable, Sendable {
     public let assessment: Assessment
     /// For a redundant item, the other copy that stays. It is checked again just before anything moves.
     public let keeps: URL?
+    /// How that was proved.
+    public let proof: Proof
 
     public var verdict: Verdict { assessment.verdict }
     /// A short human line, such as "Taken 12 days ago · never opened".
     public var reason: String { assessment.reasons.joined(separator: " · ") }
 
     public init(url: URL, name: String, category: Residue, bytes: Int64, lastTouched: Date,
-                isDirectory: Bool, assessment: Assessment, keeps: URL? = nil) {
+                isDirectory: Bool, assessment: Assessment, keeps: URL? = nil, proof: Proof = .none) {
         self.url = url
         self.name = name
         self.category = category
@@ -30,6 +47,7 @@ public struct Finding: Identifiable, Hashable, Sendable {
         self.isDirectory = isDirectory
         self.assessment = assessment
         self.keeps = keeps
+        self.proof = proof
     }
 }
 

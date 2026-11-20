@@ -28,7 +28,7 @@ extension Scanner {
             else { continue }
             out.add(item, .redundant, limit: .age(days: 0), lead: "Archive from " + ago(item.stat.lastTouched),
                     redundancy: .init(reason: "already unpacked as “\(Self.displayName(copy))”", certainty: 0.95),
-                    keeps: copy)
+                    keeps: copy, proof: .unpacked(pieces: [path], top: ZipIndex.singleTop(entries)))
         }
     }
 
@@ -56,7 +56,7 @@ extension Scanner {
                 out.add(part.item, .redundant, limit: .age(days: 0), lead: "Piece \(part.number) of \(ordered.count)",
                         redundancy: .init(reason: "the archive is already unpacked as “\(Self.displayName(copy))”",
                                           certainty: 0.9),
-                        keeps: copy)
+                        keeps: copy, proof: .unpacked(pieces: paths, top: ZipIndex.singleTop(entries)))
             }
         }
     }
@@ -76,8 +76,14 @@ extension Scanner {
     struct AppBuild {
         let url: URL
         let id: String
+        /// The app's own name and executable. Apps made from one template often share an identifier;
+        /// these tell the products apart.
+        let name: String
+        let executable: String
         let version: String
         let short: [Int]
+        /// True for a beta, release candidate or other pre-release ("2.0 beta 3", "1.4.0-rc.1").
+        let prerelease: Bool
         let build: [Int]
         /// When the app was built: the newest date on its executable and Info.plist.
         let built: Date
@@ -87,9 +93,7 @@ extension Scanner {
     /// Reads an app's identity and version. Nil for anything that is not a complete app.
     func appBuild(_ url: URL, installed: Bool) -> AppBuild? {
         let plist = url.appendingPathComponent("Contents/Info.plist")
-        guard let data = FileStat.preservingAccessTime([plist.path], { FileManager.default.contents(atPath: plist.path) }),
-              let info = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any],
-              let id = info["CFBundleIdentifier"] as? String, !id.isEmpty,
+        guard let info = Self.info(of: url), let id = info["CFBundleIdentifier"] as? String, !id.isEmpty,
               let infoStat = FileStat(path: plist.path) else { return nil }
         let short = info["CFBundleShortVersionString"] as? String ?? ""
         let build = info["CFBundleVersion"] as? String ?? ""
@@ -98,26 +102,60 @@ extension Scanner {
         for name in (try? FileManager.default.contentsOfDirectory(atPath: executables.path)) ?? [] {
             if let st = FileStat(path: executables.appendingPathComponent(name).path) { built = max(built, st.modified) }
         }
-        return AppBuild(url: url, id: id, version: short.isEmpty ? build : short,
-                        short: Self.versionParts(short), build: Self.versionParts(build),
-                        built: built, installed: installed)
+        let (core, prerelease) = Self.splitVersion(short)
+        return AppBuild(url: url, id: id, name: info["CFBundleName"] as? String ?? "",
+                        executable: info["CFBundleExecutable"] as? String ?? "",
+                        version: short.isEmpty ? build : short, short: core, prerelease: prerelease,
+                        build: Self.versionParts(build), built: built, installed: installed)
     }
+
+    static func info(of app: URL) -> [String: Any]? {
+        let plist = app.appendingPathComponent("Contents/Info.plist")
+        guard let data = FileStat.preservingAccessTime([plist.path], { FileManager.default.contents(atPath: plist.path) })
+        else { return nil }
+        return (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any]
+    }
+
+    static func bundleID(of app: URL) -> String? { info(of: app)?["CFBundleIdentifier"] as? String }
 
     static func versionParts(_ text: String) -> [Int] {
         text.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
     }
 
+    /// "2.0 beta 3" is the release numbers [2, 0] plus a pre-release mark; "1.4.0" is just [1, 4, 0].
+    static func splitVersion(_ text: String) -> (core: [Int], prerelease: Bool) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        let core = trimmed.prefix { $0.isNumber || $0 == "." }
+        let rest = trimmed.dropFirst(core.count).trimmingCharacters(in: .whitespaces)
+        return (versionParts(String(core)), !rest.isEmpty)
+    }
+
     /// Negative when `a` is older than `b`, zero for the same build, positive when newer.
     static func compare(_ a: AppBuild, _ b: AppBuild) -> Int {
-        for (x, y) in [(a.short, b.short), (a.build, b.build)] {
+        func order(_ x: [Int], _ y: [Int]) -> Int {
             for i in 0..<max(x.count, y.count) {
                 let l = i < x.count ? x[i] : 0, r = i < y.count ? y[i] : 0
                 if l != r { return l < r ? -1 : 1 }
             }
+            return 0
         }
+        let release = order(a.short, b.short)
+        if release != 0 { return release }
+        // The same release numbers: the release itself is newer than any beta of it.
+        if a.prerelease != b.prerelease { return a.prerelease ? -1 : 1 }
+        let build = order(a.build, b.build)
+        if build != 0 { return build }
         // Same version numbers: a build made later is the newer one (most preview builds never bump them).
         if abs(a.built.timeIntervalSince(b.built)) < 1 { return 0 }
         return a.built < b.built ? -1 : 1
+    }
+
+    /// Identifiers that tools and templates fill in by default. Many unrelated apps carry them.
+    static func isPlaceholderID(_ id: String) -> Bool {
+        let lower = id.lowercased()
+        return ["com.example", "com.yourcompany", "com.mycompany", "com.company", "org.example", "com.tauri.dev",
+                "com.electron", "com.github.electron", "com.apple.dt", "io.flutter", "com.flutter"]
+            .contains { lower == $0 || lower.hasPrefix($0 + ".") } || !lower.contains(".")
     }
 
     /// The installed apps, read once per scan.
@@ -129,8 +167,8 @@ extension Scanner {
         }
     }
 
-    /// Older builds of an app, when a newer build of the same app (same bundle identifier) is
-    /// right beside it or installed in Applications.
+    /// Older builds of an app, when a newer build of the same app is right beside it or installed in
+    /// Applications. "The same app" means the same bundle identifier, name and executable.
     private func scanSupersededBuilds(_ apps: [Item], _ out: inout Collector) {
         var loose: [(build: AppBuild, item: Item)] = []
         for item in apps {
@@ -138,16 +176,22 @@ extension Scanner {
         }
         guard !loose.isEmpty else { return }
         let installed = installedApps()
-        for id in Set(loose.map(\.build.id)) {
-            let family = loose.map(\.build).filter { $0.id == id } + installed.filter { $0.id == id }
-            guard family.count >= 2 else { continue }
+        func product(_ b: AppBuild) -> String { "\(b.id)\u{0}\(b.name)\u{0}\(b.executable)" }
+        for key in Set(loose.map { product($0.build) }) {
+            let family = loose.map(\.build).filter { product($0) == key } + installed.filter { product($0) == key }
+            guard family.count >= 2, let id = family.first?.id, !Self.isPlaceholderID(id) else { continue }
+            // An app that is open, even from a hidden translocated copy, keeps its whole family as it is.
+            guard !runningIDs.contains(id) else { continue }
             // The newest wins; on a tie the installed copy wins, since that is the one in use.
             let best = family.max { a, b in
                 let order = Self.compare(a, b)
                 return order != 0 ? order < 0 : (!a.installed && b.installed)
             }!
-            for (build, item) in loose where build.id == id && build.url != best.url {
+            let bestOpened = usage(best.url)?.lastOpened
+            for (build, item) in loose where product(build) == key && build.url != best.url {
                 guard isSettled(item), !out.claims(item.url.path) else { continue }
+                // A build the owner opened more recently than the newer one is the one they rely on.
+                if let opened = usage(build.url)?.lastOpened, bestOpened.map({ opened > $0 }) ?? true { continue }
                 let same = Self.compare(build, best) == 0
                 let reason: String
                 switch (same, best.installed) {
@@ -157,7 +201,8 @@ extension Scanner {
                 case (false, false): reason = "an older build; “\(Self.displayName(best.url))” is newer"
                 }
                 out.add(item, .redundant, limit: .age(days: 0), lead: Self.versionLabel(build),
-                        redundancy: .init(reason: reason, certainty: 0.8), keeps: best.url)
+                        touched: FileStat.treeSummary(item.url.path).newest,
+                        redundancy: .init(reason: reason, certainty: 0.8), keeps: best.url, proof: .olderBuild(id: id))
             }
         }
     }
@@ -167,21 +212,48 @@ extension Scanner {
         return build.version.isEmpty ? name : "\(name) \(build.version)"
     }
 
-    /// Kinds of file an installer comes as. A document called "Install Guide" is not one.
-    static let installerTypes: Set<String> = ["app", "pkg", "mpkg", "dmg", "zip", "command", "sh", "tool"]
+    /// Kinds of file an installer comes as. A document or project called "… Setup" is not one.
+    static let installerTypes: Set<String> = ["app", "pkg", "mpkg", "dmg", "xip", "zip"]
+    /// Launch scripts count only in Downloads, where they arrive with a download. Elsewhere they are the owner's own.
+    static let launcherTypes: Set<String> = ["command", "sh", "tool"]
 
-    /// Installers (`Install X`, `X Installer`, `X-Setup.zip` …) for an app that is already installed.
+    /// Installers (`Install X`, `X Installer`, `X-Setup.dmg` …) for an app that is already installed.
     private func scanSpentInstallers(_ items: [Item], _ out: inout Collector) {
         let apps = installedAppNames().map { (key: Self.productKey($0.name), url: $0.url) }
         guard !apps.isEmpty else { return }
-        for item in items where !out.claims(item.url.path) && Self.installerTypes.contains(Self.fileExtension(item.name)) {
+        let downloads = home("Downloads").standardizedFileURL.path
+        let desktop = home("Desktop").standardizedFileURL.path
+        for item in items where !out.claims(item.url.path) {
+            let path = item.url.standardizedFileURL.path
+            let parent = item.url.deletingLastPathComponent().standardizedFileURL.path
+            // Downloads at any depth, or loose on the Desktop. Never inside Documents.
+            let inDownloads = path.hasPrefix(downloads + "/")
+            guard inDownloads || parent == desktop else { continue }
+            let ext = Self.fileExtension(item.name)
+            guard Self.installerTypes.contains(ext) || (inDownloads && Self.launcherTypes.contains(ext)) else { continue }
+            if ext == "app" && !item.stat.isDirectory { continue }
+            if ext != "app" && !item.stat.isRegular { continue }
+            // A zip counts only when it holds an app, package or disk image.
+            if ext == "zip", !Self.holdsInstaller(item.url) { continue }
             let stem = (item.name as NSString).deletingPathExtension
             guard Self.words(stem).contains(where: Self.installerWords.contains) else { continue }
             let key = Self.productKey(stem)
             guard key.count >= 3, let app = apps.first(where: { $0.key == key }) else { continue }
             out.add(item, .redundant, limit: .age(days: 0), lead: "Installer from " + ago(item.stat.lastTouched),
+                    touched: item.stat.isDirectory ? FileStat.treeSummary(item.url.path).newest : nil,
                     redundancy: .init(reason: "\(Self.displayName(app.url)) is already installed", certainty: 0.8),
-                    keeps: app.url)
+                    keeps: app.url, proof: .installer)
+        }
+    }
+
+    static func holdsInstaller(_ zip: URL) -> Bool {
+        guard let file = JoinedFile(paths: [zip.path]),
+              let entries = FileStat.preservingAccessTime([zip.path], { ZipIndex.entries(of: file) }) else { return false }
+        return entries.contains { entry in
+            let parts = entry.path.split(separator: "/")
+            guard let first = parts.first, first != "__MACOSX" else { return false }
+            let ext = fileExtension(String(first))
+            return (ext == "app" && parts.count >= 2) || ["pkg", "mpkg", "dmg"].contains(ext)
         }
     }
 
@@ -226,8 +298,9 @@ extension Scanner {
                     if !out.claims(other.url.path), !inUse.contains(other.url.standardizedFileURL.path),
                        FileStat.sameContents(keeper.url.path, other.url.path) {
                         out.add(other, .redundant, limit: .age(days: 0), lead: "Copy from " + ago(other.stat.lastTouched),
+                                touched: FileStat.treeSummary(other.url.path).newest,
                                 redundancy: .init(reason: "an exact copy of “\(Self.displayName(keeper.url))”", certainty: 0.95),
-                                keeps: keeper.url)
+                                keeps: keeper.url, proof: .duplicate)
                     } else {
                         different.append(other)
                     }
@@ -267,7 +340,7 @@ extension Scanner {
                         ? "" : " in \(Self.placeName(keeper.url.deletingLastPathComponent(), home: locations.home))"
                     out.add(item, .redundant, limit: .age(days: 0), lead: "Copy from " + ago(item.stat.lastTouched),
                             redundancy: .init(reason: "an exact copy of “\(Self.displayName(keeper.url))”\(place)", certainty: 0.95),
-                            keeps: keeper.url)
+                            keeps: keeper.url, proof: .duplicate)
                 } else {
                     keepers.append(item)
                 }
@@ -302,13 +375,14 @@ extension Scanner {
 
     static let unfinishedExtensions: Set<String> = ["crdownload", "download", "part", "opdownload", "partial"]
 
-    /// Downloads a browser gave up on, untouched for a day.
+    /// Downloads a browser gave up on, untouched for a day. Safari's is a folder whose own date stays
+    /// put while the file inside grows, so the newest date inside is what counts.
     private func scanUnfinishedDownloads(_ out: inout Collector) {
-        for item in children(home("Downloads"))
-        where Self.unfinishedExtensions.contains(Self.fileExtension(item.name)) && days(since: item.stat.lastTouched) >= 1 {
-            out.add(item, .redundant, bytes: FileStat.treeBytes(item.url.path), limit: .age(days: 0),
-                    lead: "Started " + ago(item.stat.lastTouched),
-                    redundancy: .init(reason: "a download that never finished", certainty: 0.85))
+        for item in children(home("Downloads")) where Self.unfinishedExtensions.contains(Self.fileExtension(item.name)) {
+            let tree = FileStat.treeSummary(item.url.path)
+            guard days(since: tree.newest) >= 1 else { continue }
+            out.add(item, .redundant, bytes: tree.bytes, limit: .age(days: 0), lead: "Last written " + ago(tree.newest),
+                    touched: tree.newest, redundancy: .init(reason: "a download that never finished", certainty: 0.85))
         }
     }
 

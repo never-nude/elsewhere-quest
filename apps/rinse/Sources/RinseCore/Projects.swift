@@ -20,11 +20,14 @@ extension Scanner {
     }
 
     static let javascript = ["package.json"]
-    static let python = ["pyproject.toml", "requirements.txt", "Pipfile", "uv.lock", "poetry.lock", "setup.py"]
+    /// `node_modules` comes back as it was only from a lockfile; from package.json alone, versions drift.
+    static let javascriptLocks = ["package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock"]
+    /// The same for Python environments.
+    static let pythonLocks = ["uv.lock", "poetry.lock", "Pipfile.lock", "pdm.lock", "requirements.txt"]
     static let gradle = ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"]
 
     static let buildFolders: [BuildFolder] = [
-        BuildFolder(name: "node_modules", manifests: javascript, restore: "npm install"),
+        BuildFolder(name: "node_modules", manifests: javascriptLocks, restore: "npm install"),
         BuildFolder(name: ".next", manifests: javascript, restore: "a build"),
         BuildFolder(name: ".nuxt", manifests: javascript, restore: "a build"),
         BuildFolder(name: ".svelte-kit", manifests: javascript, restore: "a build"),
@@ -35,8 +38,8 @@ extension Scanner {
         BuildFolder(name: "build", manifests: javascript + gradle, restore: "a build", alwaysGenerated: false),
         BuildFolder(name: ".build", manifests: ["Package.swift"], restore: "swift build"),
         BuildFolder(name: "target", manifests: ["Cargo.toml"], restore: "cargo build"),
-        BuildFolder(name: ".venv", manifests: python, restore: "reinstalling its packages", marker: "pyvenv.cfg"),
-        BuildFolder(name: "venv", manifests: python, restore: "reinstalling its packages", marker: "pyvenv.cfg"),
+        BuildFolder(name: ".venv", manifests: pythonLocks, restore: "reinstalling its packages", marker: "pyvenv.cfg"),
+        BuildFolder(name: "venv", manifests: pythonLocks, restore: "reinstalling its packages", marker: "pyvenv.cfg"),
         BuildFolder(name: "Pods", manifests: ["Podfile"], restore: "pod install"),
         BuildFolder(name: ".gradle", manifests: gradle, restore: "a Gradle build"),
     ]
@@ -98,6 +101,11 @@ extension Scanner {
                 walker.skipDescendants()
                 continue
             }
+            // A project inside this one (a submodule, a nested clone) has its own rules; leave it be.
+            if FileStat(path: url.appendingPathComponent(".git").path) != nil {
+                walker.skipDescendants()
+                continue
+            }
             guard let rule = Self.buildFolders.first(where: { $0.name == name }) else { continue }
             if isRebuildable(url, rule: rule, repo: repo) {
                 builds.append((url, rule, st))
@@ -108,11 +116,13 @@ extension Scanner {
         }
         let project = repo.lastPathComponent
         for build in builds where !out.claims(build.url.path) {
-            let bytes = FileStat.treeBytes(build.url.path)
-            guard bytes >= rules.cacheListBytes else { continue }
+            // A build that is rebuilt, installed into or run counts as work, even with no source edited.
+            let tree = FileStat.treeSummary(build.url.path)
+            guard tree.bytes >= rules.cacheListBytes else { continue }
+            let lastUsed = max(newest, tree.newest)
             out.add(Item(url: build.url, name: "\(build.rule.name) in \(project)", stat: build.stat), .projectBuilds,
-                    bytes: bytes, limit: .age(days: rules.projectIdleDays),
-                    lead: "Project last worked on " + ago(newest), touched: newest,
+                    bytes: tree.bytes, limit: .age(days: rules.projectIdleDays),
+                    lead: "Project last worked on " + ago(lastUsed), touched: lastUsed,
                     notes: ["comes back with \(build.rule.restore)"])
         }
     }
@@ -129,6 +139,29 @@ extension Scanner {
     /// True when a `.gitignore` between the folder and the project root (or the project's own
     /// exclude file, or the owner's global one) names the folder.
     func isIgnored(_ folder: URL, repo: URL) -> Bool {
+        let name = folder.lastPathComponent
+        // A "!" line that mentions the folder may bring it back into the project. Rinse does not try to
+        // work out which way it falls; it leaves the folder alone.
+        var current = folder.deletingLastPathComponent().standardizedFileURL
+        let top = repo.standardizedFileURL.path
+        while current.path.hasPrefix(top) {
+            if Self.negates(current.appendingPathComponent(".gitignore"), name: name) { return false }
+            if current.path == top { break }
+            current = current.deletingLastPathComponent()
+        }
+        if Self.negates(repo.appendingPathComponent(".git/info/exclude"), name: name) { return false }
+        return matchesIgnore(folder, repo: repo)
+    }
+
+    static func negates(_ url: URL, name: String) -> Bool {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        return text.split(whereSeparator: \.isNewline).contains { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return trimmed.hasPrefix("!") && trimmed.contains(name)
+        }
+    }
+
+    private func matchesIgnore(_ folder: URL, repo: URL) -> Bool {
         let name = folder.lastPathComponent
         let parent = folder.deletingLastPathComponent().standardizedFileURL.path
         let root = repo.standardizedFileURL.path

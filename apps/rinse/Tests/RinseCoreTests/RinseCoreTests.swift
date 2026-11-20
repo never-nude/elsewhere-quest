@@ -807,8 +807,11 @@ final class RedundancyTests: XCTestCase {
     func testInstallersGoOnceTheAppIsInstalled() throws {
         try home.app("Applications/Atrium Pose.app", id: "earth.atrium.pose", version: "3.4.3")
         try home.write("Downloads/Install Atrium Pose.command", .noise(2000))
-        try home.write("Downloads/Atrium-Pose-Installer.zip", .noise(951, seed: 2))
-        try home.write("Downloads/Atrium-Pose-Applications-Installer.zip", .noise(1200, seed: 3))
+        let installerApp = ZipBuilder(items: [.file("Atrium Pose Installer.app/Contents/Info.plist", .noise(300, seed: 2))])
+        try home.write("Downloads/Atrium-Pose-Installer.zip", installerApp.data())
+        try home.write("Downloads/Atrium-Pose-Applications-Installer.zip",
+                       ZipBuilder(items: [.file("Atrium Pose.pkg", .noise(900, seed: 3))]).data())
+        try home.write("Downloads/Atrium-Pose-Setup.zip", .noise(1200, seed: 3))   // not a zip at all
         try home.write("Downloads/Install Something Else.command", .noise(100, seed: 4))
         try home.write("Downloads/Atrium Pose notes.txt", .noise(100, seed: 5))
         let result = home.scan()
@@ -818,6 +821,7 @@ final class RedundancyTests: XCTestCase {
             XCTAssertTrue(finding.reason.hasSuffix("Atrium Pose is already installed"), finding.reason)
         }
         XCTAssertNil(find(result, "Install Something Else.command"))
+        XCTAssertNil(find(result, "Atrium-Pose-Setup.zip"), "a zip counts only when it holds an app, package or disk image")
         XCTAssertNil(find(result, "Atrium Pose notes.txt"), "not an installer")
     }
 
@@ -1072,6 +1076,153 @@ final class SweepTests: XCTestCase {
     }
 }
 
+/// The findings of the third review: each one a way Rinse could have lost something, now refused.
+final class LastCheckTests: XCTestCase {
+    var home: FakeHome!
+    var bin: URL!
+
+    override func setUpWithError() throws {
+        home = try FakeHome()
+        bin = FileManager.default.temporaryDirectory.appendingPathComponent("rinse-bin-\(UUID())")
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: bin)
+        home = nil
+    }
+
+    private func find(_ result: ScanResult, _ name: String) -> Finding? {
+        result.findings.first { $0.url.lastPathComponent == name }
+    }
+
+    private func wash(_ findings: [Finding], inUse: Set<String> = [], runningIDs: Set<String> = []) -> WashReport {
+        Washer.wash(findings, home: home.url, inUse: inUse, runningIDs: runningIDs, trasher: FolderTrasher(bin: bin))
+    }
+
+    private func daybreak() throws -> Finding {
+        let zip = ZipBuilder(items: [.file("Daybreak/a.psd", .noise(3000)), .file("Daybreak/b.psd", .noise(3000, seed: 2))])
+        try home.write("Downloads/Daybreak.zip", zip.data())
+        try home.write("Downloads/Daybreak/a.psd", .noise(3000))
+        try home.write("Downloads/Daybreak/b.psd", .noise(3000, seed: 2))
+        home.ageTree("Downloads/Daybreak", days: 1)
+        return try XCTUnwrap(find(home.scan(), "Daybreak.zip"))
+    }
+
+    func testAnArchiveStaysIfItsUnpackedCopyWasEditedAfterTheScan() throws {
+        let zip = try daybreak()
+        try home.write("Downloads/Daybreak/a.psd", .noise(3000, seed: 9), daysOld: 1)   // edited, same length
+        XCTAssertEqual(wash([zip]).failures.map(\.message), ["Its unpacked copy has changed"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: zip.url.path))
+    }
+
+    func testAnArchiveStaysIfPartOfItsUnpackedCopyWasDeleted() throws {
+        let zip = try daybreak()
+        try FileManager.default.removeItem(at: home.url.appendingPathComponent("Downloads/Daybreak/b.psd"))
+        XCTAssertEqual(wash([zip]).failures.map(\.message), ["Its unpacked copy has changed"])
+    }
+
+    func testAnUnchangedArchiveStillGoes() throws {
+        let zip = try daybreak()
+        XCTAssertEqual(wash([zip]).washed.map(\.name), ["Daybreak.zip"])
+    }
+
+    func testADuplicateFolderWorkedInAfterTheScanStays() throws {
+        try home.write("Downloads/Site/src/a.txt", .noise(500))
+        try home.write("Downloads/Site copy/src/a.txt", .noise(500))
+        home.ageTree("Downloads/Site", days: 1)
+        home.ageTree("Downloads/Site copy", days: 1)
+        let copy = try XCTUnwrap(find(home.scan(), "Site copy"))
+        try home.write("Downloads/Site copy/src/a.txt", .noise(500, seed: 3), daysOld: 0)   // saved just now, deep inside
+        XCTAssertEqual(wash([copy]).failures.map(\.message), ["Changed since Rinse looked"])
+    }
+
+    func testADuplicateStaysIfTheKeptCopyChanged() throws {
+        try home.write("Downloads/notes.pdf", .noise(800, seed: 4), daysOld: 2)
+        try home.write("Downloads/notes (1).pdf", .noise(800, seed: 4), daysOld: 1)
+        let copy = try XCTUnwrap(find(home.scan(), "notes (1).pdf"))
+        try home.write("Downloads/notes.pdf", .noise(800, seed: 5), daysOld: 2)
+        XCTAssertEqual(wash([copy]).failures.map(\.message), ["The two copies are no longer the same"])
+    }
+
+    func testACopyWithSomethingInsideItGoingIsNoCopy() throws {
+        // A backup zip of a project, and a build folder inside that same project, in one rinse.
+        let zip = try daybreak()
+        let inside = Finding(url: home.url.appendingPathComponent("Downloads/Daybreak/b.psd"), name: "b.psd",
+                             category: .staleDownloads, bytes: 1, lastTouched: Date(), isDirectory: false,
+                             assessment: Assessment(verdict: .wash, confidence: 100, reasons: []))
+        let report = wash([zip, inside])
+        XCTAssertEqual(report.washed.map(\.name), ["b.psd"])
+        XCTAssertEqual(report.failures.map(\.message), ["Its other copy is gone or going too"])
+    }
+
+    func testAnAppThatIsOpenNowStays() throws {
+        let old = try home.app("Downloads/Wash.app", id: "quest.wash", version: "0.1")
+        try home.app("Downloads/Wash 2.app", id: "quest.wash", version: "0.2")
+        let finding = try XCTUnwrap(find(home.scan(), "Wash.app"))
+        XCTAssertEqual(wash([finding], inUse: [old.path]).failures.map(\.message), ["It is open or kept in the Dock"])
+        XCTAssertEqual(wash([finding], runningIDs: ["quest.wash"]).failures.map(\.message), ["It is open"])
+    }
+
+    func testAnAppOpenedFromAHiddenCopyIsSeenAsOpen() throws {
+        try home.app("Downloads/Wash.app", id: "quest.wash", version: "0.1")
+        try home.app("Downloads/Wash 2.app", id: "quest.wash", version: "0.2")
+        let scanner = Scanner(locations: Locations(home: home.url, applications: []), now: home.now,
+                              hasOrigin: { _ in false }, runningIDs: ["quest.wash"])
+        XCTAssertNil(scanner.scan().findings.first { $0.name == "Wash.app" })
+    }
+
+    func testDifferentAppsThatShareAnIdentifierAreNotBuildsOfEachOther() throws {
+        func write(_ path: String, id: String, name: String, version: String) throws {
+            let info: [String: Any] = ["CFBundleIdentifier": id, "CFBundleName": name, "CFBundleExecutable": name,
+                                       "CFBundleShortVersionString": version]
+            try home.write(path + "/Contents/Info.plist", try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0))
+            try home.write(path + "/Contents/MacOS/" + name, .noise(500, seed: UInt8(version.count)))
+            home.ageTree(path, days: 1)
+        }
+        try write("Desktop/Tally.app", id: "com.vibe.app", name: "Tally", version: "1.0")
+        try write("Downloads/Pond.app", id: "com.vibe.app", name: "Pond", version: "2.0")
+        try write("Downloads/Old Thing.app", id: "com.example.app", name: "Thing", version: "1.0")
+        try write("Downloads/New Thing.app", id: "com.example.app", name: "Thing", version: "2.0")
+        let redundant = home.scan().findings.filter { $0.category == .redundant }
+        XCTAssertTrue(redundant.isEmpty, "\(redundant.map(\.name))")
+    }
+
+    func testTheReleaseIsNewerThanItsBeta() throws {
+        try home.app("Downloads/Foo.app", id: "dev.foo", version: "2.0", build: "200", daysOld: 2)
+        try home.app("Downloads/Foo Beta.app", id: "dev.foo", version: "2.0 beta 3", build: "199", daysOld: 1)
+        let result = home.scan()
+        XCTAssertNil(find(result, "Foo.app"))
+        XCTAssertEqual(find(result, "Foo Beta.app")?.keeps?.lastPathComponent, "Foo.app")
+        XCTAssertEqual(Scanner.splitVersion("1.4.0-rc.1").core, [1, 4, 0])
+        XCTAssertTrue(Scanner.splitVersion("1.4.0-rc.1").prerelease)
+        XCTAssertFalse(Scanner.splitVersion("1.4.0").prerelease)
+    }
+
+    func testTheBuildYouActuallyOpenIsKept() throws {
+        try home.app("Desktop/Wash.app", id: "quest.wash", version: "0.2")
+        try home.app("Downloads/Wash 2.app", id: "quest.wash", version: "0.3")
+        home.opened = ["Wash.app"]     // opened through Spotlight; the newer one never was
+        XCTAssertNil(find(home.scan(), "Wash.app"))
+    }
+
+    func testThingsNamedSetupThatAreNotInstallersStay() throws {
+        try home.app("Applications/Blender.app", id: "org.blender", version: "4")
+        try home.app("Applications/Obsidian.app", id: "md.obsidian", version: "1")
+        try home.write("Desktop/Blender Setup.blend", .noise(900), daysOld: 2)
+        try home.write("Desktop/Obsidian Setup/My Vault/note.md", .noise(90), daysOld: 2)
+        home.ageTree("Desktop/Obsidian Setup", days: 2)
+        try home.write("Desktop/Install Blender.command", .noise(90, seed: 2), daysOld: 2)   // the owner's own script
+        try home.write("Documents/Install Obsidian.dmg", .noise(900, seed: 3), daysOld: 2)  // kept in Documents on purpose
+        XCTAssertTrue(home.scan().findings.filter { $0.category == .redundant }.isEmpty)
+    }
+
+    func testASafariDownloadStillGrowingStays() throws {
+        try home.write("Downloads/Xcode.xip.download/Xcode.xip", .noise(5000), daysOld: 0)
+        home.age(home.url.appendingPathComponent("Downloads/Xcode.xip.download"), days: 3)
+        XCTAssertNil(find(home.scan(), "Xcode.xip.download"))
+    }
+}
+
 final class ProjectTests: XCTestCase {
     var home: FakeHome!
     var rules = Rules()
@@ -1086,9 +1237,11 @@ final class ProjectTests: XCTestCase {
     private func project(_ path: String, daysOld: Int, ignore: String = "node_modules/\n") throws {
         try home.write(path + "/.git/HEAD", Data("ref: refs/heads/main\n".utf8), daysOld: daysOld)
         try home.write(path + "/package.json", Data("{}".utf8), daysOld: daysOld)
+        try home.write(path + "/package-lock.json", Data("{}".utf8), daysOld: daysOld)
         try home.write(path + "/src/index.js", .noise(400), daysOld: daysOld)
         try home.write(path + "/.gitignore", Data(ignore.utf8), daysOld: daysOld)
         try home.write(path + "/node_modules/react/index.js", .noise(30_000), daysOld: daysOld)
+        home.ageTree(path, days: daysOld)
     }
 
     func testDependenciesOfAnIdleProjectCanGo() throws {
@@ -1127,6 +1280,35 @@ final class ProjectTests: XCTestCase {
         try home.write("Documents/Swift/.build/debug/x.o", .noise(30_000), daysOld: 40)
         let names = Set(home.scan(rules).findings.filter { $0.category == .projectBuilds }.map(\.name))
         XCTAssertEqual(names, [".venv in Py", ".build in Swift"])
+    }
+
+    func testABuildThatIsRunOrRebuiltIsInUse() throws {
+        try home.write("Developer/tool/.git/HEAD", Data("x".utf8), daysOld: 40)
+        try home.write("Developer/tool/Cargo.toml", Data("x".utf8), daysOld: 40)
+        try home.write("Developer/tool/.gitignore", Data("/target\n".utf8), daysOld: 40)
+        try home.write("Developer/tool/src/main.rs", .noise(300), daysOld: 40)
+        try home.write("Developer/tool/target/release/tool", .noise(30_000), daysOld: 0)   // rebuilt today
+        let finding = try XCTUnwrap(home.scan(rules).findings.first { $0.name == "target in tool" })
+        XCTAssertEqual(finding.verdict, .leave)
+    }
+
+    func testDependenciesWithoutALockfileAreNotListed() throws {
+        try project("Documents/Loose", daysOld: 40)
+        try FileManager.default.removeItem(at: home.url.appendingPathComponent("Documents/Loose/package-lock.json"))
+        XCTAssertTrue(home.scan(rules).findings.filter { $0.category == .projectBuilds }.isEmpty)
+    }
+
+    func testASubmoduleOrAReIncludedFolderIsLeftAlone() throws {
+        try project("Developer/App", daysOld: 40, ignore: "node_modules/\ndist\n!packages/web/dist\n")
+        // A submodule with its own committed dist.
+        try home.write("Developer/App/vendor/lib/.git", Data("gitdir: ../../.git/modules/lib".utf8), daysOld: 40)
+        try home.write("Developer/App/vendor/lib/package.json", Data("{}".utf8), daysOld: 40)
+        try home.write("Developer/App/vendor/lib/dist/lib.js", .noise(30_000), daysOld: 40)
+        // A package whose dist the root .gitignore brings back.
+        try home.write("Developer/App/packages/web/package.json", Data("{}".utf8), daysOld: 40)
+        try home.write("Developer/App/packages/web/dist/app.js", .noise(30_000), daysOld: 40)
+        let names = Set(home.scan(rules).findings.filter { $0.category == .projectBuilds }.map(\.name))
+        XCTAssertEqual(names, ["node_modules in App"])
     }
 
     func testIgnorePatterns() throws {
