@@ -1,0 +1,20 @@
+name: Rinse CI
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/rinse/**', '.github/workflows/rinse-ci.yml']
+  pull_request:
+    paths: ['apps/rinse/**', '.github/workflows/rinse-ci.yml']
+
+jobs:
+  test:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: apps/rinse
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift test
+      - run: ./scripts/build-app.sh

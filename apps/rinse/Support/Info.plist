@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Rinse</string>
+    <key>CFBundleDisplayName</key>
+    <string>Rinse</string>
+    <key>CFBundleIdentifier</key>
+    <string>quest.elsewhere.rinse</string>
+    <key>CFBundleExecutable</key>
+    <string>Rinse</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.utilities</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Everything Rinse moves goes to the Trash.</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Rinse asks Finder to empty the Trash, and only when you press Empty the Trash.</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Rinse looks on the Desktop for old screenshots, recordings and installers.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Rinse looks in Downloads for installers and files nobody has touched in a while.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Rinse looks in Documents for large files that have been sitting idle.</string>
+</dict>
+</plist>
