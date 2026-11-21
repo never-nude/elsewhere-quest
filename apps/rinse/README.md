@@ -47,7 +47,9 @@ Everything else is measured two ways and put in one of three groups.
 | **File away** | dormant, but yours | moves to your filing folder |
 | **Leave for now** | not dormant yet, or moving it would gain nothing | nothing |
 
-Each row shows the reasons ("Taken 30 days ago · no record of you opening it") and a percentage for how sure Rinse is. Three buttons on the row overrule it.
+Each row shows the reasons and a percentage for how sure Rinse is. Rest the pointer on a row for a moment (or right-click it and choose **Why?**) for a card that says, in plain words, why it is or is not ready, how many days until it would be, which copy stays, and exactly what pressing the button would do with it.
+
+**Choosing.** Every row has a checkbox: ticked means something happens to it, unticked means it stays. A switch beside it picks Trash or File (caches and copies only ever go to the Trash). Each group has a checkbox that selects or clears the whole group, with a dash when only some are ticked. The bar above the list has **Select All**, **Select None** and **Back to Recommended**, and counts what is selected. ⌘-click or ⇧-click to highlight several rows, then press Space to tick or untick them all, or right-click for Select, Deselect, Move to Trash, File Away or Back to Recommended. A choice you make stands until Rinse's recommendation for that item changes.
 
 | Kind | Dormant after | Can go when | Otherwise |
 |---|---|---|---|

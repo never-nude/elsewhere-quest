@@ -50,11 +50,14 @@ public struct Assessment: Hashable, Sendable {
     /// 0 to 100: how sure the rules are of the verdict.
     public let confidence: Int
     public let reasons: [String]
+    /// For an item that is not ready yet because it is too recent: days until it would be, if left untouched.
+    public let readyInDays: Int?
 
-    public init(verdict: Verdict, confidence: Int, reasons: [String]) {
+    public init(verdict: Verdict, confidence: Int, reasons: [String], readyInDays: Int? = nil) {
         self.verdict = verdict
         self.confidence = confidence
         self.reasons = reasons
+        self.readyInDays = readyInDays
     }
 }
 
@@ -154,7 +157,9 @@ public enum Judge {
             case .age: why = e.kind == .projectBuilds ? "the project is still in use" : "still recent"
             case .size: why = "small"
             }
-            return Assessment(verdict: .leave, confidence: percent(1 - dormant), reasons: [why])
+            var readyIn: Int?
+            if case .age(let days) = e.limit { readyIn = max(1, max(1, days) - max(0, e.idleDays)) }
+            return Assessment(verdict: .leave, confidence: percent(1 - dormant), reasons: [why], readyInDays: readyIn)
         }
         if replaceable >= replaceableLine {
             return Assessment(verdict: .wash, confidence: percent(0.55 * replaceable + 0.45 * dormant), reasons: reasons)

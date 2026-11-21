@@ -1384,6 +1384,99 @@ final class SweepSafetyTests: XCTestCase {
     }
 }
 
+final class SelectionTests: XCTestCase {
+    private func finding(_ name: String, _ verdict: Verdict, _ kind: Residue = .staleDownloads,
+                         readyIn: Int? = nil, keeps: URL? = nil) -> Finding {
+        Finding(url: URL(fileURLWithPath: "/Users/someone/Downloads/" + name), name: name, category: kind, bytes: 1000,
+                lastTouched: Date(timeIntervalSince1970: 1_800_000_000), isDirectory: false,
+                assessment: Assessment(verdict: verdict, confidence: 88, reasons: ["Untouched since 40 days ago", "a document"],
+                                       readyInDays: readyIn),
+                keeps: keeps)
+    }
+
+    func testItemsFollowTheRecommendationUntilTheOwnerChooses() {
+        let go = finding("a.zip", .wash), keep = finding("b.pdf", .file), wait = finding("c.pdf", .leave)
+        var selection = Selection()
+        XCTAssertEqual([go, keep, wait].map(selection.isSelected), [true, true, false])
+        selection.toggle(go)
+        selection.toggle(wait)
+        XCTAssertEqual(selection.action(for: go), .leave)
+        XCTAssertEqual(selection.action(for: wait), .file, "selecting something of yours files it rather than trashing it")
+        XCTAssertTrue(selection.isOverruled(go))
+        selection.reset()
+        XCTAssertFalse(selection.hasChoices)
+        XCTAssertEqual(selection.action(for: wait), .leave)
+    }
+
+    func testSelectAllNoneAndGroups() {
+        let rows = [finding("a.zip", .wash), finding("b.pdf", .file), finding("cache", .leave, .caches)]
+        var selection = Selection()
+        XCTAssertEqual(selection.state(of: rows), .some)
+        selection.select(rows)
+        XCTAssertEqual(selection.state(of: rows), .all)
+        XCTAssertEqual(selection.action(for: rows[2]), .wash, "a cache is never filed, so selecting it trashes it")
+        selection.toggle(rows)
+        XCTAssertEqual(selection.state(of: rows), .none)
+        selection.toggle(rows)
+        XCTAssertEqual(selection.state(of: rows), .all)
+        selection.reset(Array(rows.prefix(2)))
+        XCTAssertEqual(rows.map(selection.action), [.wash, .file, .wash])
+    }
+
+    func testTrashOrFileForSelectedRows() {
+        let doc = finding("b.pdf", .file), copy = finding("b (1).pdf", .wash, .redundant)
+        var selection = Selection()
+        selection.set([doc, copy], to: .wash)
+        XCTAssertEqual(selection.action(for: doc), .wash)
+        selection.set([doc, copy], to: .file)
+        XCTAssertEqual(selection.action(for: doc), .file)
+        XCTAssertEqual(selection.action(for: copy), .wash, "a redundant copy cannot be filed")
+    }
+
+    func testAChoiceLapsesWhenTheRecommendationChanges() {
+        var selection = Selection()
+        let before = finding("a.pdf", .leave)
+        selection.select(before)
+        let after = finding("a.pdf", .file)
+        XCTAssertEqual(selection.action(for: after), .file)
+        selection.reconcile(with: [finding("a.pdf", .wash)])
+        XCTAssertFalse(selection.hasChoices)
+        selection.select(before)
+        selection.forget([before.id])
+        XCTAssertFalse(selection.hasChoices)
+    }
+
+    func testTheWhyCardSaysWhatWillHappen() {
+        let home = URL(fileURLWithPath: "/Users/someone")
+        let archive = home.appendingPathComponent("Documents/Filed Away")
+        let ready = finding("b.pdf", .file)
+        let card = ready.explanation(action: .file, home: home, archive: archive)
+        XCTAssertEqual(card.headline, "Ready to file away")
+        XCTAssertEqual(card.why, ["Untouched since 40 days ago", "A document"])
+        XCTAssertTrue(card.outcome.hasPrefix("Selected: it moves to Documents/Filed Away/From Downloads/"), card.outcome)
+
+        let waiting = finding("c.png", .leave, .screenshots, readyIn: 4)
+        let wait = waiting.explanation(action: .leave, home: home, archive: archive)
+        XCTAssertEqual(wait.headline, "Not ready yet")
+        XCTAssertTrue(wait.notes.contains("Ready in 4 days if nothing touches it."))
+        XCTAssertEqual(wait.outcome, "Not selected: it stays where it is.")
+
+        let copy = finding("Daybreak.zip", .wash, .redundant, keeps: home.appendingPathComponent("Downloads/Daybreak"))
+        let redundant = copy.explanation(action: .wash, home: home, archive: archive)
+        XCTAssertEqual(redundant.headline, "Ready for the Trash: there is another copy")
+        XCTAssertTrue(redundant.notes.contains("The copy that stays: Downloads/Daybreak."))
+        XCTAssertTrue(redundant.outcome.contains("Trash"))
+    }
+
+    func testNotReadyItemsSayHowLongIsLeft() throws {
+        let home = try FakeHome()
+        try home.write("Desktop/Screenshot 1.png", .noise(500), daysOld: 3)
+        let shot = try XCTUnwrap(home.scan().findings.first { $0.name == "Screenshot 1.png" })
+        XCTAssertEqual(shot.verdict, .leave)
+        XCTAssertEqual(shot.assessment.readyInDays, 4, "screenshots are ready after 7 days")
+    }
+}
+
 final class ProjectTests: XCTestCase {
     var home: FakeHome!
     var rules = Rules()

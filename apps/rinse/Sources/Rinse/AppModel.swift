@@ -54,10 +54,11 @@ final class AppModel {
     var prefs: Prefs
     var ledger: Ledger
     var showSettings = false
+    /// The row whose "why" card is open, from hovering or from the right-click menu.
+    var explaining: String?
 
-    /// Where the owner disagreed with the recommendation: path to what they chose instead,
-    /// and the recommendation they were disagreeing with. If that changes, the choice no longer applies.
-    private var overrides: [String: (choice: Verdict, against: Verdict)] = [:]
+    /// What the owner chose, on top of the recommendations.
+    private(set) var selection = Selection()
     @ObservationIgnored private var rescanQueued = false
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private let defaults = UserDefaults.standard
@@ -163,28 +164,40 @@ final class AppModel {
             let ignored = rules.ignored
             result = ScanResult(findings: fresh.findings.filter { !ignored.contains($0.id) }, scannedAt: fresh.scannedAt)
             // A choice only stands while the item is still there and still recommended the same way.
-            let current = Dictionary(uniqueKeysWithValues: fresh.findings.map { ($0.id, $0.verdict) })
-            overrides = overrides.filter { current[$0.key] == $0.value.against }
+            selection.reconcile(with: fresh.findings)
         } while rescanQueued
         isScanning = false
     }
 
     // MARK: - Choices
 
+    var allFindings: [Finding] { result?.findings ?? [] }
+
     /// What will happen to an item: the recommendation, unless the owner chose otherwise.
-    func action(for finding: Finding) -> Verdict {
-        guard let override = overrides[finding.id], override.against == finding.verdict else { return finding.verdict }
-        return override.choice
-    }
+    func action(for finding: Finding) -> Verdict { selection.action(for: finding) }
+    func isSelected(_ finding: Finding) -> Bool { selection.isSelected(finding) }
+    func isOverruled(_ finding: Finding) -> Bool { selection.isOverruled(finding) }
 
-    func setAction(_ finding: Finding, _ action: Verdict) {
-        let choice = action == .file && !finding.category.canBeFiled ? .leave : action
-        overrides[finding.id] = choice == finding.verdict ? nil : (choice, finding.verdict)
-    }
+    func setAction(_ finding: Finding, _ action: Verdict) { selection.set(finding, to: action) }
+    func setAction(_ findings: [Finding], _ action: Verdict) { selection.set(findings, to: action) }
 
-    /// Sets every item Rinse recommended one thing for to the same action.
-    func setAll(recommended verdict: Verdict, to action: Verdict) {
-        for finding in result?.findings(recommended: verdict) ?? [] { setAction(finding, action) }
+    func toggle(_ finding: Finding) { selection.toggle(finding) }
+    func toggle(_ findings: [Finding]) { selection.toggle(findings) }
+    func select(_ findings: [Finding]) { selection.select(findings) }
+    func deselect(_ findings: [Finding]) { selection.deselect(findings) }
+    func state(of findings: [Finding]) -> Selection.GroupState { selection.state(of: findings) }
+
+    func selectAll() { selection.select(allFindings) }
+    func selectNone() { selection.deselect(allFindings) }
+    /// Back to what Rinse recommends, for everything or for some items.
+    func resetSelection() { selection.reset() }
+    func resetSelection(_ findings: [Finding]) { selection.reset(findings) }
+    var hasChoices: Bool { selection.hasChoices }
+
+    var selectedCount: Int { allFindings.filter(isSelected).count }
+
+    func explanation(for finding: Finding) -> Explanation {
+        finding.explanation(action: action(for: finding), home: home, archive: archive)
     }
 
     var washFindings: [Finding] { (result?.findings ?? []).filter { action(for: $0) == .wash } }
@@ -196,7 +209,7 @@ final class AppModel {
     /// "Never show this again."
     func ignore(_ finding: Finding) {
         rules.ignored.insert(finding.id)
-        overrides[finding.id] = nil
+        selection.forget([finding.id])
         drop([finding.id])
     }
 
@@ -228,7 +241,7 @@ final class AppModel {
         try? ledger.save(to: Self.ledgerURL)
         // Only what really moved is forgotten. A choice about something that would not move still stands.
         let moved = Set(report.wash.washed.map(\.id) + report.file.filed.map(\.id))
-        for id in moved { overrides[id] = nil }
+        selection.forget(moved)
         // Take what moved off the list now, so the numbers are right while the next look runs.
         drop(moved)
         lastReport = report

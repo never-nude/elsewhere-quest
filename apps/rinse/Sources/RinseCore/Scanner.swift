@@ -378,7 +378,7 @@ struct Collector {
             // Never earlier than the item's own date, so the last check before a move does not misfire.
             lastTouched: max(lastTouched, item.stat.modified), isDirectory: item.stat.isDirectory,
             assessment: Assessment(verdict: judged.verdict, confidence: judged.confidence,
-                                   reasons: [lead] + judged.reasons + notes),
+                                   reasons: [lead] + judged.reasons + notes, readyInDays: judged.readyInDays),
             keeps: keeps, proof: proof))
     }
 }
