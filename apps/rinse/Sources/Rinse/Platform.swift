@@ -44,6 +44,29 @@ enum Platform {
         return paths
     }
 
+    /// Dates of Time Machine's local snapshots on the startup disk. They hold on to deleted and changed
+    /// files until macOS clears them, and pile up when the backup disk cannot be reached.
+    static func localSnapshotDates() -> [Date] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tmutil")
+        process.arguments = ["listlocalsnapshots", "/"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        guard (try? process.run()) != nil else { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return LocalSnapshots.dates(fromListing: String(decoding: data, as: UTF8.self))
+    }
+
+    /// Free space as macOS counts it for things that matter: includes space it can clear on its own
+    /// (purgeable caches, some snapshots).
+    static func availableForImportantUse() -> Int64? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let values = try? home.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        return values?.volumeAvailableCapacityForImportantUsage
+    }
+
     /// Bundle identifiers of every running app, wherever it runs from.
     @MainActor
     static func runningBundleIDs() -> Set<String> {

@@ -25,8 +25,13 @@ struct RinseApp: App {
                     .keyboardShortcut(",", modifiers: .command)
             }
             CommandGroup(replacing: .newItem) {
-                Button("Show Rinse") { model.openReview() }
-                    .keyboardShortcut("0", modifiers: .command)
+                Button("Show Rinse") {
+                    model.pane = .rinse
+                    model.openReview()
+                }
+                .keyboardShortcut("1", modifiers: .command)
+                Button("Show Storage") { model.showStorage() }
+                    .keyboardShortcut("2", modifiers: .command)
                 Button("Look Again") { Task { await model.scan() } }
                     .keyboardShortcut("r", modifiers: .command)
             }

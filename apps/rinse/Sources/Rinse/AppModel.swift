@@ -57,6 +57,25 @@ final class AppModel {
     /// The row whose "why" card is open, from hovering or from the right-click menu.
     var explaining: String?
 
+    // MARK: Storage
+
+    /// Which part of the window is showing.
+    var pane: Pane = .rinse
+    enum Pane: String, CaseIterable, Identifiable {
+        case rinse = "Rinse"
+        case storage = "Storage"
+        var id: String { rawValue }
+    }
+
+    private(set) var survey: Survey?
+    private(set) var spaceHistory: SpaceHistory
+    private(set) var isSurveying = false
+    private(set) var snapshotDates: [Date] = []
+    private(set) var importantAvailable: Int64?
+    private static let historyURL = FileManager.default
+        .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("Rinse/space-history.json")
+
     /// What the owner chose, on top of the recommendations.
     private(set) var selection = Selection()
     @ObservationIgnored private var rescanQueued = false
@@ -71,6 +90,41 @@ final class AppModel {
         rules = Self.load(Rules.self, key: "rules") ?? Rules()
         prefs = Self.load(Prefs.self, key: "prefs") ?? Prefs()
         ledger = Ledger.load(from: Self.ledgerURL)
+        spaceHistory = SpaceHistory.load(from: Self.historyURL)
+    }
+
+    /// Measures where the space is. Takes a while on a big home folder, so it runs in the background.
+    func runSurvey() async {
+        guard !isSurveying else { return }
+        isSurveying = true
+        let home = self.home
+        let (fresh, snapshots, important) = await Task.detached(priority: .utility) {
+            (Surveyor(home: home).survey(), Platform.localSnapshotDates(), Platform.availableForImportantUse())
+        }.value
+        survey = fresh
+        snapshotDates = snapshots
+        importantAvailable = important
+        spaceHistory.record(fresh)
+        try? spaceHistory.save(to: Self.historyURL)
+        isSurveying = false
+    }
+
+    /// The newest earlier look to compare against, and what changed since. Prefers about a day ago,
+    /// falls back to the oldest one there is.
+    var growth: (since: Date, changes: [SpaceHistory.Change])? {
+        guard let survey else { return nil }
+        let past = spaceHistory.snapshot(olderThan: 20 * 3600, now: survey.measuredAt)
+            ?? spaceHistory.snapshots.first { $0.date < survey.measuredAt.addingTimeInterval(-3600) }
+        guard let past else { return nil }
+        return (past.date, SpaceHistory.changes(from: past, to: survey))
+    }
+
+    func showStorage() {
+        pane = .storage
+        openReview()
+        if !isSurveying, Date().timeIntervalSince(survey?.measuredAt ?? .distantPast) > 3600 {
+            Task { await runSurvey() }
+        }
     }
 
     /// Where filed items go: the chosen folder, or a "Filed Away" folder inside it when Rinse scans that place.
@@ -118,6 +172,10 @@ final class AppModel {
     /// Runs once a minute: the evening reminder, and an hourly look to keep the numbers honest.
     private func tick() async {
         let now = Date()
+        // Once a day, measure where the space is, so a sudden jump can be traced to a day and a place.
+        if !isSurveying, now.timeIntervalSince(spaceHistory.snapshots.last?.date ?? .distantPast) > 20 * 3600 {
+            Task { await runSurvey() }
+        }
         if prefs.ritualEnabled, ritualIsDue(now) {
             defaults.set(Self.dayKey(now), forKey: "lastRitualDay")
             await scan()

@@ -103,6 +103,13 @@ struct MenuPanel: View {
             .help("Look again")
             .disabled(model.isScanning)
             Button {
+                if let panel = NSApp.keyWindow, !ReviewWindow.shared.owns(panel) { panel.close() }
+                model.showStorage()
+            } label: {
+                Image(systemName: "internaldrive")
+            }
+            .help("Where your space is")
+            Button {
                 open(settings: true)
             } label: {
                 Image(systemName: "gearshape")

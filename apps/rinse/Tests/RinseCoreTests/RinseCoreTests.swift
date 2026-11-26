@@ -1477,6 +1477,106 @@ final class SelectionTests: XCTestCase {
     }
 }
 
+final class StorageTests: XCTestCase {
+    var home: FakeHome!
+
+    override func setUpWithError() throws { home = try FakeHome() }
+    override func tearDown() { home = nil }
+
+    private func survey(bigFile: Int64 = 50_000) -> Survey {
+        var surveyor = Surveyor(home: home.url, now: home.now)
+        surveyor.bigFileBytes = bigFile
+        return surveyor.survey()
+    }
+
+    func testEveryByteLandsInOnePlace() throws {
+        try home.write("Pictures/Photos Library.photoslibrary/originals/a.heic", .noise(40_000), daysOld: 30)
+        try home.write("Pictures/wallpaper.jpg", .noise(20_000), daysOld: 30)
+        try home.write("Library/Application Support/MobileSync/Backup/0000-1111/Manifest.db", .noise(60_000), daysOld: 1)
+        try home.write("Library/Application Support/com.tinyspeck.slackmacgap/cache.bin", .noise(30_000), daysOld: 30)
+        try home.write("Library/Containers/com.docker.docker/Data/vms/0/Docker.raw", .noise(70_000), daysOld: 2)
+        try home.write("Library/Containers/com.apple.Notes/Data/notes.db", .noise(10_000), daysOld: 30)
+        try home.write("Library/Preferences/com.apple.finder.plist", .noise(2_000), daysOld: 30)
+        try home.write("Downloads/big.dmg", .noise(80_000), daysOld: 1)
+        try home.write("notes.txt", .noise(1_000), daysOld: 30)
+        let result = survey()
+        func size(_ id: String) -> Int64 { result.entry(id)?.bytes ?? 0 }
+        XCTAssertGreaterThanOrEqual(size("photos"), 40_000)
+        XCTAssertGreaterThanOrEqual(size("pictures"), 20_000)
+        XCTAssertLessThan(size("pictures"), 40_000, "the Photos library is not counted twice")
+        XCTAssertGreaterThanOrEqual(size("ios-backups"), 60_000)
+        XCTAssertGreaterThanOrEqual(size("docker"), 70_000, "Docker is its own place, not generic app data")
+        XCTAssertNil(result.entry("app:Library/Containers/com.docker.docker"))
+        XCTAssertGreaterThanOrEqual(size("app:Library/Application Support/com.tinyspeck.slackmacgap"), 30_000)
+        XCTAssertEqual(result.entry("app:Library/Containers/com.apple.Notes")?.place.title, "Notes")
+        XCTAssertGreaterThanOrEqual(size("library-other"), 2_000)
+        XCTAssertGreaterThanOrEqual(size("home-other"), 1_000)
+        XCTAssertEqual(result.entries.reduce(0) { $0 + $1.bytes }, result.homeBytes)
+        XCTAssertFalse(result.incomplete)
+    }
+
+    func testRecentBigFilesAndRecentGrowthPerPlace() throws {
+        try home.write("Library/Application Support/MobileSync/Backup/0000-1111/blob", .noise(90_000), daysOld: 1)
+        try home.write("Downloads/old.zip", .noise(90_000), daysOld: 40)
+        try home.write("Downloads/small.txt", .noise(100), daysOld: 1)
+        let result = survey()
+        XCTAssertEqual(result.recentFiles.map(\.url.lastPathComponent), ["blob"])
+        XCTAssertEqual(result.recentFiles.first?.placeID, "ios-backups")
+        XCTAssertGreaterThanOrEqual(result.entry("ios-backups")?.recentBytes ?? 0, 90_000)
+        XCTAssertLessThan(result.entry("downloads")?.recentBytes ?? 0, 90_000, "an old download is not new")
+    }
+
+    func testHistorySaysWhatGrew() throws {
+        try home.write("Downloads/a.bin", .noise(10_000), daysOld: 5)
+        let before = survey()
+        var history = SpaceHistory()
+        history.record(before)
+        try home.write("Library/Application Support/MobileSync/Backup/X/blob", .noise(400_000), daysOld: 0)
+        let later = Surveyor(home: home.url, now: home.now.addingTimeInterval(2 * 86_400)).survey()
+        let past = try XCTUnwrap(history.snapshot(olderThan: 86_400, now: later.measuredAt))
+        let changes = SpaceHistory.changes(from: past, to: later, threshold: 100_000)
+        XCTAssertEqual(changes.first?.id, "ios-backups")
+        XCTAssertEqual(changes.first?.title, "iPhone and iPad backups")
+        XCTAssertGreaterThanOrEqual(changes.first?.delta ?? 0, 400_000)
+
+        history.record(later)
+        let url = home.url.appendingPathComponent("history.json")
+        try history.save(to: url)
+        XCTAssertEqual(SpaceHistory.load(from: url).snapshots.count, 2)
+    }
+
+    func testOneSnapshotPerDayAndNinetyDaysKept() throws {
+        var history = SpaceHistory()
+        let start = home.now
+        for day in 0..<100 {
+            for hour in [9.0, 21.0] {
+                let survey = Survey(measuredAt: start.addingTimeInterval(Double(day) * 86_400 + hour * 3600),
+                                    entries: [], recentFiles: [], homeBytes: 1, disk: nil, incomplete: false, unreadable: 0)
+                history.record(survey)
+            }
+        }
+        XCTAssertLessThanOrEqual(history.snapshots.count, 92)
+        XCTAssertGreaterThanOrEqual(history.snapshots.count, 89)
+    }
+
+    func testLocalSnapshotNames() {
+        let listing = """
+        Snapshots for disk /:
+        com.apple.TimeMachine.2026-11-24-081530.local
+        com.apple.TimeMachine.2026-11-25-101530.local
+        """
+        let dates = LocalSnapshots.dates(fromListing: listing)
+        XCTAssertEqual(dates.count, 2)
+        XCTAssertLessThan(dates[0], dates[1])
+    }
+
+    func testDiskSpaceReads() {
+        let disk = DiskSpace.of(home.url.path)
+        XCTAssertNotNil(disk)
+        XCTAssertGreaterThan(disk?.total ?? 0, disk?.available ?? 0)
+    }
+}
+
 final class ProjectTests: XCTestCase {
     var home: FakeHome!
     var rules = Rules()

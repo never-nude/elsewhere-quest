@@ -15,9 +15,13 @@ struct ReviewView: View {
         VStack(spacing: 0) {
             header
             Divider()
-            content
-            Divider()
-            footer
+            if model.pane == .storage {
+                StorageView()
+            } else {
+                content
+                Divider()
+                footer
+            }
         }
         .frame(minWidth: 620, minHeight: 480)
         .tint(.water)
@@ -34,14 +38,24 @@ struct ReviewView: View {
                 .font(.system(size: 28))
                 .foregroundStyle(.waterGradient)
             VStack(alignment: .leading, spacing: 2) {
-                Text(Calendar.current.component(.hour, from: Date()) >= 17 ? "Tonight's rinse" : "Today's rinse")
+                Text(model.pane == .storage ? "Storage"
+                     : Calendar.current.component(.hour, from: Date()) >= 17 ? "Tonight's rinse" : "Today's rinse")
                     .font(.system(.title2, design: .rounded).weight(.semibold))
-                Text(summary)
+                Text(model.pane == .storage ? storageSummary : summary)
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if model.isScanning {
+            Picker("", selection: Binding(get: { model.pane }, set: { pane in
+                model.pane = pane
+                if pane == .storage { model.showStorage() }
+            })) {
+                ForEach(AppModel.Pane.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 170)
+            if model.pane == .storage ? model.isSurveying : model.isScanning {
                 ProgressView().controlSize(.small)
             }
             Button {
@@ -52,12 +66,12 @@ struct ReviewView: View {
             .help("How Rinse decides")
             .popover(isPresented: $showingHow, arrowEdge: .bottom) { HowItDecides() }
             Button {
-                Task { await model.scan() }
+                if model.pane == .storage { Task { await model.runSurvey() } } else { Task { await model.scan() } }
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
-            .help("Look again")
-            .disabled(model.isScanning)
+            .help(model.pane == .storage ? "Measure again" : "Look again")
+            .disabled(model.pane == .storage ? model.isSurveying : model.isScanning)
             Button {
                 model.showSettings = true
             } label: {
@@ -67,6 +81,11 @@ struct ReviewView: View {
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    private var storageSummary: String {
+        guard let disk = model.survey?.disk else { return model.isSurveying ? "Measuring…" : "Where the space on this Mac is" }
+        return "\(ByteFormat.string(disk.available)) free of \(ByteFormat.string(disk.total))"
     }
 
     private var summary: String {
