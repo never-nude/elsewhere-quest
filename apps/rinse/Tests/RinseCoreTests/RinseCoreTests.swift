@@ -1483,9 +1483,10 @@ final class StorageTests: XCTestCase {
     override func setUpWithError() throws { home = try FakeHome() }
     override func tearDown() { home = nil }
 
-    private func survey(bigFile: Int64 = 50_000) -> Survey {
+    private func survey(bigFile: Int64 = 50_000, access: Bool? = true) -> Survey {
         var surveyor = Surveyor(home: home.url, now: home.now)
         surveyor.bigFileBytes = bigFile
+        surveyor.fullDiskAccess = access
         return surveyor.survey()
     }
 
@@ -1520,10 +1521,10 @@ final class StorageTests: XCTestCase {
         try home.write("Downloads/old.zip", .noise(90_000), daysOld: 40)
         try home.write("Downloads/small.txt", .noise(100), daysOld: 1)
         let result = survey()
-        XCTAssertEqual(result.recentFiles.map(\.url.lastPathComponent), ["blob"])
-        XCTAssertEqual(result.recentFiles.first?.placeID, "ios-backups")
-        XCTAssertGreaterThanOrEqual(result.entry("ios-backups")?.recentBytes ?? 0, 90_000)
-        XCTAssertLessThan(result.entry("downloads")?.recentBytes ?? 0, 90_000, "an old download is not new")
+        XCTAssertEqual(result.newFiles.map(\.url.lastPathComponent), ["blob"])
+        XCTAssertEqual(result.newFiles.first?.placeID, "ios-backups")
+        XCTAssertGreaterThanOrEqual(result.entry("ios-backups")?.newBytes ?? 0, 90_000)
+        XCTAssertLessThan(result.entry("downloads")?.newBytes ?? 0, 90_000, "an old download is not new")
     }
 
     func testHistorySaysWhatGrew() throws {
@@ -1532,7 +1533,9 @@ final class StorageTests: XCTestCase {
         var history = SpaceHistory()
         history.record(before)
         try home.write("Library/Application Support/MobileSync/Backup/X/blob", .noise(400_000), daysOld: 0)
-        let later = Surveyor(home: home.url, now: home.now.addingTimeInterval(2 * 86_400)).survey()
+        var surveyor = Surveyor(home: home.url, now: home.now.addingTimeInterval(2 * 86_400))
+        surveyor.fullDiskAccess = true
+        let later = surveyor.survey()
         let past = try XCTUnwrap(history.snapshot(olderThan: 86_400, now: later.measuredAt))
         let changes = SpaceHistory.changes(from: past, to: later, threshold: 100_000)
         XCTAssertEqual(changes.first?.id, "ios-backups")
@@ -1551,7 +1554,7 @@ final class StorageTests: XCTestCase {
         for day in 0..<100 {
             for hour in [9.0, 21.0] {
                 let survey = Survey(measuredAt: start.addingTimeInterval(Double(day) * 86_400 + hour * 3600),
-                                    entries: [], recentFiles: [], homeBytes: 1, disk: nil, incomplete: false, unreadable: 0)
+                                    entries: [], homeBytes: 1, disk: nil, incomplete: false)
                 history.record(survey)
             }
         }
@@ -1564,11 +1567,66 @@ final class StorageTests: XCTestCase {
         Snapshots for disk /:
         com.apple.TimeMachine.2026-11-24-081530.local
         com.apple.TimeMachine.2026-11-25-101530.local
+        com.bombich.ccc.1234ABCD.2026-11-20-090000
         """
         let dates = LocalSnapshots.dates(fromListing: listing)
         XCTAssertEqual(dates.count, 2)
         XCTAssertLessThan(dates[0], dates[1])
     }
+
+    func testAFileWithTwoNamesTakesItsSpaceOnce() throws {
+        let file = try home.write("Downloads/video.mov", .noise(80_000), daysOld: 30)
+        try FileManager.default.createDirectory(at: home.url.appendingPathComponent("Documents"), withIntermediateDirectories: true)
+        try FileManager.default.linkItem(at: file, to: home.url.appendingPathComponent("Documents/video.mov"))
+        let result = survey()
+        let both = (result.entry("downloads")?.bytes ?? 0) + (result.entry("documents")?.bytes ?? 0)
+        XCTAssertLessThan(both, 2 * 80_000, "counted once, not for each name")
+        XCTAssertGreaterThanOrEqual(both, 80_000)
+    }
+
+    func testFoldersMacOSGuardsAreNotCountedAsEmpty() throws {
+        try home.write("Library/Containers/com.apple.Notes/Data/notes.db", .noise(60_000), daysOld: 30)
+        try home.write("Library/Containers/com.docker.docker/Data/Docker.raw", .noise(60_000), daysOld: 30)
+        try home.write("Library/Group Containers/group.com.apple.notes/x.db", .noise(10_000), daysOld: 30)
+        let blind = survey(access: false)
+        XCTAssertTrue(blind.entry("private:Library/Containers")?.uncounted ?? false)
+        XCTAssertTrue(blind.entry("docker")?.uncounted ?? false, "Docker lives inside the guarded folder")
+        XCTAssertNil(blind.entry("app:Library/Containers/com.apple.Notes"), "Rinse does not look inside without access")
+        XCTAssertEqual(Set(blind.unreadableTitles), ["Docker", "Other apps' containers", "Shared app data"])
+        let seeing = survey(access: true)
+        XCTAssertTrue(seeing.unreadablePlaces.isEmpty)
+        XCTAssertGreaterThanOrEqual(seeing.entry("docker")?.bytes ?? 0, 60_000)
+
+        // Granting access later must not look like a sudden jump.
+        var history = SpaceHistory()
+        history.record(blind)
+        let past = try XCTUnwrap(history.snapshots.last)
+        let changes = SpaceHistory.changes(from: past, to: seeing, threshold: 10_000)
+        XCTAssertFalse(changes.contains { $0.id == "docker" || $0.id.hasPrefix("app:Library/Containers") || $0.id == "outside-home" },
+                       "\(changes.map(\.id))")
+    }
+
+    func testCloudFoldersAreTheirOwnPlaces() throws {
+        try home.write("Library/Mobile Documents/com~apple~CloudDocs/Projects/a.psd", .noise(40_000), daysOld: 30)
+        try home.write("Library/CloudStorage/Dropbox/Shared/b.mov", .noise(40_000), daysOld: 30)
+        try home.write("Library/CloudStorage/GoogleDrive-someone@example.com/My Drive/c.pdf", .noise(40_000), daysOld: 30)
+        let result = survey()
+        XCTAssertGreaterThanOrEqual(result.entry("icloud-drive")?.bytes ?? 0, 40_000)
+        XCTAssertEqual(result.entry("app:Library/CloudStorage/Dropbox")?.place.title, "Dropbox")
+        XCTAssertEqual(result.entry("app:Library/CloudStorage/GoogleDrive-someone@example.com")?.place.title, "Google Drive")
+        XCTAssertTrue(result.entry("icloud-drive")?.place.howToClear?.contains("Remove Download") ?? false)
+    }
+
+    #if os(macOS)
+    func testABigFileThatWasOnlyUpdatedIsNotNewSpace() throws {
+        let disk = try home.write("Library/Containers/com.docker.docker/Data/Docker.raw", .noise(90_000), daysOld: 30)
+        home.age(disk, days: 0)   // written to today; created a month ago
+        let result = survey()
+        XCTAssertEqual(result.updatedFiles.map(\.url.lastPathComponent), ["Docker.raw"])
+        XCTAssertTrue(result.newFiles.isEmpty)
+        XCTAssertLessThan(result.entry("docker")?.newBytes ?? 0, 90_000)
+    }
+    #endif
 
     func testDiskSpaceReads() {
         let disk = DiskSpace.of(home.url.path)

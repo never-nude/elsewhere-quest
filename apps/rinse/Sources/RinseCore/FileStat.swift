@@ -22,6 +22,8 @@ struct FileStat {
     /// The disk it lives on.
     let device: UInt64
     let inode: UInt64
+    /// How many names the file has (more than one for a hard link).
+    let links: UInt64
     /// When the file's contents or details last changed. Unlike the modification date,
     /// nothing can set this back, so it gives away an edit that hid its tracks.
     let changed: Date
@@ -41,6 +43,7 @@ struct FileStat {
         size = Int64(st.st_size)
         device = UInt64(truncatingIfNeeded: st.st_dev)
         inode = UInt64(truncatingIfNeeded: st.st_ino)
+        links = UInt64(truncatingIfNeeded: st.st_nlink)
         #if canImport(Darwin)
         modified = Date(st.st_mtimespec)
         accessed = Date(st.st_atimespec)
@@ -211,6 +214,13 @@ struct FileStat {
             if name != "." && name != ".." { names.append(name) }
         }
         return names
+    }
+
+    /// Whether a folder can be listed: true yes, false refused (privacy protection or permissions), nil not there.
+    static func canList(_ path: String) -> Bool? {
+        guard let dir = opendir(path) else { return errno == ENOENT || errno == ENOTDIR ? nil : false }
+        closedir(dir)
+        return true
     }
 
     enum Reachability { case exists, missing, unreadable }

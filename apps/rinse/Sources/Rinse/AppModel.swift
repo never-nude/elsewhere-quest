@@ -70,6 +70,8 @@ final class AppModel {
     private(set) var survey: Survey?
     private(set) var spaceHistory: SpaceHistory
     private(set) var isSurveying = false
+    /// When a survey last started, finished or not, so one that cannot finish is not restarted every minute.
+    @ObservationIgnored private var lastSurveyAttempt = Date.distantPast
     private(set) var snapshotDates: [Date] = []
     private(set) var importantAvailable: Int64?
     private static let historyURL = FileManager.default
@@ -97,6 +99,7 @@ final class AppModel {
     func runSurvey() async {
         guard !isSurveying else { return }
         isSurveying = true
+        lastSurveyAttempt = Date()
         let home = self.home
         let (fresh, snapshots, important) = await Task.detached(priority: .utility) {
             (Surveyor(home: home).survey(), Platform.localSnapshotDates(), Platform.availableForImportantUse())
@@ -173,7 +176,8 @@ final class AppModel {
     private func tick() async {
         let now = Date()
         // Once a day, measure where the space is, so a sudden jump can be traced to a day and a place.
-        if !isSurveying, now.timeIntervalSince(spaceHistory.snapshots.last?.date ?? .distantPast) > 20 * 3600 {
+        let lastLook = max(spaceHistory.snapshots.last?.date ?? .distantPast, lastSurveyAttempt)
+        if !isSurveying, now.timeIntervalSince(lastLook) > 20 * 3600 {
             Task { await runSurvey() }
         }
         if prefs.ritualEnabled, ritualIsDue(now) {

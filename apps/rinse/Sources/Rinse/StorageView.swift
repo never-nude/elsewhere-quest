@@ -52,24 +52,32 @@ struct StorageView: View {
                     }
                 }
             } else {
-                sectionTitle("New in the last week",
-                             "Rinse has no earlier look to compare with yet, so this counts files created or changed in the past 7 days. From tomorrow it can say exactly what grew.")
-                let recent = survey.entries.filter { $0.recentBytes >= 100_000_000 }.sorted { $0.recentBytes > $1.recentBytes }
+                sectionTitle("Created in the last week",
+                             "Rinse has no earlier look to compare with yet, so this is an estimate: files created in the past 7 days. Files moved or copied in with their old dates are not counted, and big files that were only updated are listed separately because one look cannot tell how much they grew. From tomorrow Rinse can say exactly what grew.")
+                let recent = survey.entries.filter { $0.newBytes >= 100_000_000 }.sorted { $0.newBytes > $1.newBytes }
                 if recent.isEmpty {
-                    Text("Less than 100 MB of new files anywhere.")
+                    Text("Less than 100 MB of new files anywhere Rinse can see.")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(recent.prefix(8)) { entry in
-                        ChangeRow(title: entry.place.title, delta: entry.recentBytes, total: entry.bytes,
+                        ChangeRow(title: entry.place.title, delta: entry.newBytes, total: entry.bytes,
                                   place: entry.place, expanded: $expanded)
                     }
                 }
             }
-            if !survey.recentFiles.isEmpty {
-                Text("Big files from the last week")
+            fileList("Big files created this week", survey.newFiles, survey)
+            fileList("Big files updated this week (size now, not growth)", survey.updatedFiles, survey)
+        }
+    }
+
+    @ViewBuilder
+    private func fileList(_ title: String, _ files: [Survey.RecentFile], _ survey: Survey) -> some View {
+        if !files.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
                     .font(.subheadline.weight(.semibold))
                     .padding(.top, 6)
-                ForEach(survey.recentFiles.prefix(10)) { file in
+                ForEach(files.prefix(10)) { file in
                     HStack(spacing: 10) {
                         Image(nsImage: NSWorkspace.shared.icon(forFile: file.url.path))
                             .resizable()
@@ -78,7 +86,7 @@ struct StorageView: View {
                             Text(file.url.lastPathComponent)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                            Text("\(survey.entry(file.placeID)?.place.title ?? "") · \(file.changed.formatted(.relative(presentation: .named)))")
+                            Text("\(survey.entry(file.placeID)?.place.title ?? "") · \(file.date.formatted(.relative(presentation: .named)))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -102,7 +110,7 @@ struct StorageView: View {
     // MARK: - Where the space is
 
     private func places(_ survey: Survey) -> some View {
-        let shown = survey.entries.filter { $0.bytes >= 50_000_000 }
+        let shown = survey.entries.filter { $0.bytes >= 50_000_000 && !$0.uncounted } + survey.entries.filter(\.uncounted)
         let largest = max(1, shown.first?.bytes ?? 1)
         return VStack(alignment: .leading, spacing: 8) {
             sectionTitle("Where your space is", "Everything in your home folder, by place. Click a row for what it is and how to clear it safely.")
@@ -120,7 +128,7 @@ struct StorageView: View {
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Outside your home folder")
-                        Text("macOS itself, apps in Applications, other users, Time Machine snapshots and swap. Finder calls most of this System Data.")
+                        Text(outsideHomeNote(survey))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -135,14 +143,22 @@ struct StorageView: View {
         }
     }
 
+    private func outsideHomeNote(_ survey: Survey) -> String {
+        var note = "macOS itself, apps in Applications, other users, Time Machine snapshots and swap. System Settings › General › Storage splits this into macOS, Applications and System Data."
+        if !survey.unreadablePlaces.isEmpty {
+            note += " It also includes the folders Rinse could not read (\(survey.unreadableTitles.joined(separator: ", "))), because macOS counts them as used."
+        }
+        return note
+    }
+
     private func footnote(_ survey: Survey) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Measured \(survey.measuredAt.formatted(.relative(presentation: .named))).")
-            if survey.unreadable > 0 {
-                Text("\(survey.unreadable) folders could not be read (macOS privacy protection). Giving Rinse Full Disk Access in System Settings › Privacy & Security lets it count them.")
+            if !survey.unreadablePlaces.isEmpty {
+                Text("Rinse could not read \(survey.unreadableTitles.joined(separator: ", ")) (macOS privacy protection), so their size is not shown and is counted under Outside your home folder. To count them, give Rinse Full Disk Access in System Settings › Privacy & Security › Full Disk Access. The first look after that starts a new comparison; it is not compared with earlier ones.")
             }
             if survey.incomplete {
-                Text("The home folder is very large; Rinse stopped counting early, so totals are lower than they really are.")
+                Text("Rinse stopped counting after 6 million files, so these sizes are too low and day-to-day growth cannot be tracked. The biggest places shown are still real.")
             }
         }
         .font(.caption)
@@ -252,15 +268,16 @@ private struct PlaceRow: View {
                             .frame(width: 20)
                             .foregroundStyle(.secondary)
                         Text(entry.place.title)
-                        if entry.recentBytes >= 100_000_000 {
-                            Text("+\(ByteFormat.string(entry.recentBytes)) this week")
+                        if entry.newBytes >= 100_000_000 {
+                            Text("+\(ByteFormat.string(entry.newBytes)) new this week")
                                 .font(.caption)
                                 .foregroundStyle(Color.orange)
                         }
                         Spacer()
-                        Text(ByteFormat.string(entry.bytes))
+                        Text(entry.uncounted ? "Not counted" : ByteFormat.string(entry.bytes))
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
+                            .help(entry.uncounted ? "macOS only lets Rinse measure this with Full Disk Access" : "")
                     }
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
@@ -343,11 +360,13 @@ private struct SnapshotsCard: View {
                 Text("From \(first.formatted(date: .abbreviated, time: .shortened)) to \(last.formatted(date: .abbreviated, time: .shortened)).")
                     .foregroundStyle(.secondary)
             }
-            Text("Each snapshot keeps files you have since deleted or changed, so space you free does not come back until it goes. They pile up when the backup disk cannot be reached, and macOS removes them on its own when space runs low or after 24 hours once a backup succeeds. Their size shows up as System Data, not in your home folder.")
+            Text("Time Machine keeps a snapshot of this Mac every hour for 24 hours, plus one of the last successful backup. Snapshots hold on to files you have since deleted or changed, so deleting a big file does not free its space until the snapshots taken before that are gone. macOS counts this space as purgeable and removes snapshots by itself when it needs room. If backups have been failing, the snapshot of the last successful backup can hold old data for a long time.")
                 .fixedSize(horizontal: false, vertical: true)
-            Text("To clear them now, connect the backup disk and let a backup finish, or in Terminal run:  tmutil thinlocalsnapshots / 999999999999 4")
+            Text("Best: connect the backup disk and let a backup finish; old snapshots then go on their own. Only if you need the space right now, run in Terminal:  tmutil thinlocalsnapshots / 999999999999 4  (how many bytes to try to free, then the highest urgency).")
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("That deletes these restore points: files you deleted or changed since your last completed backup can no longer be brought back. Your files and the backups on your backup disk are not touched.")
                 .fixedSize(horizontal: false, vertical: true)
         }
         .font(.callout)

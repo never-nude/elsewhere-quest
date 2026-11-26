@@ -45,7 +45,7 @@ enum Platform {
     }
 
     /// Dates of Time Machine's local snapshots on the startup disk. They hold on to deleted and changed
-    /// files until macOS clears them, and pile up when the backup disk cannot be reached.
+    /// files until macOS clears them.
     static func localSnapshotDates() -> [Date] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/tmutil")
