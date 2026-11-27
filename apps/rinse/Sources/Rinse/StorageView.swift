@@ -14,6 +14,7 @@ struct StorageView: View {
                 VStack(alignment: .leading, spacing: 22) {
                     DiskBar(survey: survey, importantAvailable: model.importantAvailable)
                     changes(survey)
+                    if model.updatePrepared { UpdateCard() }
                     if !model.snapshotDates.isEmpty { SnapshotsCard(dates: model.snapshotDates) }
                     places(survey)
                     footnote(survey)
@@ -341,6 +342,33 @@ private struct PlaceDetail: View {
         let path = place.path.contains("*") ? (place.path as NSString).deletingLastPathComponent : place.path
         let url = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(path)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+}
+
+/// A macOS update waiting to be installed: a common cause of a sudden jump in used space.
+private struct UpdateCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: "arrow.down.circle")
+                    .foregroundStyle(Color.orange)
+                Text("A macOS update is downloaded and waiting")
+                    .font(.headline)
+            }
+            Text("macOS downloads and prepares updates in the background. The prepared update, and a snapshot of the current system it keeps in case something goes wrong, take space (often 10 GB or more) until the update is installed. It shows up as System Data, outside your home folder.")
+                .fixedSize(horizontal: false, vertical: true)
+            Text("To get the space back, install the update: System Settings › General › Software Update, then let the Mac restart. Do not try to delete these files yourself.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Open Software Update") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.Software-Update-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+        }
+        .font(.callout)
+        .padding(12)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

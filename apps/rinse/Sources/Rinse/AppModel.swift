@@ -73,6 +73,8 @@ final class AppModel {
     /// When a survey last started, finished or not, so one that cannot finish is not restarted every minute.
     @ObservationIgnored private var lastSurveyAttempt = Date.distantPast
     private(set) var snapshotDates: [Date] = []
+    /// True while macOS has a software update downloaded and prepared but not installed.
+    private(set) var updatePrepared = false
     private(set) var importantAvailable: Int64?
     private static let historyURL = FileManager.default
         .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -102,10 +104,11 @@ final class AppModel {
         lastSurveyAttempt = Date()
         let home = self.home
         let (fresh, snapshots, important) = await Task.detached(priority: .utility) {
-            (Surveyor(home: home).survey(), Platform.localSnapshotDates(), Platform.availableForImportantUse())
+            (Surveyor(home: home).survey(), Platform.localSnapshotListing(), Platform.availableForImportantUse())
         }.value
         survey = fresh
-        snapshotDates = snapshots
+        snapshotDates = LocalSnapshots.dates(fromListing: snapshots)
+        updatePrepared = LocalSnapshots.isPreparingUpdate(listing: snapshots)
         importantAvailable = important
         spaceHistory.record(fresh)
         try? spaceHistory.save(to: Self.historyURL)

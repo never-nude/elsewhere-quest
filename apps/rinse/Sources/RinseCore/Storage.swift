@@ -471,6 +471,17 @@ public struct SpaceHistory: Codable, Equatable, Sendable {
 
 /// Time Machine's local snapshots, from the names `tmutil listlocalsnapshots /` prints.
 public enum LocalSnapshots {
+    /// True when the listing shows macOS preparing a software update. The prepared update, and the
+    /// snapshot of the current system it keeps, take space (often 10 GB or more) until the update is installed.
+    public static func isPreparingUpdate(listing text: String) -> Bool {
+        text.contains("com.apple.os.update-MSUPrepareUpdate")
+    }
+
+    /// Snapshots macOS keeps around a system update.
+    public static func updateSnapshotCount(listing text: String) -> Int {
+        text.split(whereSeparator: \.isNewline).filter { $0.contains("com.apple.os.update-") }.count
+    }
+
     /// Dates of snapshots named like `com.apple.TimeMachine.2026-11-25-101530.local`.
     public static func dates(fromListing text: String) -> [Date] {
         let formatter = DateFormatter()

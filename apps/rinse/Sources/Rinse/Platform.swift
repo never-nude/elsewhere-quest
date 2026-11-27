@@ -47,16 +47,21 @@ enum Platform {
     /// Dates of Time Machine's local snapshots on the startup disk. They hold on to deleted and changed
     /// files until macOS clears them.
     static func localSnapshotDates() -> [Date] {
+        LocalSnapshots.dates(fromListing: localSnapshotListing())
+    }
+
+    /// What `tmutil listlocalsnapshots /` prints: Time Machine's and macOS update snapshots.
+    static func localSnapshotListing() -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/tmutil")
         process.arguments = ["listlocalsnapshots", "/"]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
-        guard (try? process.run()) != nil else { return [] }
+        guard (try? process.run()) != nil else { return "" }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return LocalSnapshots.dates(fromListing: String(decoding: data, as: UTF8.self))
+        return String(decoding: data, as: UTF8.self)
     }
 
     /// Free space as macOS counts it for things that matter: includes space it can clear on its own

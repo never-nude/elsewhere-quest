@@ -1571,6 +1571,17 @@ final class StorageTests: XCTestCase {
         """
         let dates = LocalSnapshots.dates(fromListing: listing)
         XCTAssertEqual(dates.count, 2)
+        // The listing from the owner's Mac: no Time Machine snapshots, an update being prepared.
+        let owners = """
+        Snapshots for volume group containing disk /:
+        com.apple.os.update-5203530F8BB20B9DABC5CE76A0FFE87CCC885EE69B8A5488C24B458A7555E3AB
+        com.apple.os.update-DE7602AF37D215DD76340850F8FF2DA2487A719C67CAB6CE73E43A0F1EDEB46A2482FB7BEB01D67F841CDEFE40C1B834
+        com.apple.os.update-MSUPrepareUpdate
+        """
+        XCTAssertTrue(LocalSnapshots.dates(fromListing: owners).isEmpty)
+        XCTAssertTrue(LocalSnapshots.isPreparingUpdate(listing: owners))
+        XCTAssertEqual(LocalSnapshots.updateSnapshotCount(listing: owners), 3)
+        XCTAssertFalse(LocalSnapshots.isPreparingUpdate(listing: listing))
         XCTAssertLessThan(dates[0], dates[1])
     }
 
